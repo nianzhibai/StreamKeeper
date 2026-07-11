@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "douyin-live-recorder"
+version = "0.2.0"
+description = "A server-first web application for recording Douyin live streams"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+license = "Apache-2.0"
+dependencies = [
+    "fastapi==0.139.0",
+    "streamget==4.0.10",
+    "uvicorn==0.51.0",
+]
+
+[project.scripts]
+douyin-recorder-web = "douyin_recorder.web.server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<10",
+    "ruff>=0.11,<1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+douyin_recorder = ["web/static/*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

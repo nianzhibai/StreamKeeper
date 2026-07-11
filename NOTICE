@@ -1,0 +1,12 @@
+Douyin Live Recorder
+Copyright 2025 Hmily and StreamCap contributors
+
+This product contains software derived from StreamCap:
+https://github.com/ihmily/StreamCap
+
+StreamCap is licensed under the Apache License, Version 2.0.
+
+This product depends on StreamGet:
+https://github.com/ihmily/streamget
+
+StreamGet is licensed under the MIT License.

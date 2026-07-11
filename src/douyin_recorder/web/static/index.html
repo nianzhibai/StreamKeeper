@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>抖音直播录制</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="首页">
+        <span class="brand-mark">录</span>
+        <span>
+          <strong>抖音直播录制</strong>
+          <small>SERVER CONSOLE</small>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <span id="server-health" class="health"><i></i> 正在连接</span>
+        <a class="ghost-button" href="/api/docs" target="_blank" rel="noreferrer">API 文档</a>
+        <button id="refresh-button" class="icon-button" type="button" title="立即刷新" aria-label="立即刷新">↻</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">DOUYIN · WEB RECORDER</p>
+          <h1>让服务器守着直播，<br /><span>开播就录。</span></h1>
+          <p class="hero-copy">任务、状态和文件都留在你的服务器。浏览器只负责管理，不承载录制进程。</p>
+        </div>
+        <button id="open-create-button" class="primary-button hero-button" type="button">
+          <span>＋</span> 新建录制任务
+        </button>
+      </section>
+
+      <section class="stats" aria-label="服务状态">
+        <article class="stat-card">
+          <span>全部任务</span>
+          <strong id="stat-total">—</strong>
+          <small>已保存的直播间</small>
+        </article>
+        <article class="stat-card accent-red">
+          <span>正在录制</span>
+          <strong id="stat-recording">—</strong>
+          <small>FFmpeg 运行中</small>
+        </article>
+        <article class="stat-card accent-green">
+          <span>值守任务</span>
+          <strong id="stat-waiting">—</strong>
+          <small>等待开播或检查</small>
+        </article>
+        <article class="stat-card accent-amber">
+          <span>磁盘可用</span>
+          <strong id="stat-disk">—</strong>
+          <small id="stat-runtime">检查运行环境</small>
+        </article>
+      </section>
+
+      <section class="task-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">RECORDING TASKS</p>
+            <h2>录制任务</h2>
+          </div>
+          <div class="filter-group" role="group" aria-label="任务筛选">
+            <button class="filter-button active" type="button" data-filter="all">全部</button>
+            <button class="filter-button" type="button" data-filter="recording">录制中</button>
+            <button class="filter-button" type="button" data-filter="enabled">值守中</button>
+            <button class="filter-button" type="button" data-filter="error">异常</button>
+          </div>
+        </div>
+
+        <div id="error-banner" class="error-banner hidden" role="alert"></div>
+        <div id="task-list" class="task-grid" aria-live="polite">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-icon">◉</div>
+          <h3>还没有录制任务</h3>
+          <p>添加一个抖音直播间，服务器会按设定周期检查开播状态。</p>
+          <button class="primary-button" type="button" data-open-create>添加第一个任务</button>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="create-dialog" class="task-dialog">
+      <form id="create-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">NEW RECORDING</p>
+            <h2>新建录制任务</h2>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button>
+        </div>
+
+        <label class="field field-wide">
+          <span>抖音地址 <b>*</b></span>
+          <div class="url-input-row">
+            <input id="task-url" name="url" type="url" required placeholder="https://live.douyin.com/123456789" autocomplete="off" />
+            <button id="inspect-button" class="secondary-button" type="button">检测</button>
+          </div>
+          <small>支持直播间地址、v.douyin.com 分享短链和主播主页。</small>
+        </label>
+
+        <div id="inspect-result" class="inspect-result hidden"></div>
+
+        <div class="form-grid">
+          <label class="field field-wide">
+            <span>任务备注</span>
+            <input name="label" type="text" maxlength="80" placeholder="例如：晚间直播（可选）" />
+          </label>
+
+          <label class="field">
+            <span>画质</span>
+            <select name="quality">
+              <option value="OD">原画 · OD</option>
+              <option value="UHD">超清 · UHD</option>
+              <option value="HD">高清 · HD</option>
+              <option value="SD">标清 · SD</option>
+              <option value="LD">流畅 · LD</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>保存格式</span>
+            <select name="output_format">
+              <option value="ts">TS（推荐）</option>
+              <option value="mp4">MP4</option>
+              <option value="mkv">MKV</option>
+              <option value="flv">FLV</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>直播源</span>
+            <select name="source">
+              <option value="auto">自动选择</option>
+              <option value="flv">优先 FLV</option>
+              <option value="hls">使用 HLS</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>分段时长（秒）</span>
+            <input name="segment_seconds" type="number" min="0" max="86400" step="1" value="1800" />
+            <small>0 表示不分段。</small>
+          </label>
+
+          <label class="field">
+            <span>检查间隔（秒）</span>
+            <input name="interval_seconds" type="number" min="10" max="86400" step="1" value="60" />
+          </label>
+
+          <div class="toggle-stack">
+            <label class="toggle-field">
+              <input name="monitor" type="checkbox" checked />
+              <span class="toggle"></span>
+              <span><strong>持续值守</strong><small>断流后继续等待下一次开播</small></span>
+            </label>
+            <label class="toggle-field">
+              <input name="auto_start" type="checkbox" checked />
+              <span class="toggle"></span>
+              <span><strong>立即启动</strong><small>保存任务后马上开始检查</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-dialog>取消</button>
+          <button id="create-submit" class="primary-button" type="submit">保存并启动</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
