@@ -16,9 +16,9 @@ from ..errors import DouyinRecorderError
 from ..settings import Settings
 from .auth import (
     SESSION_COOKIE_NAME,
-    LoginRateLimiter,
     SecurityHeadersMiddleware,
     SessionAuthMiddleware,
+    set_session_cookie,
 )
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
@@ -72,12 +72,12 @@ def create_app(
     scheduler = scheduler or TaskScheduler(store, settings)
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
-    login_limiter = LoginRateLimiter(settings.login_max_attempts, settings.login_window_seconds)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         settings.prepare()
         await store.initialize()
+        await store.sync_web_credentials(settings.web_username, settings.web_password)
         await scheduler.startup()
         try:
             yield
@@ -95,13 +95,13 @@ def create_app(
         SessionAuthMiddleware,
         store=store,
         enabled=bool(settings.web_password),
+        session_ttl_seconds=settings.session_ttl_hours * 3600,
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
     app.state.settings = settings
     app.state.store = store
     app.state.scheduler = scheduler
-    app.state.login_limiter = login_limiter
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:
@@ -122,13 +122,8 @@ def create_app(
             raise HTTPException(status_code=409, detail="当前开发环境未启用登录认证")
 
         client_key = request.client.host if request.client else "unknown"
-        retry_after = await login_limiter.retry_after(client_key)
-        if retry_after is not None:
-            raise HTTPException(
-                status_code=429,
-                detail="登录尝试过于频繁，请稍后重试",
-                headers={"Retry-After": str(retry_after)},
-            )
+        if await store.is_login_blacklisted(client_key):
+            raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
 
         username_matches = secrets.compare_digest(
             payload.username.encode("utf-8"),
@@ -139,23 +134,37 @@ def create_app(
             settings.web_password.encode("utf-8"),
         )
         if not (username_matches and password_matches):
-            await login_limiter.register_failure(client_key)
+            blacklisted = await store.register_login_failure(
+                client_key,
+                settings.login_max_attempts,
+                settings.login_window_seconds,
+            )
+            if blacklisted:
+                raise HTTPException(status_code=403, detail="登录失败次数达到上限，当前 IP 已被永久禁止登录")
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-        await login_limiter.reset(client_key)
+        if not await store.accept_login_success(client_key):
+            raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
         ttl_seconds = settings.session_ttl_hours * 3600
         token, session = await store.create_session(settings.web_username, ttl_seconds)
-        response.set_cookie(
-            key=SESSION_COOKIE_NAME,
-            value=token,
-            max_age=ttl_seconds,
-            expires=session.expires_at,
-            path="/",
+        set_session_cookie(
+            response,
+            token,
+            session,
+            ttl_seconds,
             secure=request.url.scheme == "https",
-            httponly=True,
-            samesite="strict",
         )
         return _auth_session_response(session)
+
+    @app.get("/api/auth/blocked-clients", response_model=list[str])
+    async def blocked_clients() -> list[str]:
+        return await store.list_login_blacklist()
+
+    @app.delete("/api/auth/blocked-clients/{client_key:path}", status_code=status.HTTP_204_NO_CONTENT)
+    async def unblock_client(client_key: str) -> Response:
+        if not await store.unblock_login_client(client_key):
+            raise HTTPException(status_code=404, detail=f"IP 不在登录黑名单中: {client_key}")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/auth/session", response_model=AuthSession)
     async def current_session(request: Request) -> AuthSession:

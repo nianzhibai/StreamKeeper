@@ -11,7 +11,7 @@
 - 自动优先 FLV；FLV 为 H.265/HEVC 时回退 HLS。
 - SQLite 持久化任务，服务器重启后自动恢复已启用的值守任务。
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
-- 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败限速。
+- 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败 IP 永久黑名单。
 - 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
@@ -62,7 +62,15 @@ docker compose logs -f recorder
 http://127.0.0.1:8000
 ```
 
-浏览器会显示项目自己的登录页。登录成功后服务端签发不可被 JavaScript 读取的 HttpOnly 会话 Cookie，默认有效期为 24 小时；退出登录会立即撤销数据库中的会话，服务重启后也需要重新登录。
+浏览器会显示项目自己的登录页。登录成功后服务端签发不可被 JavaScript 读取的 HttpOnly 会话 Cookie，默认有效期为 7 天。会话剩余时间不足一半时，正常访问会自动续期到完整的 7 天；有效会话会保存在 SQLite 中并跨服务重启保留，退出登录则会立即撤销。配置的用户名或密码发生变化后，服务会在下次启动时撤销全部已有会话；数据库只保存经过 scrypt 处理的凭据指纹，不保存明文密码。
+
+登录失败记录和黑名单保存在 SQLite 中。默认同一客户端 IP 在滚动 1 小时内累计失败 3 次后会被永久拉黑，第三次及后续登录返回 `403 Forbidden`，服务重启或输入正确密码都不会自动解封。达到阈值前成功登录会清除该 IP 的失败记录。已登录的管理员可以通过黑名单 API 查询和手动解封；使用反向代理时需要确保 Uvicorn 收到可信的真实客户端 IP，避免将代理或整个 NAT 出口误封。
+
+如果唯一的管理 IP 被误封且已经没有有效会话，可以直接从持久化数据库解封；将示例 IP 替换为实际地址：
+
+```bash
+docker compose exec recorder python -c "import sqlite3; db=sqlite3.connect('/data/tasks.db'); db.execute('DELETE FROM web_login_blacklist WHERE client_key=?', ('203.0.113.10',)); db.commit()"
+```
 
 对公网提供服务时仍应使用 HTTPS，因为 HTTP 下登录密码和会话 Cookie 都可能被截获。可以使用 Nginx/Caddy 终止 TLS，示例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)；也可以后续配置 Uvicorn 原生 TLS。
 
@@ -172,9 +180,9 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | --- | --- | --- |
 | `DOUYIN_WEB_USERNAME` | `admin` | Web 登录用户名 |
 | `DOUYIN_WEB_PASSWORD` | 无 | Web 登录密码；生产环境必填 |
-| `DOUYIN_SESSION_TTL_HOURS` | `24` | 登录会话有效小时数，范围 1–720 |
-| `DOUYIN_LOGIN_MAX_ATTEMPTS` | `5` | 限速窗口内单客户端允许的失败次数 |
-| `DOUYIN_LOGIN_WINDOW_SECONDS` | `300` | 登录失败限速窗口秒数 |
+| `DOUYIN_SESSION_TTL_HOURS` | `168` | 登录会话的滑动有效小时数，访问到半周期后自动续期，范围 1–720 |
+| `DOUYIN_LOGIN_MAX_ATTEMPTS` | `3` | 窗口内触发永久 IP 黑名单的失败次数 |
+| `DOUYIN_LOGIN_WINDOW_SECONDS` | `3600` | 统计登录失败的滚动窗口秒数 |
 | `DOUYIN_WEB_HOST` | `127.0.0.1` | 服务监听地址 |
 | `DOUYIN_WEB_PORT` | `8000` | 服务监听端口 |
 | `DOUYIN_DATA_DIR` | `data` | 数据根目录 |
@@ -198,6 +206,8 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `POST` | `/api/auth/login` | 验证账号并创建会话 |
 | `GET` | `/api/auth/session` | 获取当前会话与 CSRF 令牌 |
 | `POST` | `/api/auth/logout` | 撤销当前会话并清除 Cookie |
+| `GET` | `/api/auth/blocked-clients` | 查询永久登录黑名单 |
+| `DELETE` | `/api/auth/blocked-clients/{ip}` | 手动解除指定 IP 的登录黑名单 |
 | `GET/POST` | `/api/tasks` | 查询或创建任务 |
 | `PATCH/DELETE` | `/api/tasks/{id}` | 更新或删除任务 |
 | `POST` | `/api/tasks/{id}/start` | 启动值守 |
@@ -212,8 +222,8 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `client.py` | 抖音 URL 分流和 `streamget` 适配 |
 | `ffmpeg.py` | FLV/HLS 选择和 FFmpeg 参数 |
 | `recorder.py` | 文件命名、录制进程和优雅停止 |
-| `web/store.py` | SQLite 任务与会话持久化 |
-| `web/auth.py` | Session Cookie、CSRF 和登录限速 |
+| `web/store.py` | SQLite 任务、会话、凭据指纹和登录黑名单持久化 |
+| `web/auth.py` | Session Cookie 和 CSRF 校验 |
 | `web/scheduler.py` | 检查、排队、录制和重启恢复 |
 | `web/app.py` | FastAPI 接口、生命周期和静态页面 |
 | `web/static/` | 无外部 CDN 的浏览器管理页面 |

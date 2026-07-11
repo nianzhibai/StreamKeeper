@@ -37,6 +37,10 @@ RUNTIME_COLUMNS = {
     "last_checked_at",
     "started_at",
 }
+_AUTH_KDF_N = 2**14
+_AUTH_KDF_R = 8
+_AUTH_KDF_P = 1
+_AUTH_KDF_LENGTH = 32
 
 
 def utc_now() -> datetime:
@@ -119,9 +123,199 @@ class TaskStore:
                 """
             )
             connection.execute("CREATE INDEX IF NOT EXISTS idx_web_sessions_expires_at ON web_sessions (expires_at)")
-            # Credentials come from the process environment. Revoking sessions on restart
-            # makes a password change take effect immediately without storing a password hash.
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_auth_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    username TEXT NOT NULL,
+                    password_salt BLOB NOT NULL,
+                    password_digest BLOB NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_login_failures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_key TEXT NOT NULL,
+                    attempted_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_web_login_failures_client_time
+                ON web_login_failures (client_key, attempted_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_login_blacklist (
+                    client_key TEXT PRIMARY KEY,
+                    blacklisted_at TEXT NOT NULL,
+                    failure_count INTEGER NOT NULL
+                )
+                """
+            )
+            connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
+
+    @staticmethod
+    def _credential_digest(password: str, salt: bytes) -> bytes:
+        return hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
+            n=_AUTH_KDF_N,
+            r=_AUTH_KDF_R,
+            p=_AUTH_KDF_P,
+            dklen=_AUTH_KDF_LENGTH,
+        )
+
+    async def sync_web_credentials(self, username: str, password: str) -> bool:
+        """Persist a slow credential fingerprint and revoke sessions when it changes."""
+
+        return await asyncio.to_thread(self._sync_web_credentials_sync, username, password)
+
+    def _sync_web_credentials_sync(self, username: str, password: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+            ).fetchone()
+            credentials_match = False
+            if row is not None:
+                username_matches = secrets.compare_digest(
+                    row["username"].encode("utf-8"),
+                    username.encode("utf-8"),
+                )
+                password_matches = secrets.compare_digest(
+                    row["password_digest"],
+                    self._credential_digest(password, row["password_salt"]),
+                )
+                credentials_match = username_matches and password_matches
+            if credentials_match:
+                return False
+
+            salt = secrets.token_bytes(16)
+            digest = self._credential_digest(password, salt)
+            connection.execute(
+                """
+                INSERT INTO web_auth_state (id, username, password_salt, password_digest, updated_at)
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    username = excluded.username,
+                    password_salt = excluded.password_salt,
+                    password_digest = excluded.password_digest,
+                    updated_at = excluded.updated_at
+                """,
+                (username, salt, digest, utc_now().isoformat()),
+            )
             connection.execute("DELETE FROM web_sessions")
+        return True
+
+    async def is_login_blacklisted(self, client_key: str) -> bool:
+        return await asyncio.to_thread(self._is_login_blacklisted_sync, client_key)
+
+    def _is_login_blacklisted_sync(self, client_key: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM web_login_blacklist WHERE client_key = ?",
+                (client_key,),
+            ).fetchone()
+        return row is not None
+
+    async def register_login_failure(
+        self,
+        client_key: str,
+        max_attempts: int,
+        window_seconds: int,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._register_login_failure_sync,
+            client_key,
+            max_attempts,
+            window_seconds,
+        )
+
+    def _register_login_failure_sync(
+        self,
+        client_key: str,
+        max_attempts: int,
+        window_seconds: int,
+    ) -> bool:
+        if max_attempts < 1:
+            raise ValueError("max_attempts 必须大于 0")
+        if window_seconds < 1:
+            raise ValueError("window_seconds 必须大于 0")
+
+        now = utc_now()
+        cutoff = now - timedelta(seconds=window_seconds)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            blocked = connection.execute(
+                "SELECT 1 FROM web_login_blacklist WHERE client_key = ?",
+                (client_key,),
+            ).fetchone()
+            if blocked is not None:
+                return True
+
+            connection.execute("DELETE FROM web_login_failures WHERE attempted_at <= ?", (cutoff.isoformat(),))
+            connection.execute(
+                "INSERT INTO web_login_failures (client_key, attempted_at) VALUES (?, ?)",
+                (client_key, now.isoformat()),
+            )
+            failure_count = connection.execute(
+                "SELECT COUNT(*) FROM web_login_failures WHERE client_key = ? AND attempted_at > ?",
+                (client_key, cutoff.isoformat()),
+            ).fetchone()[0]
+            if failure_count < max_attempts:
+                return False
+
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO web_login_blacklist (client_key, blacklisted_at, failure_count)
+                VALUES (?, ?, ?)
+                """,
+                (client_key, now.isoformat(), failure_count),
+            )
+            connection.execute("DELETE FROM web_login_failures WHERE client_key = ?", (client_key,))
+        return True
+
+    async def accept_login_success(self, client_key: str) -> bool:
+        return await asyncio.to_thread(self._accept_login_success_sync, client_key)
+
+    def _accept_login_success_sync(self, client_key: str) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            blocked = connection.execute(
+                "SELECT 1 FROM web_login_blacklist WHERE client_key = ?",
+                (client_key,),
+            ).fetchone()
+            if blocked is not None:
+                return False
+            connection.execute("DELETE FROM web_login_failures WHERE client_key = ?", (client_key,))
+        return True
+
+    async def list_login_blacklist(self) -> list[str]:
+        return await asyncio.to_thread(self._list_login_blacklist_sync)
+
+    def _list_login_blacklist_sync(self) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT client_key FROM web_login_blacklist ORDER BY blacklisted_at DESC"
+            ).fetchall()
+        return [row["client_key"] for row in rows]
+
+    async def unblock_login_client(self, client_key: str) -> bool:
+        return await asyncio.to_thread(self._unblock_login_client_sync, client_key)
+
+    def _unblock_login_client_sync(self, client_key: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM web_login_blacklist WHERE client_key = ?",
+                (client_key,),
+            )
+            connection.execute("DELETE FROM web_login_failures WHERE client_key = ?", (client_key,))
+        return cursor.rowcount > 0
 
     @staticmethod
     def _serialize(value: Any) -> Any:
@@ -308,6 +502,67 @@ class TaskStore:
             created_at=datetime.fromisoformat(row["created_at"]),
             expires_at=expires_at,
         )
+
+    async def renew_session_if_needed(
+        self,
+        token: str,
+        ttl_seconds: int,
+        renew_before_seconds: int,
+    ) -> tuple[WebSession | None, bool]:
+        return await asyncio.to_thread(
+            self._renew_session_if_needed_sync,
+            token,
+            ttl_seconds,
+            renew_before_seconds,
+        )
+
+    def _renew_session_if_needed_sync(
+        self,
+        token: str,
+        ttl_seconds: int,
+        renew_before_seconds: int,
+    ) -> tuple[WebSession | None, bool]:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds 必须大于 0")
+        if renew_before_seconds < 0:
+            raise ValueError("renew_before_seconds 不能小于 0")
+
+        token_hash = self._session_token_hash(token)
+        now = utc_now()
+        renew_before = now + timedelta(seconds=renew_before_seconds)
+        renewed_expires_at = now + timedelta(seconds=ttl_seconds)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE web_sessions
+                SET expires_at = ?
+                WHERE token_hash = ? AND expires_at > ? AND expires_at <= ?
+                """,
+                (
+                    renewed_expires_at.isoformat(),
+                    token_hash,
+                    now.isoformat(),
+                    renew_before.isoformat(),
+                ),
+            )
+            row = connection.execute(
+                "SELECT username, csrf_token, created_at, expires_at FROM web_sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            if row is None:
+                return None, False
+            expires_at = datetime.fromisoformat(row["expires_at"])
+            if expires_at <= now:
+                connection.execute("DELETE FROM web_sessions WHERE token_hash = ?", (token_hash,))
+                return None, False
+
+        session = WebSession(
+            username=row["username"],
+            csrf_token=row["csrf_token"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            expires_at=expires_at,
+        )
+        return session, cursor.rowcount > 0
 
     async def delete_session(self, token: str) -> bool:
         return await asyncio.to_thread(self._delete_session_sync, token)

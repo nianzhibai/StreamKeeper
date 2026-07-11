@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import math
 import secrets
-import time
-from collections import deque
+from datetime import timedelta
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import quote
 
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .store import TaskStore
+from .store import TaskStore, WebSession, utc_now
 
 SESSION_COOKIE_NAME = "douyin_session"
 CSRF_HEADER_NAME = b"x-csrf-token"
@@ -19,52 +16,24 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 PUBLIC_PATHS = {"/health", "/login", "/api/auth/login", "/favicon.ico"}
 
 
-class LoginRateLimiter:
-    """Small in-memory failure window for the single-process login endpoint."""
-
-    def __init__(self, max_attempts: int, window_seconds: int, max_clients: int = 10000) -> None:
-        self.max_attempts = max_attempts
-        self.window_seconds = window_seconds
-        self.max_clients = max_clients
-        self._attempts: dict[str, deque[float]] = {}
-        self._lock = asyncio.Lock()
-
-    def _prune(self, attempts: deque[float], now: float) -> None:
-        cutoff = now - self.window_seconds
-        while attempts and attempts[0] <= cutoff:
-            attempts.popleft()
-
-    async def retry_after(self, key: str) -> int | None:
-        now = time.monotonic()
-        async with self._lock:
-            attempts = self._attempts.get(key)
-            if attempts is None:
-                return None
-            self._prune(attempts, now)
-            if not attempts:
-                self._attempts.pop(key, None)
-                return None
-            if len(attempts) < self.max_attempts:
-                return None
-            return max(1, math.ceil(self.window_seconds - (now - attempts[0])))
-
-    async def register_failure(self, key: str) -> None:
-        now = time.monotonic()
-        async with self._lock:
-            if key not in self._attempts and len(self._attempts) >= self.max_clients:
-                cutoff = now - self.window_seconds
-                stale_keys = [name for name, values in self._attempts.items() if not values or values[-1] <= cutoff]
-                for name in stale_keys:
-                    self._attempts.pop(name, None)
-                while len(self._attempts) >= self.max_clients:
-                    self._attempts.pop(next(iter(self._attempts)))
-            attempts = self._attempts.setdefault(key, deque())
-            self._prune(attempts, now)
-            attempts.append(now)
-
-    async def reset(self, key: str) -> None:
-        async with self._lock:
-            self._attempts.pop(key, None)
+def set_session_cookie(
+    response: Response,
+    token: str,
+    session: WebSession,
+    ttl_seconds: int,
+    *,
+    secure: bool,
+) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=ttl_seconds,
+        expires=session.expires_at,
+        path="/",
+        secure=secure,
+        httponly=True,
+        samesite="strict",
+    )
 
 
 def read_session_cookie(scope: Scope) -> str | None:
@@ -97,12 +66,20 @@ def _is_same_origin(scope: Scope, headers: dict[bytes, bytes]) -> bool:
 
 
 class SessionAuthMiddleware:
-    """Authenticate browser requests with an opaque, database-backed session."""
+    """Authenticate requests and renew active sessions halfway through their TTL."""
 
-    def __init__(self, app: ASGIApp, store: TaskStore, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        store: TaskStore,
+        enabled: bool = True,
+        session_ttl_seconds: int = 7 * 24 * 3600,
+    ) -> None:
         self.app = app
         self.store = store
         self.enabled = enabled
+        self.session_ttl_seconds = session_ttl_seconds
+        self.renew_before_seconds = max(1, session_ttl_seconds // 2)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not self.enabled:
@@ -126,10 +103,6 @@ class SessionAuthMiddleware:
             await response(scope, receive, send)
             return
 
-        state = scope.setdefault("state", {})
-        state["auth_session"] = session
-        state["auth_token"] = token
-
         method = str(scope.get("method", "GET")).upper()
         if path.startswith("/api/") and method not in SAFE_METHODS:
             headers = dict(scope.get("headers", []))
@@ -140,7 +113,51 @@ class SessionAuthMiddleware:
                 await response(scope, receive, send)
                 return
 
-        await self.app(scope, receive, send)
+        renewed = False
+        if path != "/api/auth/logout" and session.expires_at <= utc_now() + timedelta(
+            seconds=self.renew_before_seconds
+        ):
+            session, renewed = await self.store.renew_session_if_needed(
+                token,
+                self.session_ttl_seconds,
+                self.renew_before_seconds,
+            )
+            if session is None:
+                response = JSONResponse({"detail": "登录已过期，请重新登录"}, status_code=401)
+                await response(scope, receive, send)
+                return
+
+        state = scope.setdefault("state", {})
+        state["auth_session"] = session
+        state["auth_token"] = token
+
+        if not renewed:
+            await self.app(scope, receive, send)
+            return
+
+        cookie_response = Response()
+        set_session_cookie(
+            cookie_response,
+            token,
+            session,
+            self.session_ttl_seconds,
+            secure=scope.get("scheme") == "https",
+        )
+        renewal_header = next(value for name, value in cookie_response.raw_headers if name == b"set-cookie")
+
+        async def send_with_renewed_cookie(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                session_prefix = f"{SESSION_COOKIE_NAME}=".encode("latin-1")
+                has_session_cookie = any(
+                    name == b"set-cookie" and value.startswith(session_prefix) for name, value in headers
+                )
+                if not has_session_cookie:
+                    headers.append((b"set-cookie", renewal_header))
+                    message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_renewed_cookie)
 
 
 class SecurityHeadersMiddleware:

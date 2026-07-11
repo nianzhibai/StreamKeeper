@@ -155,4 +155,78 @@ class StoreTests(IsolatedAsyncioTestCase):
 
         restart_token, _ = await self.store.create_session("admin", 3600)
         await self.store.initialize()
-        self.assertIsNone(await self.store.get_session(restart_token))
+        self.assertIsNotNone(await self.store.get_session(restart_token))
+
+    async def test_session_is_renewed_only_inside_sliding_window(self) -> None:
+        token, created = await self.store.create_session("admin", 3600)
+
+        unchanged, renewed = await self.store.renew_session_if_needed(
+            token,
+            ttl_seconds=7200,
+            renew_before_seconds=60,
+        )
+        self.assertFalse(renewed)
+        self.assertEqual(unchanged, created)
+
+        extended, renewed = await self.store.renew_session_if_needed(
+            token,
+            ttl_seconds=7200,
+            renew_before_seconds=3600,
+        )
+        self.assertTrue(renewed)
+        self.assertGreater(extended.expires_at, created.expires_at)
+
+        unchanged_again, renewed = await self.store.renew_session_if_needed(
+            token,
+            ttl_seconds=7200,
+            renew_before_seconds=3600,
+        )
+        self.assertFalse(renewed)
+        self.assertEqual(unchanged_again, extended)
+
+    async def test_credential_change_revokes_all_sessions(self) -> None:
+        legacy_token, _ = await self.store.create_session("admin", 3600)
+        self.assertTrue(await self.store.sync_web_credentials("admin", "first-long-password"))
+        self.assertIsNone(await self.store.get_session(legacy_token))
+
+        first_token, _ = await self.store.create_session("admin", 3600)
+        second_token, _ = await self.store.create_session("admin", 3600)
+
+        self.assertFalse(await self.store.sync_web_credentials("admin", "first-long-password"))
+        self.assertIsNotNone(await self.store.get_session(first_token))
+        self.assertIsNotNone(await self.store.get_session(second_token))
+
+        self.assertTrue(await self.store.sync_web_credentials("admin", "second-long-password"))
+        self.assertIsNone(await self.store.get_session(first_token))
+        self.assertIsNone(await self.store.get_session(second_token))
+        self.assertNotIn(b"second-long-password", self.store.database_path.read_bytes())
+
+        replacement_token, _ = await self.store.create_session("admin", 3600)
+        await self.store.initialize()
+        self.assertFalse(await self.store.sync_web_credentials("admin", "second-long-password"))
+        self.assertIsNotNone(await self.store.get_session(replacement_token))
+
+    async def test_login_failures_create_persistent_blacklist(self) -> None:
+        client_key = "203.0.113.10"
+        self.assertFalse(await self.store.is_login_blacklisted(client_key))
+        self.assertFalse(await self.store.register_login_failure(client_key, 3, 3600))
+        self.assertFalse(await self.store.register_login_failure(client_key, 3, 3600))
+        self.assertTrue(await self.store.register_login_failure(client_key, 3, 3600))
+
+        await self.store.initialize()
+        self.assertTrue(await self.store.is_login_blacklisted(client_key))
+        self.assertFalse(await self.store.accept_login_success(client_key))
+        self.assertEqual(await self.store.list_login_blacklist(), [client_key])
+
+        self.assertTrue(await self.store.unblock_login_client(client_key))
+        self.assertFalse(await self.store.is_login_blacklisted(client_key))
+        self.assertTrue(await self.store.accept_login_success(client_key))
+
+    async def test_successful_login_clears_failures_before_blacklist(self) -> None:
+        client_key = "198.51.100.20"
+        self.assertFalse(await self.store.register_login_failure(client_key, 3, 3600))
+        self.assertFalse(await self.store.register_login_failure(client_key, 3, 3600))
+        self.assertTrue(await self.store.accept_login_success(client_key))
+
+        self.assertFalse(await self.store.register_login_failure(client_key, 3, 3600))
+        self.assertFalse(await self.store.is_login_blacklisted(client_key))

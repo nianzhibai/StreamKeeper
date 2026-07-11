@@ -180,6 +180,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         )
 
         await scheduler.start(task.id)
+        await asyncio.sleep(0)  # Let the worker enter its cancellation handler before shutdown.
         await wait_for_status(self.store, task.id, TaskStatus.WAITING)
         await scheduler.shutdown()
         result = await self.store.get(task.id)

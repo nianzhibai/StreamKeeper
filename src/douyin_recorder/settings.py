@@ -26,9 +26,9 @@ class Settings:
     web_password: str = ""
     allow_insecure: bool = False
     web_workers: int = 1
-    session_ttl_hours: int = 24
-    login_max_attempts: int = 5
-    login_window_seconds: int = 300
+    session_ttl_hours: int = 24 * 7
+    login_max_attempts: int = 3
+    login_window_seconds: int = 3600
     max_concurrent_recordings: int = 3
     fetch_timeout_seconds: int = 45
     proxy: str | None = None
@@ -53,9 +53,9 @@ class Settings:
             web_password=os.getenv("DOUYIN_WEB_PASSWORD", ""),
             allow_insecure=_env_bool("DOUYIN_ALLOW_INSECURE"),
             web_workers=int(os.getenv("WEB_CONCURRENCY", "1")),
-            session_ttl_hours=int(os.getenv("DOUYIN_SESSION_TTL_HOURS", "24")),
-            login_max_attempts=int(os.getenv("DOUYIN_LOGIN_MAX_ATTEMPTS", "5")),
-            login_window_seconds=int(os.getenv("DOUYIN_LOGIN_WINDOW_SECONDS", "300")),
+            session_ttl_hours=int(os.getenv("DOUYIN_SESSION_TTL_HOURS", str(24 * 7))),
+            login_max_attempts=int(os.getenv("DOUYIN_LOGIN_MAX_ATTEMPTS", "3")),
+            login_window_seconds=int(os.getenv("DOUYIN_LOGIN_WINDOW_SECONDS", "3600")),
             max_concurrent_recordings=int(os.getenv("DOUYIN_MAX_CONCURRENT_RECORDINGS", "3")),
             fetch_timeout_seconds=int(os.getenv("DOUYIN_FETCH_TIMEOUT_SECONDS", "45")),
             proxy=os.getenv("DOUYIN_PROXY") or None,

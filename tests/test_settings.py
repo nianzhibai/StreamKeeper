@@ -18,6 +18,12 @@ def make_settings(root: Path, **overrides) -> Settings:
 
 
 class SettingsTests(TestCase):
+    def test_session_defaults_to_seven_days(self) -> None:
+        settings = Settings()
+        self.assertEqual(settings.session_ttl_hours, 24 * 7)
+        self.assertEqual(settings.login_max_attempts, 3)
+        self.assertEqual(settings.login_window_seconds, 3600)
+
     def test_prepare_creates_server_directories(self) -> None:
         with TemporaryDirectory() as tmp:
             settings = make_settings(Path(tmp) / "data")

@@ -1,3 +1,6 @@
+import sqlite3
+from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -136,6 +139,7 @@ class WebTests(TestCase):
         set_cookie = self.login_response.headers["set-cookie"].lower()
         self.assertIn("httponly", set_cookie)
         self.assertIn("samesite=strict", set_cookie)
+        self.assertIn("max-age=604800", set_cookie)
 
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
@@ -153,6 +157,26 @@ class WebTests(TestCase):
         self.assertEqual(logout.status_code, 204)
         self.assertIsNone(self.client.cookies.get(SESSION_COOKIE_NAME))
         self.assertEqual(self.client.get("/api/auth/session").status_code, 401)
+
+    def test_active_session_renews_once_inside_half_ttl_window(self) -> None:
+        self.login()
+        near_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
+            connection.execute(
+                "UPDATE web_sessions SET expires_at = ?",
+                (near_expiry.isoformat(),),
+            )
+            connection.commit()
+
+        renewed = self.client.get("/api/auth/session")
+        self.assertEqual(renewed.status_code, 200)
+        renewed_expiry = datetime.fromisoformat(renewed.json()["expires_at"])
+        self.assertGreater(renewed_expiry, datetime.now(timezone.utc) + timedelta(days=6))
+        self.assertIn("max-age=604800", renewed.headers["set-cookie"].lower())
+
+        unchanged = self.client.get("/api/auth/session")
+        self.assertEqual(unchanged.status_code, 200)
+        self.assertNotIn("set-cookie", unchanged.headers)
 
     def test_csrf_rejects_cross_origin_mutation(self) -> None:
         self.login()
@@ -310,20 +334,42 @@ class WebTests(TestCase):
         self.assertNotIn("m3u8_url", payload)
         self.assertNotIn("secret", response.text)
 
-    def test_login_rate_limit(self) -> None:
-        for _ in range(self.settings.login_max_attempts):
+    def test_failed_logins_permanently_blacklist_ip(self) -> None:
+        self.login()
+        for _ in range(self.settings.login_max_attempts - 1):
             response = self.client.post(
                 "/api/auth/login",
                 json={"username": "admin", "password": "wrong-password"},
             )
             self.assertEqual(response.status_code, 401)
 
-        limited = self.client.post(
+        blocked = self.client.post(
             "/api/auth/login",
             json={"username": "admin", "password": "wrong-password"},
         )
-        self.assertEqual(limited.status_code, 429)
-        self.assertGreater(int(limited.headers["retry-after"]), 0)
+        self.assertEqual(blocked.status_code, 403)
+        self.assertIn("永久禁止", blocked.text)
+
+        correct_password = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "secret-password"},
+        )
+        self.assertEqual(correct_password.status_code, 403)
+
+        blocked_clients = self.client.get("/api/auth/blocked-clients")
+        self.assertEqual(blocked_clients.status_code, 200)
+        self.assertEqual(blocked_clients.json(), ["testclient"])
+        unblocked = self.client.delete(
+            "/api/auth/blocked-clients/testclient",
+            headers=self.csrf_headers,
+        )
+        self.assertEqual(unblocked.status_code, 204)
+
+        accepted = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "secret-password"},
+        )
+        self.assertEqual(accepted.status_code, 200)
 
     def test_rejects_unknown_fields_and_invalid_url(self) -> None:
         self.login()
