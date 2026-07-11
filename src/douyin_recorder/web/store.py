@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import secrets
 import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -19,6 +22,7 @@ CONFIG_COLUMNS = {
     "output_format",
     "source",
     "segment_seconds",
+    "segment_count",
     "monitor",
     "interval_seconds",
 }
@@ -37,6 +41,14 @@ RUNTIME_COLUMNS = {
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class WebSession:
+    username: str
+    csrf_token: str
+    created_at: datetime
+    expires_at: datetime
 
 
 class TaskStore:
@@ -71,6 +83,7 @@ class TaskStore:
                     output_format TEXT NOT NULL,
                     source TEXT NOT NULL,
                     segment_seconds INTEGER NOT NULL,
+                    segment_count INTEGER NOT NULL DEFAULT 4,
                     monitor INTEGER NOT NULL,
                     interval_seconds INTEGER NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 0,
@@ -87,6 +100,28 @@ class TaskStore:
                 )
                 """
             )
+            task_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(recording_tasks)").fetchall()
+            }
+            if "segment_count" not in task_columns:
+                connection.execute(
+                    "ALTER TABLE recording_tasks ADD COLUMN segment_count INTEGER NOT NULL DEFAULT 0"
+                )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS web_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    csrf_token TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_web_sessions_expires_at ON web_sessions (expires_at)")
+            # Credentials come from the process environment. Revoking sessions on restart
+            # makes a password change take effect immediately without storing a password hash.
+            connection.execute("DELETE FROM web_sessions")
 
     @staticmethod
     def _serialize(value: Any) -> Any:
@@ -116,8 +151,8 @@ class TaskStore:
                 """
                 INSERT INTO recording_tasks (
                     id, url, label, quality, output_format, source, segment_seconds,
-                    monitor, interval_seconds, enabled, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    segment_count, monitor, interval_seconds, enabled, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -127,6 +162,7 @@ class TaskStore:
                     data["output_format"],
                     data["source"],
                     data["segment_seconds"],
+                    data["segment_count"],
                     int(data["monitor"]),
                     data["interval_seconds"],
                     TaskStatus.STOPPED.value,
@@ -216,3 +252,70 @@ class TaskStore:
                     TaskStatus.RECORDING.value,
                 ),
             )
+
+    @staticmethod
+    def _session_token_hash(token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    async def create_session(self, username: str, ttl_seconds: int) -> tuple[str, WebSession]:
+        return await asyncio.to_thread(self._create_session_sync, username, ttl_seconds)
+
+    def _create_session_sync(self, username: str, ttl_seconds: int) -> tuple[str, WebSession]:
+        token = secrets.token_urlsafe(32)
+        now = utc_now()
+        session = WebSession(
+            username=username,
+            csrf_token=secrets.token_urlsafe(24),
+            created_at=now,
+            expires_at=now + timedelta(seconds=ttl_seconds),
+        )
+        with self._connect() as connection:
+            connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (now.isoformat(),))
+            connection.execute(
+                """
+                INSERT INTO web_sessions (token_hash, username, csrf_token, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    self._session_token_hash(token),
+                    session.username,
+                    session.csrf_token,
+                    session.created_at.isoformat(),
+                    session.expires_at.isoformat(),
+                ),
+            )
+        return token, session
+
+    async def get_session(self, token: str) -> WebSession | None:
+        return await asyncio.to_thread(self._get_session_sync, token)
+
+    def _get_session_sync(self, token: str) -> WebSession | None:
+        token_hash = self._session_token_hash(token)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT username, csrf_token, created_at, expires_at FROM web_sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            expires_at = datetime.fromisoformat(row["expires_at"])
+            if expires_at <= utc_now():
+                connection.execute("DELETE FROM web_sessions WHERE token_hash = ?", (token_hash,))
+                return None
+        return WebSession(
+            username=row["username"],
+            csrf_token=row["csrf_token"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            expires_at=expires_at,
+        )
+
+    async def delete_session(self, token: str) -> bool:
+        return await asyncio.to_thread(self._delete_session_sync, token)
+
+    def _delete_session_sync(self, token: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM web_sessions WHERE token_hash = ?",
+                (self._session_token_hash(token),),
+            )
+        return cursor.rowcount > 0

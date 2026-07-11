@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "douyin-live-recorder"
-version = "0.2.0"
-description = "A server-first web application for recording Douyin live streams"
+name = "douyin-stream-keeper"
+version = "0.4.0"
+description = "A server-first web application for monitoring and recording Douyin live streams"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-douyin-recorder-web = "douyin_recorder.web.server:main"
+douyin-stream-keeper = "douyin_recorder.web.server:main"
 
 [project.optional-dependencies]
 dev = [

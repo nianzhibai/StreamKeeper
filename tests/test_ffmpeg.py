@@ -57,3 +57,24 @@ class FFmpegCommandTests(TestCase):
         self.assertIn("segment", command)
         self.assertIn("600", command)
         self.assertIn("movflags=+frag_keyframe+empty_moov+default_base_moof", command)
+
+    def test_segment_count_limits_total_output_duration(self) -> None:
+        command = build_ffmpeg_command(
+            "https://example.com/live.flv",
+            "output_%03d.ts",
+            segment_seconds=1800,
+            segment_count=4,
+        )
+
+        self.assertEqual(command[command.index("-t") + 1], "7200")
+        self.assertEqual(command[command.index("-progress") + 1], "pipe:1")
+        self.assertLess(command.index("-t"), command.index("-f"))
+
+    def test_segment_count_requires_segmentation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "segment_seconds"):
+            build_ffmpeg_command(
+                "https://example.com/live.flv",
+                "output.ts",
+                segment_seconds=0,
+                segment_count=4,
+            )

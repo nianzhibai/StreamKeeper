@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from ..client import DouyinClient
 
@@ -26,6 +26,17 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LoginRequest(StrictModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class AuthSession(StrictModel):
+    username: str
+    csrf_token: str
+    expires_at: datetime
+
+
 class TaskConfig(StrictModel):
     url: str = Field(min_length=10, max_length=1000)
     label: str | None = Field(default=None, max_length=80)
@@ -33,6 +44,7 @@ class TaskConfig(StrictModel):
     output_format: OutputFormat = "ts"
     source: SourcePreference = "auto"
     segment_seconds: int = Field(default=1800, ge=0, le=86400)
+    segment_count: int = Field(default=4, ge=0, le=10000)
     monitor: bool = True
     interval_seconds: int = Field(default=60, ge=10, le=86400)
 
@@ -47,6 +59,12 @@ class TaskConfig(StrictModel):
         normalized = value.strip() if value else None
         return normalized or None
 
+    @model_validator(mode="after")
+    def validate_segment_limit(self) -> TaskConfig:
+        if self.segment_count and not self.segment_seconds:
+            raise ValueError("设置段数时，分段时长必须大于 0")
+        return self
+
 
 class TaskCreate(TaskConfig):
     auto_start: bool = True
@@ -59,6 +77,7 @@ class TaskUpdate(StrictModel):
     output_format: OutputFormat | None = None
     source: SourcePreference | None = None
     segment_seconds: int | None = Field(default=None, ge=0, le=86400)
+    segment_count: int | None = Field(default=None, ge=0, le=10000)
     monitor: bool | None = None
     interval_seconds: int | None = Field(default=None, ge=10, le=86400)
 

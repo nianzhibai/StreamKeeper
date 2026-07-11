@@ -1,55 +1,146 @@
 from __future__ import annotations
 
-import base64
-import binascii
+import asyncio
+import math
 import secrets
+import time
+from collections import deque
+from http.cookies import CookieError, SimpleCookie
+from urllib.parse import quote
 
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .store import TaskStore
 
-class BasicAuthMiddleware:
-    """Protect every HTTP route except the container health check."""
+SESSION_COOKIE_NAME = "douyin_session"
+CSRF_HEADER_NAME = b"x-csrf-token"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+PUBLIC_PATHS = {"/health", "/login", "/api/auth/login", "/favicon.ico"}
 
-    def __init__(self, app: ASGIApp, username: str, password: str) -> None:
+
+class LoginRateLimiter:
+    """Small in-memory failure window for the single-process login endpoint."""
+
+    def __init__(self, max_attempts: int, window_seconds: int, max_clients: int = 10000) -> None:
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.max_clients = max_clients
+        self._attempts: dict[str, deque[float]] = {}
+        self._lock = asyncio.Lock()
+
+    def _prune(self, attempts: deque[float], now: float) -> None:
+        cutoff = now - self.window_seconds
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+
+    async def retry_after(self, key: str) -> int | None:
+        now = time.monotonic()
+        async with self._lock:
+            attempts = self._attempts.get(key)
+            if attempts is None:
+                return None
+            self._prune(attempts, now)
+            if not attempts:
+                self._attempts.pop(key, None)
+                return None
+            if len(attempts) < self.max_attempts:
+                return None
+            return max(1, math.ceil(self.window_seconds - (now - attempts[0])))
+
+    async def register_failure(self, key: str) -> None:
+        now = time.monotonic()
+        async with self._lock:
+            if key not in self._attempts and len(self._attempts) >= self.max_clients:
+                cutoff = now - self.window_seconds
+                stale_keys = [name for name, values in self._attempts.items() if not values or values[-1] <= cutoff]
+                for name in stale_keys:
+                    self._attempts.pop(name, None)
+                while len(self._attempts) >= self.max_clients:
+                    self._attempts.pop(next(iter(self._attempts)))
+            attempts = self._attempts.setdefault(key, deque())
+            self._prune(attempts, now)
+            attempts.append(now)
+
+    async def reset(self, key: str) -> None:
+        async with self._lock:
+            self._attempts.pop(key, None)
+
+
+def read_session_cookie(scope: Scope) -> str | None:
+    raw_cookie = dict(scope.get("headers", [])).get(b"cookie")
+    if not raw_cookie:
+        return None
+    try:
+        cookies = SimpleCookie()
+        cookies.load(raw_cookie.decode("latin-1"))
+        morsel = cookies.get(SESSION_COOKIE_NAME)
+        return morsel.value if morsel else None
+    except (CookieError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _is_public_path(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith("/static/")
+
+
+def _is_same_origin(scope: Scope, headers: dict[bytes, bytes]) -> bool:
+    origin = headers.get(b"origin")
+    host = headers.get(b"host")
+    if not origin or not host:
+        return False
+    try:
+        expected = f"{scope.get('scheme', 'http')}://{host.decode('latin-1')}"
+        return secrets.compare_digest(origin.decode("latin-1").rstrip("/"), expected.rstrip("/"))
+    except UnicodeDecodeError:
+        return False
+
+
+class SessionAuthMiddleware:
+    """Authenticate browser requests with an opaque, database-backed session."""
+
+    def __init__(self, app: ASGIApp, store: TaskStore, enabled: bool = True) -> None:
         self.app = app
-        self.username = username
-        self.password = password
-
-    @staticmethod
-    def _read_credentials(scope: Scope) -> tuple[str, str] | None:
-        headers = dict(scope.get("headers", []))
-        value = headers.get(b"authorization", b"")
-        if not value.lower().startswith(b"basic "):
-            return None
-        try:
-            decoded = base64.b64decode(value.split(b" ", 1)[1], validate=True).decode("utf-8")
-            username, password = decoded.split(":", 1)
-        except (ValueError, UnicodeDecodeError, binascii.Error):
-            return None
-        return username, password
+        self.store = store
+        self.enabled = enabled
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("path") == "/health" or not self.password:
+        if scope["type"] != "http" or not self.enabled:
             await self.app(scope, receive, send)
             return
 
-        credentials = self._read_credentials(scope)
-        authenticated = (
-            credentials is not None
-            and secrets.compare_digest(credentials[0], self.username)
-            and secrets.compare_digest(credentials[1], self.password)
-        )
-        if authenticated:
+        path = str(scope.get("path", ""))
+        if _is_public_path(path):
             await self.app(scope, receive, send)
             return
 
-        response = PlainTextResponse(
-            "Authentication required",
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Douyin Recorder", charset="UTF-8"'},
-        )
-        await response(scope, receive, send)
+        token = read_session_cookie(scope)
+        session = await self.store.get_session(token) if token else None
+        if session is None:
+            if path.startswith("/api/") and path != "/api/docs":
+                response = JSONResponse({"detail": "登录已过期，请重新登录"}, status_code=401)
+            else:
+                query = scope.get("query_string", b"").decode("latin-1")
+                destination = path + (f"?{query}" if query else "")
+                response = RedirectResponse(f"/login?next={quote(destination, safe='')}", status_code=303)
+            await response(scope, receive, send)
+            return
+
+        state = scope.setdefault("state", {})
+        state["auth_session"] = session
+        state["auth_token"] = token
+
+        method = str(scope.get("method", "GET")).upper()
+        if path.startswith("/api/") and method not in SAFE_METHODS:
+            headers = dict(scope.get("headers", []))
+            csrf_value = headers.get(CSRF_HEADER_NAME, b"").decode("latin-1")
+            valid_token = bool(csrf_value) and secrets.compare_digest(csrf_value, session.csrf_token)
+            if not valid_token and not _is_same_origin(scope, headers):
+                response = JSONResponse({"detail": "CSRF 校验失败，请刷新页面后重试"}, status_code=403)
+                await response(scope, receive, send)
+                return
+
+        await self.app(scope, receive, send)
 
 
 class SecurityHeadersMiddleware:
@@ -78,15 +169,14 @@ class SecurityHeadersMiddleware:
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
-                        (
-                            b"content-security-policy",
-                            content_security_policy,
-                        ),
+                        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+                        (b"content-security-policy", content_security_policy),
                     ]
                 )
                 if scope.get("scheme") == "https":
                     headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
-                if str(scope.get("path", "")).startswith("/api/"):
+                path = str(scope.get("path", ""))
+                if path == "/login" or path.startswith("/api/"):
                     headers.append((b"cache-control", b"no-store"))
                 message["headers"] = headers
             await send(message)

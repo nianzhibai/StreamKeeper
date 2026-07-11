@@ -80,6 +80,7 @@ class RecorderOptions:
     output_format: str = "ts"
     source: str = "auto"
     segment_seconds: int = 0
+    segment_count: int = 0
     proxy: str | None = None
     ffmpeg: str = "ffmpeg"
     name: str | None = None
@@ -92,6 +93,10 @@ class RecorderOptions:
             raise ValueError(f"不支持的直播源类型: {self.source}")
         if self.segment_seconds < 0:
             raise ValueError("segment_seconds 不能小于 0")
+        if self.segment_count < 0:
+            raise ValueError("segment_count 不能小于 0")
+        if self.segment_count and not self.segment_seconds:
+            raise ValueError("设置段数时，分段时长必须大于 0")
 
 
 class Recorder:
@@ -133,6 +138,7 @@ class Recorder:
             output_path,
             output_format=self.options.output_format,
             segment_seconds=self.options.segment_seconds,
+            segment_count=self.options.segment_count,
             proxy=self.options.proxy,
             executable=executable,
             loglevel=self.options.ffmpeg_loglevel,
@@ -144,7 +150,7 @@ class Recorder:
             process = await self._process_factory(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE if self.options.segment_count else asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
             )
@@ -153,6 +159,9 @@ class Recorder:
         self._process = process  # type: ignore[assignment]
         stderr = getattr(process, "stderr", None)
         stderr_task = asyncio.create_task(self._consume_stderr(stderr)) if stderr is not None else None
+        stdout = getattr(process, "stdout", None)
+        progress_task = asyncio.create_task(self._consume_progress(stdout)) if stdout is not None else None
+        progress_seconds = 0.0
         try:
             return_code = await process.wait()  # type: ignore[attr-defined]
         except asyncio.CancelledError:
@@ -161,13 +170,20 @@ class Recorder:
         finally:
             if stderr_task is not None:
                 await asyncio.gather(stderr_task, return_exceptions=True)
+            if progress_task is not None:
+                progress_result = await asyncio.gather(progress_task, return_exceptions=True)
+                if progress_result and isinstance(progress_result[0], float):
+                    progress_seconds = progress_result[0]
             self._process = None
 
         if return_code not in {0, 255}:
             raise FFmpegRecordingError(f"FFmpeg 录制失败，退出码: {return_code}")
 
+        limit_seconds = self.options.segment_seconds * self.options.segment_count
+        limit_tolerance = min(2.0, limit_seconds * 0.01)
+        limit_reached = bool(limit_seconds and progress_seconds >= limit_seconds - limit_tolerance)
         logger.info("录制结束：%s", output_path)
-        return RecordingResult(str(output_path), selected_source, return_code)
+        return RecordingResult(str(output_path), selected_source, return_code, limit_reached)
 
     @staticmethod
     async def _consume_stderr(stream: asyncio.StreamReader) -> None:
@@ -175,6 +191,18 @@ class Recorder:
             message = redact_stream_urls(line.decode(errors="replace").strip())
             if message:
                 logger.warning("FFmpeg: %s", message)
+
+    @staticmethod
+    async def _consume_progress(stream: asyncio.StreamReader) -> float:
+        max_seconds = 0.0
+        while line := await stream.readline():
+            key, separator, value = line.decode(errors="replace").strip().partition("=")
+            if separator and key == "out_time_us":
+                try:
+                    max_seconds = max(max_seconds, int(value) / 1_000_000)
+                except ValueError:
+                    continue
+        return max_seconds
 
     async def stop(self, timeout: float = 15.0) -> None:
         process = self._process

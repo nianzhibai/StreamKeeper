@@ -54,3 +54,4 @@ class RecordingResult:
     output_path: str
     source: SelectedSource
     return_code: int
+    limit_reached: bool = False

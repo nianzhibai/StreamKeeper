@@ -1,8 +1,10 @@
 const state = {
   tasks: [],
   system: null,
+  session: null,
   filter: "all",
   loading: false,
+  editingTaskId: null,
 };
 
 const elements = {
@@ -10,11 +12,15 @@ const elements = {
   emptyState: document.querySelector("#empty-state"),
   errorBanner: document.querySelector("#error-banner"),
   dialog: document.querySelector("#create-dialog"),
+  dialogTitle: document.querySelector("#dialog-title"),
   form: document.querySelector("#create-form"),
   submit: document.querySelector("#create-submit"),
+  autoStartField: document.querySelector("#auto-start-field"),
   inspectButton: document.querySelector("#inspect-button"),
   inspectResult: document.querySelector("#inspect-result"),
   health: document.querySelector("#server-health"),
+  accountName: document.querySelector("#account-name"),
+  logoutButton: document.querySelector("#logout-button"),
   toastRegion: document.querySelector("#toast-region"),
 };
 
@@ -60,8 +66,17 @@ function toast(message, type = "info") {
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  const method = String(options.method || "GET").toUpperCase();
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method) && state.session?.csrf_token) {
+    headers.set("X-CSRF-Token", state.session.csrf_token);
+  }
   const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+  if (response.status === 401) {
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.location.replace(`/login?next=${encodeURIComponent(next)}`);
+    throw new Error("登录已过期，正在返回登录页");
+  }
   if (response.status === 204) return null;
   const contentType = response.headers.get("content-type") || "";
   const body = contentType.includes("application/json") ? await response.json() : await response.text();
@@ -75,6 +90,32 @@ async function api(path, options = {}) {
   return body;
 }
 
+async function logout() {
+  elements.logoutButton.disabled = true;
+  elements.logoutButton.textContent = "退出中";
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (error) {
+    if (!String(error.message).includes("登录已过期")) toast(error.message, "error");
+  } finally {
+    window.location.replace("/login");
+  }
+}
+
+async function bootstrap() {
+  try {
+    state.session = await api("/api/auth/session");
+    elements.accountName.textContent = state.session.username;
+    await refresh();
+    window.setInterval(() => refresh({ quiet: true }), 5000);
+  } catch (error) {
+    if (!String(error.message).includes("登录已过期")) {
+      elements.errorBanner.textContent = `初始化失败：${error.message}`;
+      elements.errorBanner.classList.remove("hidden");
+    }
+  }
+}
+
 function matchesFilter(task) {
   if (state.filter === "recording") return task.status === "recording";
   if (state.filter === "enabled") return task.enabled && task.status !== "recording";
@@ -86,7 +127,9 @@ function renderTask(task) {
   const title = task.label || task.anchor_name || "未识别主播";
   const avatar = [...title][0] || "录";
   const statusClass = escapeHtml(task.status);
-  const segment = task.segment_seconds ? `${task.segment_seconds}s` : "不分段";
+  const segment = task.segment_seconds
+    ? `${task.segment_seconds}s${task.segment_count ? ` × ${task.segment_count}` : ""}`
+    : "不分段";
   const action = task.enabled
     ? `<button class="task-action stop" type="button" data-action="stop" data-id="${task.id}">停止</button>`
     : `<button class="task-action start" type="button" data-action="start" data-id="${task.id}">启动</button>`;
@@ -113,6 +156,7 @@ function renderTask(task) {
       <div class="task-footer">
         <span class="last-check">上次检查：${escapeHtml(formatTime(task.last_checked_at))}</span>
         <div class="task-actions">
+          <button class="task-action edit" type="button" data-action="edit" data-id="${task.id}">编辑</button>
           ${action}
           <button class="task-action delete" type="button" data-action="delete" data-id="${task.id}">删除</button>
         </div>
@@ -134,11 +178,6 @@ function render() {
 
   if (state.system) {
     document.querySelector("#stat-disk").textContent = `${state.system.free_space_gb} GB`;
-    const runtime = [
-      state.system.ffmpeg_available ? "FFmpeg ✓" : "FFmpeg 缺失",
-      state.system.node_available ? "Node ✓" : "Node 缺失",
-    ];
-    document.querySelector("#stat-runtime").textContent = runtime.join(" · ");
   }
 }
 
@@ -164,14 +203,45 @@ async function refresh({ quiet = false } = {}) {
   }
 }
 
-function openDialog() {
-  elements.inspectResult.classList.add("hidden");
+function showTaskDialog() {
   elements.dialog.showModal();
   window.setTimeout(() => document.querySelector("#task-url").focus(), 50);
 }
 
+function openCreateDialog() {
+  state.editingTaskId = null;
+  elements.form.reset();
+  elements.form.elements.segment_count.setCustomValidity("");
+  elements.dialogTitle.textContent = "新建任务";
+  elements.submit.textContent = "创建任务";
+  elements.autoStartField.classList.remove("hidden");
+  elements.inspectResult.className = "inspect-result hidden";
+  showTaskDialog();
+}
+
+function openEditDialog(task) {
+  state.editingTaskId = task.id;
+  elements.form.reset();
+  elements.form.elements.url.value = task.url;
+  elements.form.elements.label.value = task.label || "";
+  elements.form.elements.quality.value = task.quality;
+  elements.form.elements.output_format.value = task.output_format;
+  elements.form.elements.source.value = task.source;
+  elements.form.elements.segment_seconds.value = String(task.segment_seconds);
+  elements.form.elements.segment_count.value = String(task.segment_count);
+  elements.form.elements.monitor.checked = task.monitor;
+  elements.form.elements.interval_seconds.value = String(task.interval_seconds);
+  elements.form.elements.segment_count.setCustomValidity("");
+  elements.dialogTitle.textContent = "编辑任务";
+  elements.submit.textContent = "保存";
+  elements.autoStartField.classList.add("hidden");
+  elements.inspectResult.className = "inspect-result hidden";
+  showTaskDialog();
+}
+
 function closeDialog() {
   elements.dialog.close();
+  state.editingTaskId = null;
 }
 
 async function inspectRoom() {
@@ -184,14 +254,19 @@ async function inspectRoom() {
   elements.inspectButton.disabled = true;
   elements.inspectButton.textContent = "检测中";
   elements.inspectResult.className = "inspect-result";
-  elements.inspectResult.textContent = "服务器正在解析直播间…";
+  elements.inspectResult.textContent = "检测中…";
   try {
     const result = await api("/api/inspect", {
       method: "POST",
       body: JSON.stringify({ url, quality }),
     });
     elements.inspectResult.className = "inspect-result";
-    elements.inspectResult.textContent = `${result.anchor_name || "未知主播"} · ${result.is_live ? "正在直播" : "当前未开播"} · ${result.has_flv ? "FLV" : "无 FLV"} / ${result.has_hls ? "HLS" : "无 HLS"}`;
+    const sources = [result.has_flv && "FLV", result.has_hls && "HLS"].filter(Boolean).join(" / ");
+    elements.inspectResult.textContent = [
+      result.anchor_name || "未知主播",
+      result.is_live ? "直播中" : "未开播",
+      sources,
+    ].filter(Boolean).join(" · ");
   } catch (error) {
     elements.inspectResult.className = "inspect-result error";
     elements.inspectResult.textContent = `检测失败：${error.message}`;
@@ -201,9 +276,21 @@ async function inspectRoom() {
   }
 }
 
-async function createTask(event) {
+function validateSegmentSettings() {
+  const segmentSeconds = Number(elements.form.elements.segment_seconds.value);
+  const segmentCount = Number(elements.form.elements.segment_count.value);
+  elements.form.elements.segment_count.setCustomValidity(
+    segmentCount > 0 && segmentSeconds <= 0 ? "设置段数时，分段时长必须大于 0" : "",
+  );
+}
+
+async function submitTask(event) {
   event.preventDefault();
+  validateSegmentSettings();
   if (!elements.form.reportValidity()) return;
+  const editingTaskId = state.editingTaskId;
+  const isEditing = Boolean(editingTaskId);
+  const editingTask = isEditing ? state.tasks.find((task) => task.id === editingTaskId) : null;
   const data = new FormData(elements.form);
   const payload = {
     url: String(data.get("url") || "").trim(),
@@ -212,34 +299,52 @@ async function createTask(event) {
     output_format: data.get("output_format"),
     source: data.get("source"),
     segment_seconds: Number(data.get("segment_seconds")),
+    segment_count: Number(data.get("segment_count")),
     monitor: data.get("monitor") === "on",
     interval_seconds: Number(data.get("interval_seconds")),
-    auto_start: data.get("auto_start") === "on",
   };
+  const restartsRecording = editingTask && (
+    payload.url !== editingTask.url
+    || payload.quality !== editingTask.quality
+    || payload.output_format !== editingTask.output_format
+    || payload.source !== editingTask.source
+    || payload.segment_seconds !== editingTask.segment_seconds
+    || payload.segment_count !== editingTask.segment_count
+    || payload.monitor !== editingTask.monitor
+    || payload.interval_seconds !== editingTask.interval_seconds
+  );
+  if (editingTask?.status === "recording" && restartsRecording
+      && !window.confirm("保存后将重新开始录制，继续？")) {
+    return;
+  }
+  if (!isEditing) payload.auto_start = data.get("auto_start") === "on";
   elements.submit.disabled = true;
-  elements.submit.textContent = "正在保存…";
+  elements.submit.textContent = isEditing ? "保存中…" : "创建中…";
   try {
-    await api("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
-    elements.form.reset();
-    elements.form.elements.segment_seconds.value = "1800";
-    elements.form.elements.interval_seconds.value = "60";
-    elements.form.elements.monitor.checked = true;
-    elements.form.elements.auto_start.checked = true;
+    if (isEditing) {
+      await api(`/api/tasks/${editingTaskId}`, { method: "PATCH", body: JSON.stringify(payload) });
+    } else {
+      await api("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
+    }
     closeDialog();
-    toast("录制任务已创建");
+    toast(isEditing ? "配置已更新" : "任务已创建");
     await refresh({ quiet: true });
   } catch (error) {
     toast(error.message, "error");
   } finally {
     elements.submit.disabled = false;
-    elements.submit.textContent = "保存并启动";
+    elements.submit.textContent = isEditing ? "保存" : "创建任务";
   }
 }
 
 async function taskAction(action, taskId) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
-  if (action === "delete" && !window.confirm(`确定删除“${task.label || task.anchor_name || "该任务"}”？正在录制时会先停止。`)) {
+  if (action === "edit") {
+    openEditDialog(task);
+    return;
+  }
+  if (action === "delete" && !window.confirm(`删除“${task.label || task.anchor_name || "该任务"}”？`)) {
     return;
   }
   try {
@@ -256,12 +361,15 @@ async function taskAction(action, taskId) {
   }
 }
 
-document.querySelector("#open-create-button").addEventListener("click", openDialog);
-document.querySelectorAll("[data-open-create]").forEach((button) => button.addEventListener("click", openDialog));
+document.querySelector("#open-create-button").addEventListener("click", openCreateDialog);
+document.querySelectorAll("[data-open-create]").forEach((button) => button.addEventListener("click", openCreateDialog));
 document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", closeDialog));
 document.querySelector("#refresh-button").addEventListener("click", () => refresh());
+elements.logoutButton.addEventListener("click", logout);
 elements.inspectButton.addEventListener("click", inspectRoom);
-elements.form.addEventListener("submit", createTask);
+elements.form.addEventListener("submit", submitTask);
+elements.form.elements.segment_seconds.addEventListener("input", validateSegmentSettings);
+elements.form.elements.segment_count.addEventListener("input", validateSegmentSettings);
 elements.dialog.addEventListener("click", (event) => {
   if (event.target === elements.dialog) closeDialog();
 });
@@ -278,5 +386,4 @@ document.querySelectorAll(".filter-button").forEach((button) => {
   });
 });
 
-refresh();
-window.setInterval(() => refresh({ quiet: true }), 5000);
+bootstrap();

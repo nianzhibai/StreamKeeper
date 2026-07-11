@@ -62,8 +62,24 @@ class ClientTests(IsolatedAsyncioTestCase):
         await client.fetch("https://www.douyin.com/user/abc")
         self.assertEqual(stream.calls[0][0], "app")
 
+    async def test_share_text_extracts_short_url(self) -> None:
+        share_text = (
+            "7- #在抖音，记录美好生活#【爱雄泽】正在直播，来和我一起支持Ta吧。"
+            "复制下方链接，打开【抖音】，直接观看直播！ "
+            "https://v.douyin.com/eAb3MZKYD48/ 9@7.com :4pm"
+        )
+
+        await self.client.fetch(share_text)
+
+        self.assertEqual(self.stream.calls[0], ("app", "https://v.douyin.com/eAb3MZKYD48/"))
+
 
 class UrlValidationTests(TestCase):
+    def test_extracts_supported_url_from_share_text(self) -> None:
+        value = "正在直播，点击 https://live.douyin.com/123456789。打开抖音观看"
+
+        self.assertEqual(DouyinClient.validate_url(value), "https://live.douyin.com/123456789")
+
     def test_rejects_non_douyin_urls(self) -> None:
         with self.assertRaises(InvalidDouyinUrl):
             DouyinClient.validate_url("https://example.com/live/123")
@@ -71,6 +87,9 @@ class UrlValidationTests(TestCase):
     def test_rejects_host_suffix_attack(self) -> None:
         with self.assertRaises(InvalidDouyinUrl):
             DouyinClient.validate_url("https://douyin.com.example.org/live/123")
+
+        with self.assertRaises(InvalidDouyinUrl):
+            DouyinClient.validate_url("分享文本 https://v.douyin.com.evil.example/AbCdE/ 打开抖音")
 
     def test_rejects_unknown_douyin_subdomain(self) -> None:
         with self.assertRaises(InvalidDouyinUrl):

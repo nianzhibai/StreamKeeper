@@ -20,13 +20,14 @@ def make_settings(root: Path) -> Settings:
     )
 
 
-def make_config(*, monitor: bool = False) -> TaskConfig:
+def make_config(*, monitor: bool = False, segment_seconds: int = 0, segment_count: int = 0) -> TaskConfig:
     return TaskConfig(
         url="https://live.douyin.com/123456789",
         quality="OD",
         output_format="ts",
         source="auto",
-        segment_seconds=0,
+        segment_seconds=segment_seconds,
+        segment_count=segment_count,
         monitor=monitor,
         interval_seconds=10,
     )
@@ -65,6 +66,16 @@ class FakeRecorder:
             "/data/recordings/test.ts",
             SelectedSource("flv", info.flv_url or ""),
             0,
+        )
+
+
+class LimitReachedRecorder(FakeRecorder):
+    async def record(self, info: LiveInfo) -> RecordingResult:
+        return RecordingResult(
+            "/data/recordings/test_%03d.ts",
+            SelectedSource("flv", info.flv_url or ""),
+            0,
+            limit_reached=True,
         )
 
 
@@ -118,6 +129,46 @@ class SchedulerTests(IsolatedAsyncioTestCase):
 
         self.assertFalse(result.enabled)
         self.assertEqual(result.output_path, "/data/recordings/test.ts")
+        await scheduler.shutdown()
+
+    async def test_segment_limit_stops_monitoring_task(self) -> None:
+        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        options_seen = []
+
+        def recorder_factory(options):
+            options_seen.append(options)
+            return LimitReachedRecorder(options)
+
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: FakeClient(make_info(True)),
+            recorder_factory=recorder_factory,
+        )
+
+        await scheduler.start(task.id)
+        result = await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
+
+        self.assertFalse(result.enabled)
+        self.assertEqual(result.output_path, "/data/recordings/test_%03d.ts")
+        self.assertIn("4 段", result.status_message)
+        self.assertEqual(options_seen[0].segment_count, 4)
+        await scheduler.shutdown()
+
+    async def test_natural_stream_end_before_limit_stops_task(self) -> None:
+        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: FakeClient(make_info(True)),
+            recorder_factory=FakeRecorder,
+        )
+
+        await scheduler.start(task.id)
+        result = await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
+
+        self.assertFalse(result.enabled)
+        self.assertIn("未满 4 段", result.status_message)
         await scheduler.shutdown()
 
     async def test_shutdown_keeps_monitor_enabled_for_restart(self) -> None:

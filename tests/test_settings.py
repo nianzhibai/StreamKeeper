@@ -31,11 +31,29 @@ class SettingsTests(TestCase):
             with self.assertRaisesRegex(RuntimeError, "DOUYIN_WEB_PASSWORD"):
                 settings.prepare()
 
+    def test_short_password_is_rejected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            settings = make_settings(Path(tmp), web_password="too-short")
+            with self.assertRaisesRegex(RuntimeError, "至少需要 10"):
+                settings.prepare()
+
     def test_multiple_web_workers_are_rejected(self) -> None:
         with TemporaryDirectory() as tmp:
             settings = make_settings(Path(tmp), web_workers=2)
             with self.assertRaisesRegex(RuntimeError, "单 Web worker"):
                 settings.prepare()
+
+    def test_session_and_login_limits_are_validated(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            invalid_values = (
+                {"session_ttl_hours": 0},
+                {"login_max_attempts": 0},
+                {"login_window_seconds": 9},
+            )
+            for overrides in invalid_values:
+                with self.subTest(overrides=overrides), self.assertRaises(RuntimeError):
+                    make_settings(root, **overrides).prepare()
 
     def test_cookie_file_takes_precedence(self) -> None:
         with TemporaryDirectory() as tmp:

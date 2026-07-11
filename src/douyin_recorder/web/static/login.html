@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>登录 · DouYinStreamKeeper</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body class="login-page">
+    <div class="noise" aria-hidden="true"></div>
+    <main class="login-shell">
+      <section class="login-card" aria-labelledby="login-title">
+        <a class="brand login-brand" href="/login" aria-label="DouYinStreamKeeper 登录">
+          <span class="brand-mark">录</span>
+          <strong>DouYinStreamKeeper</strong>
+        </a>
+
+        <div class="login-heading">
+          <h1 id="login-title">登录</h1>
+        </div>
+
+        <form id="login-form" class="login-form">
+          <label class="field">
+            <span>用户名</span>
+            <input id="login-username" name="username" type="text" required maxlength="128" autocomplete="username" autofocus />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="login-password" name="password" type="password" required maxlength="1024" autocomplete="current-password" />
+          </label>
+          <p id="login-error" class="login-error hidden" role="alert" aria-live="polite"></p>
+          <button id="login-submit" class="primary-button login-submit" type="submit">登录</button>
+        </form>
+      </section>
+    </main>
+    <script src="/static/login.js" defer></script>
+  </body>
+</html>

@@ -67,6 +67,7 @@ def build_ffmpeg_command(
     *,
     output_format: str = "ts",
     segment_seconds: int = 0,
+    segment_count: int = 0,
     proxy: str | None = None,
     executable: str = "ffmpeg",
     loglevel: str = "warning",
@@ -76,6 +77,10 @@ def build_ffmpeg_command(
         raise ValueError(f"不支持的保存格式: {output_format}")
     if segment_seconds < 0:
         raise ValueError("segment_seconds 不能小于 0")
+    if segment_count < 0:
+        raise ValueError("segment_count 不能小于 0")
+    if segment_count and not segment_seconds:
+        raise ValueError("设置 segment_count 时 segment_seconds 必须大于 0")
 
     command = [
         executable,
@@ -104,6 +109,8 @@ def build_ffmpeg_command(
         "-reconnect_delay_max",
         "60",
     ]
+    if segment_count:
+        command.extend(["-progress", "pipe:1", "-nostats"])
     if proxy:
         command.extend(["-http_proxy", proxy])
     command.extend(
@@ -122,6 +129,8 @@ def build_ffmpeg_command(
             "-dn",
         ]
     )
+    if segment_count:
+        command.extend(["-t", str(segment_seconds * segment_count)])
 
     segment_format = {
         "ts": "mpegts",

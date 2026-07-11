@@ -1,17 +1,18 @@
-# Douyin Recorder Web
+# DouYinStreamKeeper
 
 面向服务器部署的抖音直播录制 Web 服务。从 StreamCap 中抽离抖音录制链路，只保留浏览器管理、任务持久化、循环值守、抓流和 FFmpeg 录制，不包含桌面端、托盘、多平台 Handler 或 Flet。
 
 ## 功能
 
-- 浏览器中新建、启动、停止和删除录制任务。
-- 支持 `live.douyin.com`、`v.douyin.com` 和 `www.douyin.com/user/...`。
+- 浏览器中新建、编辑、启动、停止和删除录制任务。
+- 支持直接粘贴抖音分享文案，自动提取 `live.douyin.com`、`v.douyin.com` 或 `www.douyin.com/user/...` 链接。
 - 支持 OD、UHD、HD、SD、LD 画质。
-- 支持 TS、MP4、MKV、FLV 和按时长分段。
+- 支持 TS、MP4、MKV、FLV 和按时长分段；段数默认 4，达到上限或本次直播提前结束都会自动停止任务。
 - 自动优先 FLV；FLV 为 H.265/HEVC 时回退 HLS。
 - SQLite 持久化任务，服务器重启后自动恢复已启用的值守任务。
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
-- HTTP Basic 全站鉴权；健康检查接口单独开放。
+- 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败限速。
+- 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
 抖音接口和直播流解析由 `streamget` 提供；本项目负责单平台 Web 管理、调度和录制生命周期。
@@ -20,7 +21,7 @@
 
 ```text
 浏览器
-  │  HTTP Basic + JSON API
+  │  Session Cookie + CSRF + JSON API
   ▼
 FastAPI（单 worker）
   ├─ 静态管理页面
@@ -37,7 +38,7 @@ FastAPI（单 worker）
 服务器需要 Docker 和 Docker Compose。进入项目目录：
 
 ```bash
-cd douyin-recorder
+cd DouYinStreamKeeper
 cp .env.example .env
 ```
 
@@ -61,7 +62,9 @@ docker compose logs -f recorder
 http://127.0.0.1:8000
 ```
 
-浏览器会弹出 HTTP Basic 登录框。对公网提供服务时，请使用 Nginx 或 Caddy 配置 HTTPS 反向代理，不要把 Basic Auth 放在明文 HTTP 上。示例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)。
+浏览器会显示项目自己的登录页。登录成功后服务端签发不可被 JavaScript 读取的 HttpOnly 会话 Cookie，默认有效期为 24 小时；退出登录会立即撤销数据库中的会话，服务重启后也需要重新登录。
+
+对公网提供服务时仍应使用 HTTPS，因为 HTTP 下登录密码和会话 Cookie 都可能被截获。可以使用 Nginx/Caddy 终止 TLS，示例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)；也可以后续配置 Uvicorn 原生 TLS。
 
 如果只在可信内网直接访问，可以在 `.env` 中设置：
 
@@ -83,7 +86,7 @@ Compose 默认使用 `recorder-data` 命名卷：
 查看卷位置：
 
 ```bash
-docker volume inspect douyin-recorder_recorder-data
+docker volume inspect douyinstreamkeeper_recorder-data
 ```
 
 如果希望录像直接出现在当前目录，可以将 Compose 中的卷改成：
@@ -142,7 +145,7 @@ pip install -e .
 
 export DOUYIN_WEB_USERNAME=admin
 export DOUYIN_WEB_PASSWORD='替换成随机密码'
-export DOUYIN_DATA_DIR=/srv/douyin-recorder
+export DOUYIN_DATA_DIR=/srv/DouYinStreamKeeper
 export DOUYIN_WEB_HOST=127.0.0.1
 export DOUYIN_WEB_PORT=8000
 
@@ -152,7 +155,7 @@ python -m douyin_recorder
 也可以使用安装后的入口：
 
 ```bash
-douyin-recorder-web
+douyin-stream-keeper
 ```
 
 开发环境临时关闭鉴权：
@@ -169,6 +172,9 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | --- | --- | --- |
 | `DOUYIN_WEB_USERNAME` | `admin` | Web 登录用户名 |
 | `DOUYIN_WEB_PASSWORD` | 无 | Web 登录密码；生产环境必填 |
+| `DOUYIN_SESSION_TTL_HOURS` | `24` | 登录会话有效小时数，范围 1–720 |
+| `DOUYIN_LOGIN_MAX_ATTEMPTS` | `5` | 限速窗口内单客户端允许的失败次数 |
+| `DOUYIN_LOGIN_WINDOW_SECONDS` | `300` | 登录失败限速窗口秒数 |
 | `DOUYIN_WEB_HOST` | `127.0.0.1` | 服务监听地址 |
 | `DOUYIN_WEB_PORT` | `8000` | 服务监听端口 |
 | `DOUYIN_DATA_DIR` | `data` | 数据根目录 |
@@ -189,6 +195,9 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | 方法 | 地址 | 用途 |
 | --- | --- | --- |
 | `GET` | `/health` | 无鉴权健康检查 |
+| `POST` | `/api/auth/login` | 验证账号并创建会话 |
+| `GET` | `/api/auth/session` | 获取当前会话与 CSRF 令牌 |
+| `POST` | `/api/auth/logout` | 撤销当前会话并清除 Cookie |
 | `GET/POST` | `/api/tasks` | 查询或创建任务 |
 | `PATCH/DELETE` | `/api/tasks/{id}` | 更新或删除任务 |
 | `POST` | `/api/tasks/{id}/start` | 启动值守 |
@@ -203,7 +212,8 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `client.py` | 抖音 URL 分流和 `streamget` 适配 |
 | `ffmpeg.py` | FLV/HLS 选择和 FFmpeg 参数 |
 | `recorder.py` | 文件命名、录制进程和优雅停止 |
-| `web/store.py` | SQLite 任务持久化 |
+| `web/store.py` | SQLite 任务与会话持久化 |
+| `web/auth.py` | Session Cookie、CSRF 和登录限速 |
 | `web/scheduler.py` | 检查、排队、录制和重启恢复 |
 | `web/app.py` | FastAPI 接口、生命周期和静态页面 |
 | `web/static/` | 无外部 CDN 的浏览器管理页面 |

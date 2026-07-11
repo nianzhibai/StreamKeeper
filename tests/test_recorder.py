@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -8,6 +9,10 @@ from douyin_recorder.recorder import Recorder, RecorderOptions, create_output_pa
 
 
 class OutputPathTests(TestCase):
+    def test_segment_count_requires_segment_duration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "分段时长"):
+            RecorderOptions(segment_seconds=0, segment_count=4)
+
     def test_sanitizes_cross_platform_filename_characters(self) -> None:
         self.assertEqual(sanitize_name(" 主播:名字/测试?* "), "主播_名字_测试")
         self.assertEqual(sanitize_name("CON"), "_CON")
@@ -61,6 +66,13 @@ class OutputPathTests(TestCase):
 
 
 class RecorderProcessTests(IsolatedAsyncioTestCase):
+    async def test_progress_reader_returns_latest_output_time(self) -> None:
+        stream = asyncio.StreamReader()
+        stream.feed_data(b"out_time_us=1800000000\nprogress=continue\nout_time_us=7200000000\n")
+        stream.feed_eof()
+
+        self.assertEqual(await Recorder._consume_progress(stream), 7200.0)
+
     async def test_process_start_error_is_wrapped(self) -> None:
         async def process_factory(*_args, **_kwargs):
             raise PermissionError("permission denied")

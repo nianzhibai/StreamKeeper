@@ -26,6 +26,9 @@ class Settings:
     web_password: str = ""
     allow_insecure: bool = False
     web_workers: int = 1
+    session_ttl_hours: int = 24
+    login_max_attempts: int = 5
+    login_window_seconds: int = 300
     max_concurrent_recordings: int = 3
     fetch_timeout_seconds: int = 45
     proxy: str | None = None
@@ -50,6 +53,9 @@ class Settings:
             web_password=os.getenv("DOUYIN_WEB_PASSWORD", ""),
             allow_insecure=_env_bool("DOUYIN_ALLOW_INSECURE"),
             web_workers=int(os.getenv("WEB_CONCURRENCY", "1")),
+            session_ttl_hours=int(os.getenv("DOUYIN_SESSION_TTL_HOURS", "24")),
+            login_max_attempts=int(os.getenv("DOUYIN_LOGIN_MAX_ATTEMPTS", "5")),
+            login_window_seconds=int(os.getenv("DOUYIN_LOGIN_WINDOW_SECONDS", "300")),
             max_concurrent_recordings=int(os.getenv("DOUYIN_MAX_CONCURRENT_RECORDINGS", "3")),
             fetch_timeout_seconds=int(os.getenv("DOUYIN_FETCH_TIMEOUT_SECONDS", "45")),
             proxy=os.getenv("DOUYIN_PROXY") or None,
@@ -61,8 +67,16 @@ class Settings:
     def prepare(self) -> None:
         if not self.web_password and not self.allow_insecure:
             raise RuntimeError("必须设置 DOUYIN_WEB_PASSWORD；仅限本地调试时可设置 DOUYIN_ALLOW_INSECURE=true")
+        if self.web_password and len(self.web_password) < 10:
+            raise RuntimeError("DOUYIN_WEB_PASSWORD 至少需要 10 个字符")
         if self.web_workers != 1:
             raise RuntimeError("录制调度器只支持单 Web worker，请将 WEB_CONCURRENCY 设置为 1")
+        if not 1 <= self.session_ttl_hours <= 24 * 30:
+            raise RuntimeError("DOUYIN_SESSION_TTL_HOURS 必须在 1 到 720 之间")
+        if not 1 <= self.login_max_attempts <= 100:
+            raise RuntimeError("DOUYIN_LOGIN_MAX_ATTEMPTS 必须在 1 到 100 之间")
+        if not 10 <= self.login_window_seconds <= 86400:
+            raise RuntimeError("DOUYIN_LOGIN_WINDOW_SECONDS 必须在 10 到 86400 之间")
         if self.max_concurrent_recordings < 1:
             raise RuntimeError("DOUYIN_MAX_CONCURRENT_RECORDINGS 必须大于 0")
         if self.fetch_timeout_seconds < 5:

@@ -1,7 +1,7 @@
 services:
   recorder:
     build: .
-    image: douyin-recorder-web:local
+    image: douyin-stream-keeper:local
     restart: unless-stopped
     init: true
     ports:
@@ -11,6 +11,9 @@ services:
       DOUYIN_WEB_PORT: 8000
       DOUYIN_WEB_USERNAME: "${DOUYIN_WEB_USERNAME:-admin}"
       DOUYIN_WEB_PASSWORD: "${DOUYIN_WEB_PASSWORD:?请在 .env 中设置 DOUYIN_WEB_PASSWORD}"
+      DOUYIN_SESSION_TTL_HOURS: "${DOUYIN_SESSION_TTL_HOURS:-24}"
+      DOUYIN_LOGIN_MAX_ATTEMPTS: "${DOUYIN_LOGIN_MAX_ATTEMPTS:-5}"
+      DOUYIN_LOGIN_WINDOW_SECONDS: "${DOUYIN_LOGIN_WINDOW_SECONDS:-300}"
       DOUYIN_MAX_CONCURRENT_RECORDINGS: "${DOUYIN_MAX_CONCURRENT_RECORDINGS:-3}"
       DOUYIN_FETCH_TIMEOUT_SECONDS: "${DOUYIN_FETCH_TIMEOUT_SECONDS:-45}"
       DOUYIN_PROXY: "${DOUYIN_PROXY:-}"

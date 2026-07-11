@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -17,6 +18,12 @@ class _DouyinStream(Protocol):
 
 
 StreamFactory = Callable[..., _DouyinStream]
+
+_URL_CANDIDATE_PATTERN = re.compile(
+    r"https?://[A-Z0-9._~:/?#\[\]@!$&()*+,;=%-]+",
+    re.IGNORECASE,
+)
+_TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？、）》】」』"
 
 
 def _default_stream_factory(**kwargs: Any) -> _DouyinStream:
@@ -50,20 +57,21 @@ class DouyinClient:
 
     @staticmethod
     def validate_url(url: str) -> str:
-        normalized = url.strip()
-        parsed = urlparse(normalized)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        has_supported_path = (
-            (host == "live.douyin.com" and bool(parsed.path.strip("/")))
-            or (host == "v.douyin.com" and bool(parsed.path.strip("/")))
-            or (host == "www.douyin.com" and parsed.path.startswith("/user/"))
-        )
-        if parsed.scheme not in {"http", "https"} or not has_supported_path:
-            raise InvalidDouyinUrl(
-                "仅支持抖音链接，例如 https://live.douyin.com/...、"
-                "https://v.douyin.com/... 或 https://www.douyin.com/user/..."
+        for match in _URL_CANDIDATE_PATTERN.finditer(url.strip()):
+            candidate = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
+            parsed = urlparse(candidate)
+            host = (parsed.hostname or "").lower().rstrip(".")
+            has_supported_path = (
+                (host == "live.douyin.com" and bool(parsed.path.strip("/")))
+                or (host == "v.douyin.com" and bool(parsed.path.strip("/")))
+                or (host == "www.douyin.com" and parsed.path.startswith("/user/"))
             )
-        return normalized
+            if parsed.scheme.lower() in {"http", "https"} and has_supported_path:
+                return candidate
+        raise InvalidDouyinUrl(
+            "未找到支持的抖音链接，例如 https://live.douyin.com/...、"
+            "https://v.douyin.com/... 或 https://www.douyin.com/user/..."
+        )
 
     @staticmethod
     def _uses_app_parser(url: str) -> bool:

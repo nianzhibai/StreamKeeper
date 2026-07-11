@@ -200,6 +200,7 @@ class TaskScheduler:
                             output_format=latest.output_format,
                             source=latest.source,
                             segment_seconds=latest.segment_seconds,
+                            segment_count=latest.segment_count,
                             proxy=self.settings.proxy,
                             ffmpeg=self.settings.ffmpeg,
                         )
@@ -221,6 +222,22 @@ class TaskScheduler:
                     if not await self._record_failure(record, exc):
                         return
                     continue
+
+                if latest.segment_count:
+                    status_message = (
+                        f"已录制 {latest.segment_count} 段，任务自动停止"
+                        if result.limit_reached
+                        else f"直播已结束，未满 {latest.segment_count} 段，任务自动停止"
+                    )
+                    await self.store.update_runtime(
+                        task_id,
+                        enabled=False,
+                        status=TaskStatus.STOPPED,
+                        status_message=status_message,
+                        is_live=False,
+                        output_path=result.output_path,
+                    )
+                    return
 
                 if not record.monitor:
                     await self.store.update_runtime(
