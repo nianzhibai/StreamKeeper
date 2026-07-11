@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import secrets
 import sqlite3
 import uuid
@@ -104,13 +105,9 @@ class TaskStore:
                 )
                 """
             )
-            task_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(recording_tasks)").fetchall()
-            }
+            task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(recording_tasks)").fetchall()}
             if "segment_count" not in task_columns:
-                connection.execute(
-                    "ALTER TABLE recording_tasks ADD COLUMN segment_count INTEGER NOT NULL DEFAULT 0"
-                )
+                connection.execute("ALTER TABLE recording_tasks ADD COLUMN segment_count INTEGER NOT NULL DEFAULT 0")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS web_sessions (
@@ -158,7 +155,108 @@ class TaskStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cloud_credentials (
+                    provider TEXT PRIMARY KEY,
+                    source_fingerprint TEXT NOT NULL,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
+
+    @staticmethod
+    def _validate_cloud_state(provider: str, state: dict[str, str]) -> None:
+        if provider not in {"quark", "wopan"}:
+            raise ValueError(f"不支持的网盘凭据类型: {provider}")
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in state.items()):
+            raise ValueError("网盘凭据必须是字符串字典")
+
+    async def resolve_cloud_credentials(
+        self,
+        provider: str,
+        source_fingerprint: str,
+        defaults: dict[str, str],
+    ) -> dict[str, str]:
+        """Use refreshed credentials until the source environment values change."""
+
+        self._validate_cloud_state(provider, defaults)
+        return await asyncio.to_thread(
+            self._resolve_cloud_credentials_sync,
+            provider,
+            source_fingerprint,
+            defaults,
+        )
+
+    def _resolve_cloud_credentials_sync(
+        self,
+        provider: str,
+        source_fingerprint: str,
+        defaults: dict[str, str],
+    ) -> dict[str, str]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_fingerprint, state_json FROM cloud_credentials WHERE provider = ?",
+                (provider,),
+            ).fetchone()
+            if row is not None and secrets.compare_digest(row["source_fingerprint"], source_fingerprint):
+                try:
+                    state = json.loads(row["state_json"])
+                except (TypeError, json.JSONDecodeError):
+                    state = None
+                if isinstance(state, dict) and all(
+                    isinstance(key, str) and isinstance(value, str) for key, value in state.items()
+                ):
+                    return state
+            state_json = json.dumps(defaults, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            connection.execute(
+                """
+                INSERT INTO cloud_credentials (provider, source_fingerprint, state_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    source_fingerprint = excluded.source_fingerprint,
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+                """,
+                (provider, source_fingerprint, state_json, utc_now().isoformat()),
+            )
+        return dict(defaults)
+
+    async def save_cloud_credentials(
+        self,
+        provider: str,
+        source_fingerprint: str,
+        state: dict[str, str],
+    ) -> None:
+        self._validate_cloud_state(provider, state)
+        await asyncio.to_thread(
+            self._save_cloud_credentials_sync,
+            provider,
+            source_fingerprint,
+            state,
+        )
+
+    def _save_cloud_credentials_sync(
+        self,
+        provider: str,
+        source_fingerprint: str,
+        state: dict[str, str],
+    ) -> None:
+        state_json = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO cloud_credentials (provider, source_fingerprint, state_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    source_fingerprint = excluded.source_fingerprint,
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+                """,
+                (provider, source_fingerprint, state_json, utc_now().isoformat()),
+            )
 
     @staticmethod
     def _credential_digest(password: str, salt: bytes) -> bytes:

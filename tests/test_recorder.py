@@ -96,3 +96,5 @@ class RecorderProcessTests(IsolatedAsyncioTestCase):
             )
             with self.assertRaisesRegex(FFmpegRecordingError, "无法启动 FFmpeg"):
                 await recorder.record(info)
+            self.assertIsNotNone(recorder.current_output_path)
+            self.assertEqual(recorder.current_output_path.parent.name, "主播")

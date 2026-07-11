@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
+from .. import __version__
 from ..errors import DouyinRecorderError
 from ..settings import Settings
 from .auth import (
@@ -33,6 +34,7 @@ from .schemas import (
     TaskUpdate,
 )
 from .store import TaskStore, WebSession, utc_now
+from .uploader import RecordingUploadService
 
 _TASK_RESTART_FIELDS = frozenset(
     {
@@ -65,11 +67,17 @@ def create_app(
     *,
     store: TaskStore | None = None,
     scheduler: TaskScheduler | None = None,
+    upload_service: RecordingUploadService | None = None,
     inspect_client_factory: ClientFactory | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
     scheduler = scheduler or TaskScheduler(store, settings)
+    upload_service = upload_service or RecordingUploadService(
+        settings,
+        store,
+        active_directories_provider=getattr(scheduler, "recording_output_directories", None),
+    )
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
 
@@ -79,14 +87,16 @@ def create_app(
         await store.initialize()
         await store.sync_web_credentials(settings.web_username, settings.web_password)
         await scheduler.startup()
+        await upload_service.startup()
         try:
             yield
         finally:
+            await upload_service.shutdown()
             await scheduler.shutdown()
 
     app = FastAPI(
         title="DouYinStreamKeeper",
-        version="0.4.0",
+        version=__version__,
         docs_url="/api/docs",
         redoc_url=None,
         lifespan=lifespan,
@@ -102,6 +112,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.scheduler = scheduler
+    app.state.upload_service = upload_service
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:

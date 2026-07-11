@@ -111,6 +111,11 @@ class Recorder:
         self._process_factory = process_factory or asyncio.create_subprocess_exec
         self._executable_resolver = executable_resolver or shutil.which
         self._process: asyncio.subprocess.Process | None = None
+        self._current_output_path: Path | None = None
+
+    @property
+    def current_output_path(self) -> Path | None:
+        return self._current_output_path
 
     def _resolve_ffmpeg(self) -> str:
         resolved = self._executable_resolver(self.options.ffmpeg)
@@ -133,6 +138,7 @@ class Recorder:
             segment_seconds=self.options.segment_seconds,
             name=self.options.name,
         )
+        self._current_output_path = output_path
         command = build_ffmpeg_command(
             selected_source.url,
             output_path,

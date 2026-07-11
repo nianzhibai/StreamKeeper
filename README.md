@@ -12,6 +12,7 @@
 - SQLite 持久化任务，服务器重启后自动恢复已启用的值守任务。
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
 - 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败 IP 永久黑名单。
+- 每天凌晨 1 点原生归档稳定录像到夸克网盘、联通云盘，全部成功后删除本地文件。
 - 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
@@ -26,9 +27,12 @@
 FastAPI（单 worker）
   ├─ 静态管理页面
   ├─ SQLite 任务仓库
-  └─ asyncio 任务调度器
+  ├─ asyncio 任务调度器
        ├─ streamget：检查开播、解析 FLV/HLS
        └─ FFmpeg：服务器本地落盘
+  └─ 每日归档器
+       ├─ Quark API → OSS 分片上传
+       └─ WoPan 加密 API → upload2C 分片上传
 ```
 
 录制任务运行在 Web 服务进程的后台调度器中，因此必须保持一个 Uvicorn worker。多个 worker 会重复恢复同一批任务，项目启动时会主动拒绝这种配置。需要横向扩容时，应先把调度器拆成独立 worker，并增加分布式任务锁。
@@ -111,7 +115,52 @@ mkdir -p data/recordings
 sudo chown -R 10001:10001 data
 ```
 
-备份时至少保留 `tasks.db` 和 `recordings/`。复制 SQLite 数据库前建议先停止容器，或使用 SQLite 在线备份命令。
+备份时至少保留 `tasks.db` 和 `recordings/`。启用网盘后，SQLite 还会保存接口返回的最新 Cookie/token，以便凭据自动更新后能够跨重启继续使用，因此数据库应按敏感文件保护。复制 SQLite 数据库前建议先停止容器，或使用 SQLite 在线备份命令。
+
+## 原生网盘自动归档
+
+不需要安装或部署 OpenList。本项目参考其公开驱动协议，在当前 Python 进程内直接访问夸克和联通云盘接口：
+
+- 夸克：使用网页 Cookie 调用目录、预上传和哈希接口；未命中秒传时，获取临时 OSS 授权并流式分片上传。
+- 联通云盘：使用 access/refresh token 调用 AES-CBC 加密的目录接口，并通过 `upload2C` 流式分片上传；access token 失效时使用 refresh token 自动续期。
+
+### 获取凭据
+
+- 夸克：使用 Chrome 登录[夸克网盘](https://pan.quark.cn/)，按 F12 打开开发者工具，在 Network 中选择任意已登录请求，复制请求头里的完整 `Cookie`。根目录 ID 是 `0`；也可以从目标文件夹地址栏取得子目录 ID。具体位置可参考 [OpenList Quark 文档](https://doc.oplist.org/guide/drivers/quark.html)。
+- 联通云盘：登录[联通云盘](https://pan.wo.cn/)，从登录响应取得 token；或者登录其 H5 页面，在开发者工具的 Session Storage 中取得 `access_token` 和 `refresh_token`。建议两项都配置，方法可参考 [OpenList WoPan 文档](https://doc.oplist.org/guide/drivers/wopan)。`Family ID` 留空使用个人云，填写后使用家庭云。
+
+把凭据写入服务器的 `.env`，不要提交到 Git：
+
+```dotenv
+# 留空表示不启用夸克目标。
+DOUYIN_QUARK_COOKIE='完整的夸克 Cookie'
+DOUYIN_QUARK_ROOT_ID=0
+DOUYIN_QUARK_UPLOAD_PATH=/DouYinStreamKeeper
+
+# 留空表示不启用联通云盘目标；只有 refresh token 时会先自动换取 access token。
+DOUYIN_WOPAN_ACCESS_TOKEN='access_token'
+DOUYIN_WOPAN_REFRESH_TOKEN='refresh_token'
+DOUYIN_WOPAN_ROOT_ID=0
+DOUYIN_WOPAN_FAMILY_ID=
+DOUYIN_WOPAN_UPLOAD_PATH=/DouYinStreamKeeper
+
+DOUYIN_UPLOAD_HOUR=1
+DOUYIN_UPLOAD_MIN_AGE_MINUTES=10
+DOUYIN_UPLOAD_TIMEOUT_SECONDS=300
+```
+
+Cookie 和 token 首次来自环境变量。夸克返回新的 `__puus` Cookie、或联通云盘刷新 access/refresh token 后，服务会把更新值保存到 `tasks.db`，重启后继续使用；当环境变量中的原始凭据发生变化时，会以新的环境变量为准重置已保存状态。只配置联通 access token 而不配置 refresh token 也能上传，但 access token 过期后无法自动续期。
+
+归档器使用 `TZ` 指定的本地时区，默认每天 `01:00` 扫描 `.ts`、`.mp4`、`.mkv` 和 `.flv`：
+
+- 保留录像目录下的相对路径，自动在远端创建目录。
+- 跳过正在录制的主播目录、最近 10 分钟仍有变化的文件、零字节文件和符号链接。
+- 以流式方式读取和分片，不会把整个视频载入内存；夸克上传前会顺序计算 MD5/SHA1 以支持秒传。
+- 上传完成后重新列出远端目录，按完整文件名和大小确认成功。
+- 所有已配置目标都确认成功后才删除本地文件；任一目标失败都会保留文件，下一天继续重试。
+- 远端已存在同路径且大小相同的文件视为已完成；大小不同则保留本地文件并记录错误，避免覆盖。
+
+夸克与 WoPan 接口都不是官方开放上传 API，OpenList 文档也将其标记为历史逆向接口。平台随时可能调整协议、风控或限速；Cookie/token 也可能因重新登录而失效。请持续查看 `docker compose logs -f recorder`，并在上传大量或超大录像前先做实际测试。
 
 ## Cookie 与代理
 
@@ -183,6 +232,17 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `DOUYIN_SESSION_TTL_HOURS` | `168` | 登录会话的滑动有效小时数，访问到半周期后自动续期，范围 1–720 |
 | `DOUYIN_LOGIN_MAX_ATTEMPTS` | `3` | 窗口内触发永久 IP 黑名单的失败次数 |
 | `DOUYIN_LOGIN_WINDOW_SECONDS` | `3600` | 统计登录失败的滚动窗口秒数 |
+| `DOUYIN_QUARK_COOKIE` | 无 | 完整夸克网页 Cookie；与上传路径同时配置后启用夸克目标 |
+| `DOUYIN_QUARK_ROOT_ID` | `0` | 夸克路径解析起点的目录 ID |
+| `DOUYIN_QUARK_UPLOAD_PATH` | 无 | 相对 Root ID 的夸克归档绝对路径 |
+| `DOUYIN_WOPAN_ACCESS_TOKEN` | 无 | 联通云盘 access token；可由 refresh token 自动获取 |
+| `DOUYIN_WOPAN_REFRESH_TOKEN` | 无 | 联通云盘 refresh token，用于自动续期 |
+| `DOUYIN_WOPAN_ROOT_ID` | `0` | 联通云盘路径解析起点的目录 ID |
+| `DOUYIN_WOPAN_FAMILY_ID` | 无 | 留空使用个人云，填写后使用对应家庭云 |
+| `DOUYIN_WOPAN_UPLOAD_PATH` | 无 | 相对 Root ID 的联通云盘归档绝对路径 |
+| `DOUYIN_UPLOAD_HOUR` | `1` | 每日归档开始小时，使用 `TZ` 本地时区 |
+| `DOUYIN_UPLOAD_MIN_AGE_MINUTES` | `10` | 只处理至少多久未修改的录像 |
+| `DOUYIN_UPLOAD_TIMEOUT_SECONDS` | `300` | 单次网盘 API/分片网络读写超时 |
 | `DOUYIN_WEB_HOST` | `127.0.0.1` | 服务监听地址 |
 | `DOUYIN_WEB_PORT` | `8000` | 服务监听端口 |
 | `DOUYIN_DATA_DIR` | `data` | 数据根目录 |
@@ -222,9 +282,12 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `client.py` | 抖音 URL 分流和 `streamget` 适配 |
 | `ffmpeg.py` | FLV/HLS 选择和 FFmpeg 参数 |
 | `recorder.py` | 文件命名、录制进程和优雅停止 |
-| `web/store.py` | SQLite 任务、会话、凭据指纹和登录黑名单持久化 |
+| `cloud/quark.py` | 夸克目录、秒传和 OSS 分片上传协议 |
+| `cloud/wopan.py` | 联通云盘加密请求、token 续期和 upload2C 上传协议 |
+| `web/store.py` | SQLite 任务、会话、网盘凭据和登录黑名单持久化 |
 | `web/auth.py` | Session Cookie 和 CSRF 校验 |
 | `web/scheduler.py` | 检查、排队、录制和重启恢复 |
+| `web/uploader.py` | 本地录像扫描、多目标确认、删除和每日归档调度 |
 | `web/app.py` | FastAPI 接口、生命周期和静态页面 |
 | `web/static/` | 无外部 CDN 的浏览器管理页面 |
 
@@ -237,7 +300,7 @@ ruff check .
 ruff format --check .
 ```
 
-测试使用临时数据库和伪造抓流/录制器，不会真的启动抖音录制。
+测试使用临时数据库和伪造的抖音/网盘 HTTP 接口，不会真的启动录制或上传文件。
 
 ## 许可与使用提示
 

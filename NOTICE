@@ -10,3 +10,9 @@ This product depends on StreamGet:
 https://github.com/ihmily/streamget
 
 StreamGet is licensed under the MIT License.
+
+The native China Unicom WoPan protocol implementation was developed with
+reference to OpenListTeam/wopan-sdk-go:
+https://github.com/OpenListTeam/wopan-sdk-go
+
+wopan-sdk-go is licensed under the Apache License, Version 2.0.

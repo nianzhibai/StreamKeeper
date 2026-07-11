@@ -1,0 +1,156 @@
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import IsolatedAsyncioTestCase, TestCase
+
+from douyin_recorder.cloud import CloudUploadError
+from douyin_recorder.settings import Settings
+from douyin_recorder.web.schemas import TaskConfig, TaskStatus
+from douyin_recorder.web.store import TaskStore
+from douyin_recorder.web.uploader import RecordingUploadService, UploadTarget
+
+
+def make_settings(root: Path, **overrides) -> Settings:
+    values = {
+        "data_dir": root,
+        "recordings_dir": root / "recordings",
+        "database_path": root / "tasks.db",
+        "web_password": "test-password",
+        "quark_cookie": "cookie=value",
+        "quark_upload_path": "/QuarkArchive",
+        "wopan_access_token": "1234567890abcdef-access",
+        "wopan_refresh_token": "refresh-token",
+        "wopan_upload_path": "/WoPanArchive",
+        "upload_min_age_minutes": 10,
+        "validate_binaries": False,
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def make_old_file(path: Path, content: bytes, now: datetime) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    timestamp = (now - timedelta(minutes=20)).timestamp()
+    os.utime(path, (timestamp, timestamp))
+    return path
+
+
+class FakeUploadClient:
+    def __init__(self, *, fail_fragment: str | None = None) -> None:
+        self.fail_fragment = fail_fragment
+        self.calls: list[tuple[Path, str]] = []
+        self.remote_paths: set[str] = set()
+        self.close_count = 0
+
+    async def upload_verified(self, local_path: Path, remote_path: str) -> bool:
+        self.calls.append((local_path, remote_path))
+        if self.fail_fragment and self.fail_fragment in remote_path:
+            raise CloudUploadError("模拟上传失败")
+        created = remote_path not in self.remote_paths
+        self.remote_paths.add(remote_path)
+        return created
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.now = datetime(2026, 7, 12, 1, 0, tzinfo=timezone(timedelta(hours=8)))
+        self.settings = make_settings(self.root)
+        self.settings.prepare()
+        self.store = TaskStore(self.settings.database_path)
+        await self.store.initialize()
+
+    async def asyncTearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    async def test_uploads_stable_files_to_all_targets_then_deletes_local(self) -> None:
+        stable = make_old_file(self.settings.recordings_dir / "测试主播" / "stable.ts", b"video", self.now)
+        young = self.settings.recordings_dir / "测试主播" / "young.mp4"
+        young.write_bytes(b"young")
+        empty = make_old_file(self.settings.recordings_dir / "测试主播" / "empty.mkv", b"", self.now)
+        (self.settings.recordings_dir / "测试主播" / "notes.txt").write_text("ignore", encoding="utf-8")
+
+        active = make_old_file(self.settings.recordings_dir / "正在直播" / "current.flv", b"active", self.now)
+        provider_active = make_old_file(
+            self.settings.recordings_dir / "刚开始直播" / "segment_000.ts",
+            b"active-segment",
+            self.now,
+        )
+        task = await self.store.create(TaskConfig(url="https://live.douyin.com/123456789"))
+        await self.store.update_runtime(
+            task.id,
+            status=TaskStatus.RECORDING,
+            output_path=str(active),
+        )
+
+        client = FakeUploadClient()
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda _target: client,
+            active_directories_provider=lambda: {provider_active.parent.resolve()},
+            clock=lambda: self.now,
+        )
+        summary = await service.run_once()
+
+        self.assertEqual(summary.scanned_files, 5)
+        self.assertEqual(summary.skipped_files, 4)
+        self.assertEqual(summary.uploaded_copies, 2)
+        self.assertEqual(summary.deleted_files, 1)
+        self.assertEqual(summary.failed_files, 0)
+        self.assertFalse(stable.exists())
+        self.assertTrue(young.exists())
+        self.assertTrue(empty.exists())
+        self.assertTrue(active.exists())
+        self.assertTrue(provider_active.exists())
+        self.assertEqual(client.close_count, 1)
+        self.assertEqual(
+            [remote_path for _, remote_path in client.calls],
+            [
+                "/QuarkArchive/测试主播/stable.ts",
+                "/WoPanArchive/测试主播/stable.ts",
+            ],
+        )
+
+    async def test_partial_failure_keeps_file_and_next_run_resumes(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "retry.ts", b"video", self.now)
+        client = FakeUploadClient(fail_fragment="/WoPanArchive/")
+
+        def client_factory(_target: UploadTarget) -> FakeUploadClient:
+            return client
+
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=client_factory,
+            clock=lambda: self.now,
+        )
+
+        first = await service.run_once()
+        self.assertEqual(first.uploaded_copies, 1)
+        self.assertEqual(first.failed_files, 1)
+        self.assertTrue(recording.exists())
+
+        client.fail_fragment = None
+        second = await service.run_once()
+        self.assertEqual(second.uploaded_copies, 1)
+        self.assertEqual(second.deleted_files, 1)
+        self.assertFalse(recording.exists())
+
+
+class UploadScheduleTests(TestCase):
+    def test_next_run_is_one_am_local_time(self) -> None:
+        tz = timezone(timedelta(hours=8))
+        before = datetime(2026, 7, 12, 0, 30, tzinfo=tz)
+        exact = datetime(2026, 7, 12, 1, 0, tzinfo=tz)
+        after = datetime(2026, 7, 12, 1, 30, tzinfo=tz)
+
+        self.assertEqual(RecordingUploadService.seconds_until_next_run(before, 1), 30 * 60)
+        self.assertEqual(RecordingUploadService.seconds_until_next_run(exact, 1), 0)
+        self.assertEqual(RecordingUploadService.seconds_until_next_run(after, 1), 23.5 * 3600)

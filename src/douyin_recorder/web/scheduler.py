@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..client import DouyinClient
 from ..recorder import Recorder, RecorderOptions
@@ -54,6 +55,14 @@ class TaskScheduler:
     @property
     def recording_task_count(self) -> int:
         return len(self._recorders)
+
+    def recording_output_directories(self) -> set[Path]:
+        directories: set[Path] = set()
+        for recorder in self._recorders.values():
+            output_path = getattr(recorder, "current_output_path", None)
+            if output_path is not None:
+                directories.add(Path(output_path).expanduser().resolve().parent)
+        return directories
 
     async def startup(self) -> None:
         self._shutting_down = False

@@ -206,6 +206,27 @@ class StoreTests(IsolatedAsyncioTestCase):
         self.assertFalse(await self.store.sync_web_credentials("admin", "second-long-password"))
         self.assertIsNotNone(await self.store.get_session(replacement_token))
 
+    async def test_refreshed_cloud_credentials_survive_until_environment_changes(self) -> None:
+        defaults = {"access_token": "old-access", "refresh_token": "old-refresh"}
+        self.assertEqual(
+            await self.store.resolve_cloud_credentials("wopan", "fingerprint-1", defaults),
+            defaults,
+        )
+
+        refreshed = {"access_token": "new-access", "refresh_token": "new-refresh"}
+        await self.store.save_cloud_credentials("wopan", "fingerprint-1", refreshed)
+        await self.store.initialize()
+        self.assertEqual(
+            await self.store.resolve_cloud_credentials("wopan", "fingerprint-1", defaults),
+            refreshed,
+        )
+
+        replacement = {"access_token": "replacement", "refresh_token": "replacement-refresh"}
+        self.assertEqual(
+            await self.store.resolve_cloud_credentials("wopan", "fingerprint-2", replacement),
+            replacement,
+        )
+
     async def test_login_failures_create_persistent_blacklist(self) -> None:
         client_key = "203.0.113.10"
         self.assertFalse(await self.store.is_login_blacklisted(client_key))
