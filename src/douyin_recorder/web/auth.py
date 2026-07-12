@@ -186,7 +186,7 @@ class SecurityHeadersMiddleware:
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
-                        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+                        (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), fullscreen=(self)"),
                         (b"content-security-policy", content_security_policy),
                     ]
                 )

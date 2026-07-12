@@ -29,6 +29,12 @@ from .cloud_login import (
     CloudLoginManager,
     CloudLoginSnapshot,
 )
+from .recordings import (
+    RECORDING_MEDIA_TYPES,
+    RecordingPreviewCache,
+    get_recording_file,
+    list_recording_directory,
+)
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
     AuthSession,
@@ -43,6 +49,7 @@ from .schemas import (
     InspectRequest,
     InspectResponse,
     LoginRequest,
+    RecordingDirectoryView,
     SystemInfo,
     TaskConfig,
     TaskCreate,
@@ -161,6 +168,7 @@ def create_app(
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
+    recording_preview_cache = RecordingPreviewCache(settings.data_dir / "preview-cache", settings.ffmpeg)
 
     async def save_cloud_login_credentials(provider: str, credentials: dict[str, str]) -> None:
         async with cloud_config_lock:
@@ -233,6 +241,7 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.upload_service = upload_service
     app.state.cloud_login_manager = cloud_login_manager
+    app.state.recording_preview_cache = recording_preview_cache
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:
@@ -333,6 +342,10 @@ def create_app(
     @app.get("/archive", include_in_schema=False)
     async def archive_page() -> FileResponse:
         return FileResponse(static_dir / "archive.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/recordings", include_in_schema=False)
+    async def recordings_page() -> FileResponse:
+        return FileResponse(static_dir / "recordings.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/settings", include_in_schema=False)
     async def settings_page() -> FileResponse:
@@ -437,6 +450,32 @@ def create_app(
             raise HTTPException(status_code=409, detail="网盘归档任务正在运行")
         config = await upload_service.get_config()
         return await _cloud_archive_response(config, upload_service)
+
+    @app.get("/api/recordings", response_model=RecordingDirectoryView)
+    async def list_recordings(path: str = "") -> RecordingDirectoryView:
+        return await list_recording_directory(settings.recordings_dir, path)
+
+    @app.get("/api/recordings/file/{recording_path:path}", response_model=None)
+    async def recording_file(recording_path: str, download: bool = False) -> FileResponse:
+        path, _ = get_recording_file(settings.recordings_dir, recording_path)
+        return FileResponse(
+            path,
+            media_type=RECORDING_MEDIA_TYPES[path.suffix.lower()],
+            filename=path.name,
+            content_disposition_type="attachment" if download else "inline",
+        )
+
+    @app.get("/api/recordings/preview/{recording_path:path}", response_model=None)
+    async def recording_preview(recording_path: str) -> FileResponse:
+        path, normalized = get_recording_file(settings.recordings_dir, recording_path)
+        preview_path = await recording_preview_cache.get(path, normalized)
+        return FileResponse(
+            preview_path,
+            media_type="video/mp4",
+            filename=f"{path.stem}.mp4",
+            content_disposition_type="inline",
+            headers={"X-Recording-Preview": "remux-cache"},
+        )
 
     @app.get("/api/tasks", response_model=list[TaskRecord])
     async def list_tasks() -> list[TaskRecord]:

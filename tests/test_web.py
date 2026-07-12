@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,7 @@ from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 from douyin_recorder.web.app import create_app
 from douyin_recorder.web.auth import SESSION_COOKIE_NAME
 from douyin_recorder.web.cloud_login import CloudLoginPoll
+from douyin_recorder.web.recordings import build_remux_command
 from douyin_recorder.web.schemas import TaskStatus
 from douyin_recorder.web.store import TaskStore
 
@@ -119,6 +121,7 @@ class WebTests(TestCase):
             cloud_login_flow_factory=FakeCloudLoginFlow,
             cloud_login_poll_interval=0.01,
         )
+        self.app = app
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
         self.csrf_headers: dict[str, str] = {}
@@ -175,7 +178,9 @@ class WebTests(TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Stream Keeper", page.text)
         self.assertEqual(page.headers["x-frame-options"], "DENY")
+        self.assertIn("fullscreen=(self)", page.headers["permissions-policy"])
         self.assertIn("录制任务", self.client.get("/tasks").text)
+        self.assertIn("本地录像", self.client.get("/recordings").text)
         self.assertIn("网盘归档", self.client.get("/archive").text)
         self.assertIn("设置", self.client.get("/settings").text)
         current = self.client.get("/api/auth/session")
@@ -190,6 +195,98 @@ class WebTests(TestCase):
         self.assertEqual(logout.status_code, 204)
         self.assertIsNone(self.client.cookies.get(SESSION_COOKIE_NAME))
         self.assertEqual(self.client.get("/api/auth/session").status_code, 401)
+
+    def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
+        self.login()
+        recording_page = self.client.get("/recordings")
+        self.assertIn('id="recording-play-toggle"', recording_page.text)
+        self.assertIn('id="recording-mute-toggle"', recording_page.text)
+        self.assertIn('id="recording-fullscreen"', recording_page.text)
+        player_script = self.client.get("/static/recordings.js").text
+        self.assertIn("playerStage.requestFullscreen", player_script)
+        self.assertIn("player.webkitEnterFullscreen", player_script)
+        self.assertIn("player.videoWidth", player_script)
+        self.assertIn('classList.toggle("is-portrait"', player_script)
+
+        recording_dir = self.settings.recordings_dir / "测试 主播" / "2026-07-12"
+        recording_dir.mkdir(parents=True)
+        video = recording_dir / "测试 主播_2026-07-12_12-00-00.mp4"
+        video.write_bytes(b"0123456789")
+        (recording_dir / "空录像.ts").touch()
+        (recording_dir / "内部信息.txt").write_text("not public", encoding="utf-8")
+        outside = Path(self.temp_dir.name) / "outside.mp4"
+        outside.write_bytes(b"secret")
+        (self.settings.recordings_dir / "越界链接.mp4").symlink_to(outside)
+
+        root = self.client.get("/api/recordings")
+        self.assertEqual(root.status_code, 200)
+        self.assertEqual(root.json()["path"], "")
+        self.assertEqual([entry["name"] for entry in root.json()["entries"]], ["测试 主播"])
+
+        anchor = self.client.get("/api/recordings", params={"path": "测试 主播"})
+        self.assertEqual(anchor.status_code, 200)
+        self.assertEqual(anchor.json()["entries"][0]["kind"], "directory")
+
+        listing = self.client.get("/api/recordings", params={"path": "测试 主播/2026-07-12"})
+        self.assertEqual(listing.status_code, 200)
+        entries = listing.json()["entries"]
+        self.assertEqual([entry["name"] for entry in entries], ["测试 主播_2026-07-12_12-00-00.mp4", "空录像.ts"])
+        self.assertEqual(entries[0]["size"], 10)
+        self.assertEqual(entries[0]["extension"], "mp4")
+        self.assertEqual(entries[0]["playback_mode"], "direct")
+        self.assertTrue(entries[0]["playable"])
+        self.assertEqual(entries[1]["playback_mode"], "remux")
+        self.assertFalse(entries[1]["playable"])
+
+        remux_output = Path(self.temp_dir.name) / "preview.mp4"
+        remux_command = build_remux_command("/usr/bin/ffmpeg", video, remux_output)
+        self.assertIn("copy", remux_command)
+        self.assertNotIn("libx264", remux_command)
+        self.assertNotIn("-c:a", remux_command)
+        self.assertIn("aac_adtstoasc", remux_command)
+        self.assertIn("+faststart", remux_command)
+        self.assertNotIn("empty_moov", remux_command)
+        self.assertEqual(remux_command[-1], str(remux_output))
+
+        file_path = "测试 主播/2026-07-12/测试 主播_2026-07-12_12-00-00.mp4"
+        ranged = self.client.get(f"/api/recordings/file/{file_path}", headers={"Range": "bytes=2-5"})
+        self.assertEqual(ranged.status_code, 206)
+        self.assertEqual(ranged.content, b"2345")
+        self.assertEqual(ranged.headers["content-range"], "bytes 2-5/10")
+        self.assertEqual(ranged.headers["accept-ranges"], "bytes")
+        self.assertTrue(ranged.headers["content-type"].startswith("video/mp4"))
+
+        download = self.client.get(f"/api/recordings/file/{file_path}", params={"download": "true"})
+        self.assertEqual(download.status_code, 200)
+        self.assertIn("attachment", download.headers["content-disposition"])
+
+        cached_preview = Path(self.temp_dir.name) / "cached-preview.mp4"
+        cached_preview.write_bytes(b"browser-compatible-preview")
+        with patch.object(
+            self.app.state.recording_preview_cache,
+            "get",
+            new=AsyncMock(return_value=cached_preview),
+        ):
+            preview = self.client.get(f"/api/recordings/preview/{file_path}")
+            preview_range = self.client.get(
+                f"/api/recordings/preview/{file_path}",
+                headers={"Range": "bytes=8-17"},
+            )
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.content, b"browser-compatible-preview")
+        self.assertTrue(preview.headers["content-type"].startswith("video/mp4"))
+        self.assertEqual(preview.headers["accept-ranges"], "bytes")
+        self.assertEqual(preview.headers["x-recording-preview"], "remux-cache")
+        self.assertEqual(preview_range.status_code, 206)
+        self.assertEqual(preview_range.content, b"compatible")
+        self.assertEqual(preview_range.headers["content-range"], "bytes 8-17/26")
+
+        self.assertEqual(self.client.get("/api/recordings", params={"path": "../"}).status_code, 400)
+        self.assertEqual(self.client.get("/api/recordings/file/越界链接.mp4").status_code, 400)
+        self.assertEqual(
+            self.client.get("/api/recordings/file/测试 主播/2026-07-12/内部信息.txt").status_code,
+            404,
+        )
 
     def test_active_session_renews_once_inside_half_ttl_window(self) -> None:
         self.login()

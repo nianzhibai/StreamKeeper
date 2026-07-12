@@ -8,6 +8,7 @@
 - 支持直接粘贴抖音分享文案，自动提取 `live.douyin.com`、`v.douyin.com` 或 `www.douyin.com/user/...` 链接。
 - 支持 OD、UHD、HD、SD、LD 画质。
 - 支持 TS、MP4、MKV、FLV 和按时长分段；段数默认 4，达到上限或本次直播提前结束都会自动停止任务。
+- 内置本地录像文件管理器，可按主播和日期浏览、搜索、下载并直接在线播放录像。
 - 自动优先 FLV；FLV 为 H.265/HEVC 时回退 HLS。
 - SQLite 持久化任务，服务器重启后自动恢复已启用的值守任务。
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
@@ -94,6 +95,7 @@ Compose 默认使用 `recorder-data` 命名卷：
 ```text
 /data/tasks.db          SQLite 任务数据库
 /data/recordings/       录像文件（主播/录制日期/文件）
+/data/preview-cache/    在线播放生成的临时 MP4 缓存
 ```
 
 每次录制启动时确定日期目录；即使直播跨过零点，本次录制产生的所有分段仍保存在启动当天：
@@ -101,6 +103,10 @@ Compose 默认使用 `recorder-data` 命名卷：
 ```text
 /data/recordings/主播名/2026-07-12/主播名_2026-07-12_23-50-00_000.ts
 ```
+
+登录后可在“本地录像”页面逐层浏览这些目录。MP4 直接使用原文件播放；TS、FLV 和 MKV 首次播放时会由 FFmpeg 使用 `-c copy` 快速无损封装成完整 MP4，再通过支持 HTTP Range 的文件响应播放。这样浏览器从开始就能获得固定总时长并拖动进度，不会重新编码音视频，也不会修改原始录像。如果录像内部编码不受浏览器支持，页面会提示下载文件，不会回退到 H.264/AAC 转码。
+
+生成的 MP4 保存在 `preview-cache/`，源文件大小或修改时间变化后会自动使用新缓存。同一录像的并发请求只封装一次；缓存最多保留最近 8 个文件、总计 10 GiB，并清理超过 24 小时的文件。该目录不需要备份，可以随时删除。
 
 查看卷位置：
 
@@ -275,6 +281,9 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `POST` | `/api/auth/logout` | 撤销当前会话并清除 Cookie |
 | `GET` | `/api/auth/blocked-clients` | 查询永久登录黑名单 |
 | `DELETE` | `/api/auth/blocked-clients/{ip}` | 手动解除指定 IP 的登录黑名单 |
+| `GET` | `/api/recordings?path=...` | 浏览录像目录；只返回 TS、MP4、MKV 和 FLV 文件 |
+| `GET` | `/api/recordings/file/{path}` | 读取或下载原始录像，支持 HTTP Range |
+| `GET` | `/api/recordings/preview/{path}` | 获取无损封装后的完整 MP4 缓存，支持 HTTP Range |
 | `GET/PUT` | `/api/cloud/archive` | 读取或保存网盘归档配置和运行状态；不返回明文凭据 |
 | `POST` | `/api/cloud/archive/run` | 在后台立即扫描并上传稳定录像 |
 | `POST` | `/api/cloud/login/{provider}` | 创建夸克或联通云盘短期扫码登录会话 |
