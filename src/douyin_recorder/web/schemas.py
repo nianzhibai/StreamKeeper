@@ -227,3 +227,12 @@ class CloudArchiveView(StrictModel):
     wopan: CloudWoPanView
     schedule: CloudScheduleView
     last_run: CloudUploadExecutionView | None
+
+
+class CloudLoginView(StrictModel):
+    session_id: str
+    provider: Literal["quark", "wopan"]
+    state: Literal["waiting", "scanned", "success", "expired", "error", "cancelled"]
+    message: str
+    qr_image: str | None
+    expires_at: datetime

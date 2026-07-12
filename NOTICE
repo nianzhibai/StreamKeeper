@@ -16,3 +16,8 @@ reference to OpenListTeam/wopan-sdk-go:
 https://github.com/OpenListTeam/wopan-sdk-go
 
 wopan-sdk-go is licensed under the Apache License, Version 2.0.
+
+This product uses qrcode for generating short-lived login QR images:
+https://github.com/lincolnloop/python-qrcode
+
+qrcode is licensed under the BSD License.

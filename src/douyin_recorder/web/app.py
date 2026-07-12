@@ -4,6 +4,7 @@ import asyncio
 import secrets
 import shutil
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,11 +23,18 @@ from .auth import (
     SessionAuthMiddleware,
     set_session_cookie,
 )
+from .cloud_login import (
+    CloudLoginError,
+    CloudLoginFlowFactory,
+    CloudLoginManager,
+    CloudLoginSnapshot,
+)
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
     AuthSession,
     CloudArchiveUpdate,
     CloudArchiveView,
+    CloudLoginView,
     CloudQuarkView,
     CloudScheduleView,
     CloudUploadExecutionView,
@@ -67,6 +75,17 @@ def _auth_session_response(session: WebSession) -> AuthSession:
         username=session.username,
         csrf_token=session.csrf_token,
         expires_at=session.expires_at,
+    )
+
+
+def _cloud_login_response(snapshot: CloudLoginSnapshot) -> CloudLoginView:
+    return CloudLoginView(
+        session_id=snapshot.session_id,
+        provider=snapshot.provider,
+        state=snapshot.state,
+        message=snapshot.message,
+        qr_image=snapshot.qr_image,
+        expires_at=snapshot.expires_at,
     )
 
 
@@ -128,6 +147,8 @@ def create_app(
     scheduler: TaskScheduler | None = None,
     upload_service: RecordingUploadService | None = None,
     inspect_client_factory: ClientFactory | None = None,
+    cloud_login_flow_factory: CloudLoginFlowFactory | None = None,
+    cloud_login_poll_interval: float = 2,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
@@ -139,6 +160,44 @@ def create_app(
     )
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
+    cloud_config_lock = asyncio.Lock()
+
+    async def save_cloud_login_credentials(provider: str, credentials: dict[str, str]) -> None:
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            if provider == "quark":
+                cookie = credentials.get("cookie", "")
+                if not cookie:
+                    raise CloudLoginError("夸克扫码登录没有返回 Cookie")
+                config = replace(current, quark_cookie=cookie)
+            elif provider == "wopan":
+                access_token = credentials.get("access_token", "")
+                refresh_token = credentials.get("refresh_token", "")
+                if len(access_token.encode()) < 16:
+                    raise CloudLoginError("联通云盘扫码登录没有返回有效 Token")
+                config = replace(
+                    current,
+                    wopan_access_token=access_token,
+                    wopan_refresh_token=refresh_token,
+                )
+            else:
+                raise CloudLoginError(f"不支持的扫码登录类型: {provider}")
+            config.validate()
+            await store.save_cloud_upload_config(config.to_dict())
+            await store.delete_cloud_credentials(provider)
+            await upload_service.reconfigure(config)
+
+    if cloud_login_flow_factory is None:
+        cloud_login_manager = CloudLoginManager(
+            save_cloud_login_credentials,
+            poll_interval=cloud_login_poll_interval,
+        )
+    else:
+        cloud_login_manager = CloudLoginManager(
+            save_cloud_login_credentials,
+            flow_factory=cloud_login_flow_factory,
+            poll_interval=cloud_login_poll_interval,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -150,6 +209,7 @@ def create_app(
         try:
             yield
         finally:
+            await cloud_login_manager.shutdown()
             await upload_service.shutdown()
             await scheduler.shutdown()
 
@@ -172,6 +232,7 @@ def create_app(
     app.state.store = store
     app.state.scheduler = scheduler
     app.state.upload_service = upload_service
+    app.state.cloud_login_manager = cloud_login_manager
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:
@@ -282,52 +343,88 @@ def create_app(
         config = await upload_service.get_config()
         return await _cloud_archive_response(config, upload_service)
 
+    @app.post(
+        "/api/cloud/login/{provider}",
+        response_model=CloudLoginView,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def start_cloud_login(provider: str) -> CloudLoginView:
+        if provider not in {"quark", "wopan"}:
+            raise HTTPException(status_code=404, detail=f"不支持的网盘类型: {provider}")
+        try:
+            snapshot = await cloud_login_manager.start(provider)
+        except CloudLoginError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _cloud_login_response(snapshot)
+
+    @app.get(
+        "/api/cloud/login/{provider}/{session_id}",
+        response_model=CloudLoginView,
+    )
+    async def get_cloud_login(provider: str, session_id: str) -> CloudLoginView:
+        snapshot = await cloud_login_manager.get(provider, session_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="扫码登录会话不存在或已结束")
+        return _cloud_login_response(snapshot)
+
+    @app.delete(
+        "/api/cloud/login/{provider}/{session_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def cancel_cloud_login(provider: str, session_id: str) -> Response:
+        if not await cloud_login_manager.cancel(provider, session_id):
+            raise HTTPException(status_code=404, detail="扫码登录会话不存在或已结束")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.put("/api/cloud/archive", response_model=CloudArchiveView)
     async def update_cloud_archive(payload: CloudArchiveUpdate) -> CloudArchiveView:
-        current = await upload_service.get_config()
-        new_cookie = payload.quark.cookie.get_secret_value().strip() if payload.quark.cookie else ""
-        new_access_token = payload.wopan.access_token.get_secret_value().strip() if payload.wopan.access_token else ""
-        new_refresh_token = (
-            payload.wopan.refresh_token.get_secret_value().strip() if payload.wopan.refresh_token else ""
-        )
-        if payload.quark.clear_cookie and new_cookie:
-            raise HTTPException(status_code=422, detail="不能同时填写并清除夸克 Cookie")
-        if payload.wopan.clear_tokens and (new_access_token or new_refresh_token):
-            raise HTTPException(status_code=422, detail="不能同时填写并清除联通云盘 token")
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            new_cookie = payload.quark.cookie.get_secret_value().strip() if payload.quark.cookie else ""
+            new_access_token = (
+                payload.wopan.access_token.get_secret_value().strip() if payload.wopan.access_token else ""
+            )
+            new_refresh_token = (
+                payload.wopan.refresh_token.get_secret_value().strip() if payload.wopan.refresh_token else ""
+            )
+            if payload.quark.clear_cookie and new_cookie:
+                raise HTTPException(status_code=422, detail="不能同时填写并清除夸克 Cookie")
+            if payload.wopan.clear_tokens and (new_access_token or new_refresh_token):
+                raise HTTPException(status_code=422, detail="不能同时填写并清除联通云盘 token")
 
-        quark_cookie = "" if payload.quark.clear_cookie else (new_cookie or current.quark_cookie)
-        if payload.wopan.clear_tokens:
-            wopan_access_token = ""
-            wopan_refresh_token = ""
-        else:
-            wopan_access_token = new_access_token or current.wopan_access_token
-            wopan_refresh_token = new_refresh_token or current.wopan_refresh_token
-        config = CloudArchiveConfig(
-            quark_enabled=payload.quark.enabled,
-            quark_cookie=quark_cookie,
-            quark_root_id=payload.quark.root_id,
-            quark_upload_path=payload.quark.upload_path,
-            wopan_enabled=payload.wopan.enabled,
-            wopan_access_token=wopan_access_token,
-            wopan_refresh_token=wopan_refresh_token,
-            wopan_root_id=payload.wopan.root_id,
-            wopan_family_id=payload.wopan.family_id,
-            wopan_upload_path=payload.wopan.upload_path,
-            upload_hour=payload.schedule.hour,
-            upload_min_age_minutes=payload.schedule.min_age_minutes,
-            upload_timeout_seconds=payload.schedule.timeout_seconds,
-        )
-        try:
-            config.validate()
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            quark_cookie = "" if payload.quark.clear_cookie else (new_cookie or current.quark_cookie)
+            if payload.wopan.clear_tokens:
+                wopan_access_token = ""
+                wopan_refresh_token = ""
+            else:
+                wopan_access_token = new_access_token or current.wopan_access_token
+                wopan_refresh_token = new_refresh_token or current.wopan_refresh_token
+            config = CloudArchiveConfig(
+                quark_enabled=payload.quark.enabled,
+                quark_cookie=quark_cookie,
+                quark_root_id=payload.quark.root_id,
+                quark_upload_path=payload.quark.upload_path,
+                wopan_enabled=payload.wopan.enabled,
+                wopan_access_token=wopan_access_token,
+                wopan_refresh_token=wopan_refresh_token,
+                wopan_root_id=payload.wopan.root_id,
+                wopan_family_id=payload.wopan.family_id,
+                wopan_upload_path=payload.wopan.upload_path,
+                upload_hour=payload.schedule.hour,
+                upload_min_age_minutes=payload.schedule.min_age_minutes,
+                upload_timeout_seconds=payload.schedule.timeout_seconds,
+            )
+            try:
+                config.validate()
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        await store.save_cloud_upload_config(config.to_dict())
-        if payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie):
-            await store.delete_cloud_credentials("quark")
-        if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
-            await store.delete_cloud_credentials("wopan")
-        await upload_service.reconfigure(config)
+            await store.save_cloud_upload_config(config.to_dict())
+            if payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie):
+                await store.delete_cloud_credentials("quark")
+            if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
+                await store.delete_cloud_credentials("wopan")
+            await upload_service.reconfigure(config)
         return await _cloud_archive_response(config, upload_service)
 
     @app.post("/api/cloud/archive/run", response_model=CloudArchiveView, status_code=status.HTTP_202_ACCEPTED)

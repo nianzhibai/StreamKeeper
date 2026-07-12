@@ -12,6 +12,7 @@ from douyin_recorder.models import LiveInfo
 from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 from douyin_recorder.web.app import create_app
 from douyin_recorder.web.auth import SESSION_COOKIE_NAME
+from douyin_recorder.web.cloud_login import CloudLoginPoll
 from douyin_recorder.web.schemas import TaskStatus
 from douyin_recorder.web.store import TaskStore
 
@@ -72,6 +73,30 @@ class FakeInspectClient:
         )
 
 
+class FakeCloudLoginFlow:
+    qr_ttl_seconds = 60
+
+    def __init__(self, provider: str) -> None:
+        self.provider = provider
+
+    async def start(self) -> str:
+        return "data:image/png;base64,dGVzdC1xci1pbWFnZQ=="
+
+    async def poll(self) -> CloudLoginPoll:
+        if self.provider == "quark":
+            return CloudLoginPoll("success", {"cookie": "qr-quark-secret-cookie"})
+        return CloudLoginPoll(
+            "success",
+            {
+                "access_token": "qr-wopan-access-token-123456",
+                "refresh_token": "qr-wopan-refresh-token-123456",
+            },
+        )
+
+    async def aclose(self) -> None:
+        pass
+
+
 class WebTests(TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
@@ -91,6 +116,8 @@ class WebTests(TestCase):
             store=self.store,
             scheduler=self.scheduler,
             inspect_client_factory=FakeInspectClient,
+            cloud_login_flow_factory=FakeCloudLoginFlow,
+            cloud_login_poll_interval=0.01,
         )
         self.client_context = TestClient(app)
         self.client = self.client_context.__enter__()
@@ -470,3 +497,44 @@ class WebTests(TestCase):
         self.assertFalse(cleared.json()["wopan"]["access_token_configured"])
         disabled_run = self.client.post("/api/cloud/archive/run", headers=self.csrf_headers)
         self.assertEqual(disabled_run.status_code, 409)
+
+    def test_cloud_qr_login_saves_credentials_without_returning_secrets(self) -> None:
+        self.login()
+        settings_page = self.client.get("/settings")
+        self.assertIn('data-cloud-login="quark"', settings_page.text)
+        self.assertIn('data-cloud-login="wopan"', settings_page.text)
+        self.assertIn('id="cloud-login-dialog"', settings_page.text)
+
+        rejected = self.client.post("/api/cloud/login/quark")
+        self.assertEqual(rejected.status_code, 403)
+
+        for provider in ("quark", "wopan"):
+            created = self.client.post(
+                f"/api/cloud/login/{provider}",
+                headers=self.csrf_headers,
+            )
+            self.assertEqual(created.status_code, 201)
+            self.assertTrue(created.json()["qr_image"].startswith("data:image/png;base64,"))
+            self.assertNotIn("secret", created.text)
+            session_id = created.json()["session_id"]
+            completed = None
+            for _ in range(100):
+                response = self.client.get(f"/api/cloud/login/{provider}/{session_id}")
+                self.assertEqual(response.status_code, 200)
+                if response.json()["state"] == "success":
+                    completed = response
+                    break
+                time.sleep(0.01)
+            self.assertIsNotNone(completed)
+            self.assertIsNone(completed.json()["qr_image"])
+            self.assertNotIn("secret", completed.text)
+            deleted = self.client.delete(
+                f"/api/cloud/login/{provider}/{session_id}",
+                headers=self.csrf_headers,
+            )
+            self.assertEqual(deleted.status_code, 204)
+
+        archive = self.client.get("/api/cloud/archive").json()
+        self.assertTrue(archive["quark"]["credential_configured"])
+        self.assertTrue(archive["wopan"]["access_token_configured"])
+        self.assertTrue(archive["wopan"]["refresh_token_configured"])

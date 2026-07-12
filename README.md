@@ -13,7 +13,7 @@
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
 - 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败 IP 永久黑名单。
 - 每天凌晨 1 点原生归档稳定录像到夸克网盘、联通云盘，全部成功后删除本地文件。
-- Web 页面可配置网盘凭据和执行计划、手动立即上传，并查看运行状态与最近结果。
+- Web 页面支持夸克网盘、联通云盘 App 扫码登录，自动保存凭据；也可配置执行计划、手动立即上传并查看最近结果。
 - 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
@@ -131,12 +131,13 @@ sudo chown -R 10001:10001 data
 - 夸克：使用网页 Cookie 调用目录、预上传和哈希接口；未命中秒传时，获取临时 OSS 授权并流式分片上传。
 - 联通云盘：使用 access/refresh token 调用 AES-CBC 加密的目录接口，并通过 `upload2C` 流式分片上传；access token 失效时使用 refresh token 自动续期。
 
-### 获取凭据
+### 扫码登录
 
-- 夸克：使用 Chrome 登录[夸克网盘](https://pan.quark.cn/)，按 F12 打开开发者工具，在 Network 中选择任意已登录请求，复制请求头里的完整 `Cookie`。根目录 ID 是 `0`；也可以从目标文件夹地址栏取得子目录 ID。具体位置可参考 [OpenList Quark 文档](https://doc.oplist.org/guide/drivers/quark.html)。
-- 联通云盘：登录[联通云盘](https://pan.wo.cn/)，从登录响应取得 token；或者登录其 H5 页面，在开发者工具的 Session Storage 中取得 `access_token` 和 `refresh_token`。建议两项都配置，方法可参考 [OpenList WoPan 文档](https://doc.oplist.org/guide/drivers/wopan)。`Family ID` 留空使用个人云，填写后使用家庭云。
+登录管理页面后，在“设置”中点击对应网盘的“扫码登录”，再使用[夸克 App](https://pan.quark.cn/)或[联通云盘 App](https://pan.wo.cn/login?redirect=%2Fpan%2Ffile_list%2Fall)扫描并在手机上确认。服务端会用一次性扫码票据换取上传所需的 Cookie/token，并直接保存到 SQLite；扫码会话只在服务内存中短期保留并自动过期，最终凭据不会返回给浏览器。联通云盘二维码约 60 秒失效，夸克二维码约 5 分钟失效，过期后在弹窗中刷新即可。
 
-登录管理页面后，在“设置”页面保存网盘凭据和执行计划，再到“网盘归档”页面手动执行并查看结果。录像固定上传到网盘根目录的 `/DouYinStreamKeeper`；目录存在时直接复用，不存在时自动创建。敏感字段不会回显；再次编辑时留空表示保持原值，也可以勾选清除凭据。归档会在服务器后台执行，页面关闭后仍会继续运行。
+扫码只更新凭据，不会擅自启用上传目标或改动 Root ID、Family ID 和执行计划。`Family ID` 留空使用个人云，填写后使用家庭云。手动 Cookie/token 输入仍保留在折叠的备用区域，以应对平台临时调整扫码协议。
+
+保存设置后可到“网盘归档”页面手动执行并查看结果。录像固定上传到网盘根目录的 `/DouYinStreamKeeper`；目录存在时直接复用，不存在时自动创建。归档会在服务器后台执行，页面关闭后仍会继续运行。
 
 也可以用 `.env` 初始化配置，适合自动化部署；不要把真实凭据提交到 Git：
 
@@ -276,6 +277,8 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `DELETE` | `/api/auth/blocked-clients/{ip}` | 手动解除指定 IP 的登录黑名单 |
 | `GET/PUT` | `/api/cloud/archive` | 读取或保存网盘归档配置和运行状态；不返回明文凭据 |
 | `POST` | `/api/cloud/archive/run` | 在后台立即扫描并上传稳定录像 |
+| `POST` | `/api/cloud/login/{provider}` | 创建夸克或联通云盘短期扫码登录会话 |
+| `GET/DELETE` | `/api/cloud/login/{provider}/{session_id}` | 查询或取消扫码登录；不返回最终凭据 |
 | `GET/POST` | `/api/tasks` | 查询或创建任务 |
 | `PATCH/DELETE` | `/api/tasks/{id}` | 更新或删除任务 |
 | `POST` | `/api/tasks/{id}/start` | 启动值守 |
@@ -294,6 +297,7 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `cloud/quark.py` | 夸克目录、秒传和 OSS 分片上传协议 |
 | `cloud/wopan.py` | 联通云盘加密请求、token 续期和 upload2C 上传协议 |
 | `web/store.py` | SQLite 任务、会话、网盘凭据和登录黑名单持久化 |
+| `web/cloud_login.py` | 夸克、联通云盘扫码会话、票据交换与自动保存 |
 | `web/auth.py` | Session Cookie 和 CSRF 校验 |
 | `web/scheduler.py` | 检查、排队、录制和重启恢复 |
 | `web/uploader.py` | 本地录像扫描、多目标确认、删除和每日归档调度 |

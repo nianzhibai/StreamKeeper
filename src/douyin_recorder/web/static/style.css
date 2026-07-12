@@ -1257,6 +1257,39 @@ svg {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.credential-login-row {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.014);
+}
+
+.credential-login-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.credential-login-copy strong {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.credential-login-copy span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.qr-login-button {
+  min-width: 92px;
+}
+
 .field {
   display: block;
   min-width: 0;
@@ -1537,10 +1570,85 @@ svg {
   margin-top: 16px;
 }
 
+.credential-fallback {
+  margin-top: 0;
+}
+
+.credential-fallback .settings-fields {
+  margin-top: 16px;
+}
+
 .modal-actions {
   justify-content: flex-end;
   margin-top: 22px;
   border-top: 1px solid var(--border);
+}
+
+.qr-login-modal {
+  width: min(390px, calc(100% - 28px));
+}
+
+.qr-login-modal .modal-header {
+  position: static;
+}
+
+.qr-login-modal .modal-header .icon-button {
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.qr-login-body {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 28px 32px;
+  text-align: center;
+}
+
+.qr-image-frame {
+  display: grid;
+  width: 224px;
+  height: 224px;
+  place-items: center;
+  overflow: hidden;
+  border: 8px solid #fff;
+  border-radius: 12px;
+  background: #fff;
+  transition: opacity 150ms ease;
+}
+
+.qr-image-frame.is-dimmed {
+  opacity: 0.2;
+}
+
+.qr-image-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.qr-image-frame img:not([src]) {
+  visibility: hidden;
+}
+
+.qr-login-body > strong {
+  margin-top: 20px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.qr-login-body > span {
+  min-height: 18px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.qr-login-body .secondary-button {
+  margin-top: 16px;
 }
 
 /* Login */

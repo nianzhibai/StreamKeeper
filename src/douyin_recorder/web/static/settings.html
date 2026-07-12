@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>设置 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260712-ui1" />
+    <link rel="stylesheet" href="/static/style.css?v=20260712-ui2" />
   </head>
   <body data-page="settings">
     <div class="app-shell">
@@ -39,10 +39,19 @@
               <label class="switch-field"><input name="quark_enabled" type="checkbox" /><span class="switch"></span><strong>启用</strong></label>
             </header>
             <div class="settings-fields">
-              <label class="field field-wide"><span>Cookie</span><input name="quark_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="留空保持现有 Cookie" /></label>
+              <div class="credential-login-row field-wide">
+                <div class="credential-login-copy"><strong>账号授权</strong><span>使用夸克 App</span></div>
+                <button class="secondary-button qr-login-button" type="button" data-cloud-login="quark">扫码登录</button>
+              </div>
               <label class="field"><span>Root ID</span><input name="quark_root_id" type="text" maxlength="512" value="0" autocomplete="off" /></label>
               <label class="field"><span>上传目录</span><input name="quark_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
-              <label class="check-field field-wide"><input name="quark_clear_cookie" type="checkbox" /><span>清除已保存的 Cookie</span></label>
+              <details class="advanced-settings credential-fallback field-wide">
+                <summary>手动凭证 <span>⌄</span></summary>
+                <div class="settings-fields">
+                  <label class="field field-wide"><span>Cookie</span><input name="quark_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="留空保持现有 Cookie" /></label>
+                  <label class="check-field field-wide"><input name="quark_clear_cookie" type="checkbox" /><span>清除已保存的 Cookie</span></label>
+                </div>
+              </details>
             </div>
           </section>
 
@@ -53,12 +62,21 @@
               <label class="switch-field"><input name="wopan_enabled" type="checkbox" /><span class="switch"></span><strong>启用</strong></label>
             </header>
             <div class="settings-fields">
-              <label class="field"><span>Access Token</span><input name="wopan_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
-              <label class="field"><span>Refresh Token</span><input name="wopan_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
+              <div class="credential-login-row field-wide">
+                <div class="credential-login-copy"><strong>账号授权</strong><span>使用联通云盘 App</span></div>
+                <button class="secondary-button qr-login-button" type="button" data-cloud-login="wopan">扫码登录</button>
+              </div>
               <label class="field"><span>Root ID</span><input name="wopan_root_id" type="text" maxlength="512" value="0" autocomplete="off" /></label>
               <label class="field"><span>Family ID</span><input name="wopan_family_id" type="text" maxlength="512" placeholder="个人云可留空" autocomplete="off" /></label>
               <label class="field field-wide"><span>上传目录</span><input name="wopan_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
-              <label class="check-field field-wide"><input name="wopan_clear_tokens" type="checkbox" /><span>清除已保存的 Token</span></label>
+              <details class="advanced-settings credential-fallback field-wide">
+                <summary>手动凭证 <span>⌄</span></summary>
+                <div class="settings-fields">
+                  <label class="field"><span>Access Token</span><input name="wopan_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
+                  <label class="field"><span>Refresh Token</span><input name="wopan_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
+                  <label class="check-field field-wide"><input name="wopan_clear_tokens" type="checkbox" /><span>清除已保存的 Token</span></label>
+                </div>
+              </details>
             </div>
           </section>
 
@@ -75,7 +93,20 @@
         </form>
       </main>
     </div>
+
+    <dialog id="cloud-login-dialog" class="modal qr-login-modal" aria-labelledby="cloud-login-title">
+      <div class="modal-header">
+        <h2 id="cloud-login-title">扫码登录</h2>
+        <button id="cloud-login-close" class="icon-button subtle" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="qr-login-body">
+        <div class="qr-image-frame"><img id="cloud-login-image" alt="网盘登录二维码" /></div>
+        <strong id="cloud-login-status" role="status">正在生成二维码</strong>
+        <span id="cloud-login-tip"></span>
+        <button id="cloud-login-refresh" class="secondary-button hidden" type="button">刷新二维码</button>
+      </div>
+    </dialog>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/settings.js?v=20260712-ui1"></script>
+    <script type="module" src="/static/settings.js?v=20260712-ui2"></script>
   </body>
 </html>
