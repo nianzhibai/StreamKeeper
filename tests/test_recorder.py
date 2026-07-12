@@ -23,7 +23,7 @@ class OutputPathTests(TestCase):
         self.assertNotIn("secret", redacted)
         self.assertEqual(redacted, "Error opening [stream-url] at input")
 
-    def test_creates_anchor_directory_and_segment_template(self) -> None:
+    def test_creates_anchor_and_recording_date_directories_with_segment_template(self) -> None:
         info = LiveInfo(
             platform="抖音",
             anchor_name="测试/主播",
@@ -44,7 +44,32 @@ class OutputPathTests(TestCase):
                 now=datetime(2026, 7, 11, 12, 30, 45),
             )
             self.assertTrue(output.parent.is_dir())
+            self.assertEqual(output.parent.name, "2026-07-11")
+            self.assertEqual(output.parent.parent.name, "测试_主播")
             self.assertEqual(output.name, "测试_主播_2026-07-11_12-30-45_%03d.ts")
+
+    def test_recording_started_before_midnight_keeps_one_fixed_date_directory(self) -> None:
+        info = LiveInfo(
+            platform="抖音",
+            anchor_name="跨天主播",
+            is_live=True,
+            title=None,
+            quality="OD",
+            m3u8_url=None,
+            flv_url=None,
+            record_url=None,
+            live_url=None,
+        )
+        with TemporaryDirectory() as tmp:
+            output = create_output_path(
+                tmp,
+                info,
+                output_format="ts",
+                segment_seconds=1800,
+                now=datetime(2026, 7, 12, 23, 50),
+            )
+            self.assertEqual(output.parent.name, "2026-07-12")
+            self.assertEqual(output.name, "跨天主播_2026-07-12_23-50-00_%03d.ts")
 
     def test_segment_template_uses_a_new_prefix_when_segments_exist(self) -> None:
         info = LiveInfo(
@@ -97,4 +122,5 @@ class RecorderProcessTests(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(FFmpegRecordingError, "无法启动 FFmpeg"):
                 await recorder.record(info)
             self.assertIsNotNone(recorder.current_output_path)
-            self.assertEqual(recorder.current_output_path.parent.name, "主播")
+            self.assertEqual(recorder.current_output_path.parent.parent.name, "主播")
+            self.assertRegex(recorder.current_output_path.parent.name, r"^\d{4}-\d{2}-\d{2}$")

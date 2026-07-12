@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>网盘归档 · Stream Keeper</title>
+    <link rel="stylesheet" href="/static/style.css?v=20260712-ui1" />
+  </head>
+  <body data-page="archive">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Stream Keeper 首页"><span class="brand-mark"><i></i></span><span class="brand-copy"><strong>Stream Keeper</strong><small>直播录制</small></span></a>
+        <nav class="side-nav" aria-label="主要导航">
+          <a class="nav-item" href="/" data-nav="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg><span>概览</span></a>
+          <a class="nav-item" href="/tasks" data-nav="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="8" /></svg><span>录制任务</span></a>
+          <a class="nav-item" href="/archive" data-nav="archive"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5h14v10.25A1.25 1.25 0 0 1 17.75 20H6.25A1.25 1.25 0 0 1 5 18.75zM4 4h16v4.5H4zM9 12h6" /></svg><span>网盘归档</span></a>
+          <a class="nav-item" href="/settings" data-nav="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.72.6 1 .3.3.69.44 1.1.4h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z" /></svg><span>设置</span></a>
+        </nav>
+        <div class="sidebar-footer">
+          <div id="server-health" class="server-state"><i></i><span>正在连接</span></div>
+          <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API 文档 <span>↗</span></a>
+          <div class="account"><span class="account-avatar" data-account-avatar>A</span><span class="account-copy"><strong data-account-name>—</strong><small>管理员</small></span><button class="icon-button subtle" type="button" data-logout aria-label="退出登录" title="退出登录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10M14 8l4 4-4 4M18 12H9" /></svg></button></div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="page-header">
+          <div><p class="page-kicker">存储</p><h1>网盘归档</h1></div>
+          <div class="page-actions">
+            <button id="refresh-button" class="icon-button" type="button" aria-label="刷新" title="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6" /></svg></button>
+            <a class="secondary-button" href="/settings">归档设置</a>
+            <button id="cloud-run-button" class="primary-button" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg>立即归档</button>
+          </div>
+        </header>
+
+        <div id="page-error" class="error-banner hidden" role="alert"></div>
+
+        <section class="archive-hero panel">
+          <div class="archive-hero-state">
+            <span id="archive-status" class="status-pill status-large tone-neutral"><i></i>读取中</span>
+            <strong id="archive-status-time">—</strong>
+          </div>
+          <div class="archive-schedule-summary">
+            <div><small>下次执行</small><strong id="next-run-time">—</strong></div>
+            <div><small>每日时间</small><strong id="schedule-hour">—</strong></div>
+            <div><small>文件稳定时间</small><strong id="stable-age">—</strong></div>
+          </div>
+        </section>
+
+        <section class="archive-page-grid">
+          <article class="panel providers-panel">
+            <div class="panel-heading"><div><h2>存储目标</h2><span>启用的网盘会各保存一份</span></div><a class="text-link" href="/settings">管理 <span>→</span></a></div>
+            <div class="provider-row">
+              <span class="provider-logo quark">夸</span>
+              <div class="provider-info"><strong>夸克网盘</strong><small id="quark-path">—</small></div>
+              <span id="quark-credential" class="credential-state">—</span>
+              <span id="quark-status" class="status-pill tone-muted"><i></i>读取中</span>
+            </div>
+            <div class="provider-row">
+              <span class="provider-logo wopan">联</span>
+              <div class="provider-info"><strong>联通云盘</strong><small id="wopan-path">—</small></div>
+              <span id="wopan-credential" class="credential-state">—</span>
+              <span id="wopan-status" class="status-pill tone-muted"><i></i>读取中</span>
+            </div>
+          </article>
+
+          <article class="panel last-run-panel">
+            <div class="panel-heading"><div><h2>最近执行</h2><span id="last-run-time">读取中</span></div></div>
+            <div class="run-metrics">
+              <div><small>扫描文件</small><strong id="run-scanned">—</strong></div>
+              <div><small>上传副本</small><strong id="run-uploaded">—</strong></div>
+              <div><small>清理本地</small><strong id="run-deleted">—</strong></div>
+              <div><small>失败</small><strong id="run-failed">—</strong></div>
+            </div>
+            <p id="last-run-detail" class="run-detail">—</p>
+          </article>
+        </section>
+      </main>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script type="module" src="/static/archive.js?v=20260712-ui1"></script>
+  </body>
+</html>

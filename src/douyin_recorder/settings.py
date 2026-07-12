@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-import posixpath
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from .client import DouyinClient
+
+CLOUD_ARCHIVE_ROOT = "/DouYinStreamKeeper"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -32,12 +33,12 @@ class Settings:
     login_window_seconds: int = 3600
     quark_cookie: str = ""
     quark_root_id: str = "0"
-    quark_upload_path: str | None = None
+    quark_upload_path: str | None = CLOUD_ARCHIVE_ROOT
     wopan_access_token: str = ""
     wopan_refresh_token: str = ""
     wopan_root_id: str = "0"
     wopan_family_id: str = ""
-    wopan_upload_path: str | None = None
+    wopan_upload_path: str | None = CLOUD_ARCHIVE_ROOT
     upload_hour: int = 1
     upload_min_age_minutes: int = 10
     upload_timeout_seconds: int = 300
@@ -70,12 +71,12 @@ class Settings:
             login_window_seconds=int(os.getenv("DOUYIN_LOGIN_WINDOW_SECONDS", "3600")),
             quark_cookie=os.getenv("DOUYIN_QUARK_COOKIE", ""),
             quark_root_id=os.getenv("DOUYIN_QUARK_ROOT_ID", "0"),
-            quark_upload_path=os.getenv("DOUYIN_QUARK_UPLOAD_PATH") or None,
+            quark_upload_path=CLOUD_ARCHIVE_ROOT,
             wopan_access_token=os.getenv("DOUYIN_WOPAN_ACCESS_TOKEN", ""),
             wopan_refresh_token=os.getenv("DOUYIN_WOPAN_REFRESH_TOKEN", ""),
             wopan_root_id=os.getenv("DOUYIN_WOPAN_ROOT_ID", "0"),
             wopan_family_id=os.getenv("DOUYIN_WOPAN_FAMILY_ID", ""),
-            wopan_upload_path=os.getenv("DOUYIN_WOPAN_UPLOAD_PATH") or None,
+            wopan_upload_path=CLOUD_ARCHIVE_ROOT,
             upload_hour=int(os.getenv("DOUYIN_UPLOAD_HOUR", "1")),
             upload_min_age_minutes=int(os.getenv("DOUYIN_UPLOAD_MIN_AGE_MINUTES", "10")),
             upload_timeout_seconds=int(os.getenv("DOUYIN_UPLOAD_TIMEOUT_SECONDS", "300")),
@@ -125,49 +126,32 @@ class Settings:
     @property
     def upload_targets(self) -> tuple[tuple[str, str], ...]:
         targets: list[tuple[str, str]] = []
-        if self.quark_cookie and self.quark_upload_path:
-            targets.append(("quark", self.quark_upload_path))
-        if (self.wopan_access_token or self.wopan_refresh_token) and self.wopan_upload_path:
-            targets.append(("wopan", self.wopan_upload_path))
+        if self.quark_cookie:
+            targets.append(("quark", CLOUD_ARCHIVE_ROOT))
+        if self.wopan_access_token or self.wopan_refresh_token:
+            targets.append(("wopan", CLOUD_ARCHIVE_ROOT))
         return tuple(targets)
 
     @property
     def upload_enabled(self) -> bool:
         return bool(self.upload_targets)
 
-    @staticmethod
-    def _validate_remote_path(name: str, value: str) -> None:
-        normalized = posixpath.normpath(value)
-        if (
-            not value.startswith("/")
-            or normalized != (value.rstrip("/") or "/")
-            or any(ord(char) < 32 for char in value)
-        ):
-            raise RuntimeError(f"{name} 必须是规范的绝对路径，且不能包含 .、.. 或重复斜杠")
-
     def _validate_cloud_uploads(self) -> None:
-        quark_configured = bool(self.quark_cookie or self.quark_upload_path or self.quark_root_id != "0")
+        quark_configured = bool(self.quark_cookie or self.quark_root_id != "0")
         if quark_configured:
-            if not self.quark_cookie or not self.quark_upload_path:
-                raise RuntimeError("启用夸克上传必须同时设置 DOUYIN_QUARK_COOKIE 和 DOUYIN_QUARK_UPLOAD_PATH")
+            if not self.quark_cookie:
+                raise RuntimeError("启用夸克上传必须设置 DOUYIN_QUARK_COOKIE")
             if not self.quark_root_id.strip():
                 raise RuntimeError("DOUYIN_QUARK_ROOT_ID 不能为空")
             if "\r" in self.quark_cookie or "\n" in self.quark_cookie:
                 raise RuntimeError("DOUYIN_QUARK_COOKIE 不能包含换行符")
-            self._validate_remote_path("DOUYIN_QUARK_UPLOAD_PATH", self.quark_upload_path)
 
         wopan_configured = bool(
-            self.wopan_access_token
-            or self.wopan_refresh_token
-            or self.wopan_upload_path
-            or self.wopan_family_id
-            or self.wopan_root_id != "0"
+            self.wopan_access_token or self.wopan_refresh_token or self.wopan_family_id or self.wopan_root_id != "0"
         )
         if wopan_configured:
-            if not (self.wopan_access_token or self.wopan_refresh_token) or not self.wopan_upload_path:
-                raise RuntimeError(
-                    "启用联通云盘上传必须设置 access/refresh token 至少一个，并设置 DOUYIN_WOPAN_UPLOAD_PATH"
-                )
+            if not (self.wopan_access_token or self.wopan_refresh_token):
+                raise RuntimeError("启用联通云盘上传必须设置 access/refresh token 至少一个")
             if self.wopan_access_token and len(self.wopan_access_token.encode("utf-8")) < 16:
                 raise RuntimeError("DOUYIN_WOPAN_ACCESS_TOKEN 长度不能小于 16 字节")
             if not self.wopan_root_id.strip():
@@ -178,7 +162,6 @@ class Settings:
             ):
                 if "\r" in value or "\n" in value:
                     raise RuntimeError(f"{name} 不能包含换行符")
-            self._validate_remote_path("DOUYIN_WOPAN_UPLOAD_PATH", self.wopan_upload_path)
 
     def load_cookies(self) -> str | None:
         if self.cookie_file:

@@ -54,10 +54,12 @@ def create_output_path(
     now: datetime | None = None,
 ) -> Path:
     anchor = sanitize_name(info.anchor_name)
-    target_dir = Path(output_dir).expanduser() / anchor
+    recording_started_at = now or datetime.now()
+    recording_date = recording_started_at.strftime("%Y-%m-%d")
+    target_dir = Path(output_dir).expanduser() / anchor / recording_date
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = (now or datetime.now()).strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = recording_started_at.strftime("%Y-%m-%d_%H-%M-%S")
     prefix = sanitize_name(name, fallback=f"{anchor}_{timestamp}") if name else f"{anchor}_{timestamp}"
     suffix = f"_%03d.{output_format}" if segment_seconds else f".{output_format}"
     counter = 0

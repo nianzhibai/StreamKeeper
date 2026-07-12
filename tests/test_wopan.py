@@ -43,7 +43,7 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
                 self.assertIn(b'name="partIndex"\r\n\r\n1', body)
                 self.assertIn(b'filename="remote.ts"', body)
                 self.assertIn(b"abcdef", body)
-                archive = next(entry for entry in directories["0"] if entry["name"] == "archive")
+                archive = next(entry for entry in directories["0"] if entry["name"] == "DouYinStreamKeeper")
                 directories[str(archive["id"])].append(
                     {"id": "file-1", "fid": "fid-1", "name": "remote.ts", "size": 6, "type": 1}
                 )
@@ -116,12 +116,14 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
             local_path = Path(tmp) / "local.ts"
             local_path.write_bytes(b"abcdef")
             try:
-                self.assertTrue(await client.upload_verified(local_path, "/archive/remote.ts"))
-                self.assertFalse(await client.upload_verified(local_path, "/archive/remote.ts"))
+                self.assertTrue(await client.upload_verified(local_path, "/DouYinStreamKeeper/remote.ts"))
+                self.assertFalse(await client.upload_verified(local_path, "/DouYinStreamKeeper/remote.ts"))
             finally:
                 await client.aclose()
 
         self.assertEqual(upload_requests, 1)
+        self.assertEqual(created_counter, 1)
+        self.assertEqual([entry["name"] for entry in directories["0"]], ["DouYinStreamKeeper"])
         self.assertEqual(
             credential_updates,
             [{"access_token": "new-access-token-123456", "refresh_token": "new-refresh-token"}],

@@ -124,13 +124,15 @@ class QuarkClientTests(IsolatedAsyncioTestCase):
                 sleep=no_sleep,
             )
             try:
-                remote_path = "/archive/主播/remote.ts"
+                remote_path = "/DouYinStreamKeeper/remote.ts"
                 self.assertTrue(await client.upload_verified(local_path, remote_path))
                 self.assertFalse(await client.upload_verified(local_path, remote_path))
             finally:
                 await client.aclose()
 
         self.assertTrue(finished)
+        self.assertEqual(created_counter, 1)
+        self.assertEqual([entry["file_name"] for entry in directories["0"]], ["DouYinStreamKeeper"])
         self.assertEqual(upload_name, "remote.ts")
         self.assertEqual(uploaded_parts, {1: b"abcd", 2: b"ef"})
         self.assertEqual(credential_updates, [{"cookie": "session=old-cookie; __puus=rotated-cookie"}])

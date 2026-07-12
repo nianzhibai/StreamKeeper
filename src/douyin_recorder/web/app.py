@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from .. import __version__
+from ..cloud import CloudArchiveConfig, CloudUploadError
 from ..errors import DouyinRecorderError
 from ..settings import Settings
 from .auth import (
@@ -24,6 +25,13 @@ from .auth import (
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
     AuthSession,
+    CloudArchiveUpdate,
+    CloudArchiveView,
+    CloudQuarkView,
+    CloudScheduleView,
+    CloudUploadExecutionView,
+    CloudUploadSummaryView,
+    CloudWoPanView,
     InspectRequest,
     InspectResponse,
     LoginRequest,
@@ -59,6 +67,57 @@ def _auth_session_response(session: WebSession) -> AuthSession:
         username=session.username,
         csrf_token=session.csrf_token,
         expires_at=session.expires_at,
+    )
+
+
+async def _cloud_archive_response(
+    config: CloudArchiveConfig,
+    upload_service: RecordingUploadService,
+) -> CloudArchiveView:
+    execution = upload_service.last_execution
+    execution_view = None
+    if execution is not None:
+        summary_view = None
+        if execution.summary is not None:
+            summary_view = CloudUploadSummaryView(
+                scanned_files=execution.summary.scanned_files,
+                skipped_files=execution.summary.skipped_files,
+                uploaded_copies=execution.summary.uploaded_copies,
+                deleted_files=execution.summary.deleted_files,
+                failed_files=execution.summary.failed_files,
+            )
+        execution_view = CloudUploadExecutionView(
+            trigger=execution.trigger,
+            status=execution.status,
+            started_at=execution.started_at,
+            finished_at=execution.finished_at,
+            summary=summary_view,
+            error=execution.error,
+        )
+    return CloudArchiveView(
+        enabled=config.enabled,
+        running=upload_service.running,
+        quark=CloudQuarkView(
+            enabled=config.quark_enabled,
+            credential_configured=bool(config.quark_cookie),
+            root_id=config.quark_root_id,
+            upload_path=config.quark_upload_path,
+        ),
+        wopan=CloudWoPanView(
+            enabled=config.wopan_enabled,
+            access_token_configured=bool(config.wopan_access_token),
+            refresh_token_configured=bool(config.wopan_refresh_token),
+            root_id=config.wopan_root_id,
+            family_id=config.wopan_family_id,
+            upload_path=config.wopan_upload_path,
+        ),
+        schedule=CloudScheduleView(
+            hour=config.upload_hour,
+            min_age_minutes=config.upload_min_age_minutes,
+            timeout_seconds=config.upload_timeout_seconds,
+            next_run_at=await upload_service.next_run_at(),
+        ),
+        last_run=execution_view,
     )
 
 
@@ -205,6 +264,82 @@ def create_app(
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/tasks", include_in_schema=False)
+    async def tasks_page() -> FileResponse:
+        return FileResponse(static_dir / "tasks.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/archive", include_in_schema=False)
+    async def archive_page() -> FileResponse:
+        return FileResponse(static_dir / "archive.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/settings", include_in_schema=False)
+    async def settings_page() -> FileResponse:
+        return FileResponse(static_dir / "settings.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/cloud/archive", response_model=CloudArchiveView)
+    async def get_cloud_archive() -> CloudArchiveView:
+        config = await upload_service.get_config()
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.put("/api/cloud/archive", response_model=CloudArchiveView)
+    async def update_cloud_archive(payload: CloudArchiveUpdate) -> CloudArchiveView:
+        current = await upload_service.get_config()
+        new_cookie = payload.quark.cookie.get_secret_value().strip() if payload.quark.cookie else ""
+        new_access_token = payload.wopan.access_token.get_secret_value().strip() if payload.wopan.access_token else ""
+        new_refresh_token = (
+            payload.wopan.refresh_token.get_secret_value().strip() if payload.wopan.refresh_token else ""
+        )
+        if payload.quark.clear_cookie and new_cookie:
+            raise HTTPException(status_code=422, detail="不能同时填写并清除夸克 Cookie")
+        if payload.wopan.clear_tokens and (new_access_token or new_refresh_token):
+            raise HTTPException(status_code=422, detail="不能同时填写并清除联通云盘 token")
+
+        quark_cookie = "" if payload.quark.clear_cookie else (new_cookie or current.quark_cookie)
+        if payload.wopan.clear_tokens:
+            wopan_access_token = ""
+            wopan_refresh_token = ""
+        else:
+            wopan_access_token = new_access_token or current.wopan_access_token
+            wopan_refresh_token = new_refresh_token or current.wopan_refresh_token
+        config = CloudArchiveConfig(
+            quark_enabled=payload.quark.enabled,
+            quark_cookie=quark_cookie,
+            quark_root_id=payload.quark.root_id,
+            quark_upload_path=payload.quark.upload_path,
+            wopan_enabled=payload.wopan.enabled,
+            wopan_access_token=wopan_access_token,
+            wopan_refresh_token=wopan_refresh_token,
+            wopan_root_id=payload.wopan.root_id,
+            wopan_family_id=payload.wopan.family_id,
+            wopan_upload_path=payload.wopan.upload_path,
+            upload_hour=payload.schedule.hour,
+            upload_min_age_minutes=payload.schedule.min_age_minutes,
+            upload_timeout_seconds=payload.schedule.timeout_seconds,
+        )
+        try:
+            config.validate()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        await store.save_cloud_upload_config(config.to_dict())
+        if payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie):
+            await store.delete_cloud_credentials("quark")
+        if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
+            await store.delete_cloud_credentials("wopan")
+        await upload_service.reconfigure(config)
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.post("/api/cloud/archive/run", response_model=CloudArchiveView, status_code=status.HTTP_202_ACCEPTED)
+    async def run_cloud_archive() -> CloudArchiveView:
+        try:
+            started = await upload_service.trigger("manual")
+        except CloudUploadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not started:
+            raise HTTPException(status_code=409, detail="网盘归档任务正在运行")
+        config = await upload_service.get_config()
+        return await _cloud_archive_response(config, upload_service)
 
     @app.get("/api/tasks", response_model=list[TaskRecord])
     async def list_tasks() -> list[TaskRecord]:

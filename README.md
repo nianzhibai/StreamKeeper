@@ -13,6 +13,7 @@
 - 限制同时录制数，避免 FFmpeg 占满服务器资源。
 - 独立登录页、SQLite 会话、HttpOnly Cookie、CSRF 校验和登录失败 IP 永久黑名单。
 - 每天凌晨 1 点原生归档稳定录像到夸克网盘、联通云盘，全部成功后删除本地文件。
+- Web 页面可配置网盘凭据和执行计划、手动立即上传，并查看运行状态与最近结果。
 - 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
@@ -92,7 +93,13 @@ Compose 默认使用 `recorder-data` 命名卷：
 
 ```text
 /data/tasks.db          SQLite 任务数据库
-/data/recordings/       录像文件
+/data/recordings/       录像文件（主播/录制日期/文件）
+```
+
+每次录制启动时确定日期目录；即使直播跨过零点，本次录制产生的所有分段仍保存在启动当天：
+
+```text
+/data/recordings/主播名/2026-07-12/主播名_2026-07-12_23-50-00_000.ts
 ```
 
 查看卷位置：
@@ -129,31 +136,32 @@ sudo chown -R 10001:10001 data
 - 夸克：使用 Chrome 登录[夸克网盘](https://pan.quark.cn/)，按 F12 打开开发者工具，在 Network 中选择任意已登录请求，复制请求头里的完整 `Cookie`。根目录 ID 是 `0`；也可以从目标文件夹地址栏取得子目录 ID。具体位置可参考 [OpenList Quark 文档](https://doc.oplist.org/guide/drivers/quark.html)。
 - 联通云盘：登录[联通云盘](https://pan.wo.cn/)，从登录响应取得 token；或者登录其 H5 页面，在开发者工具的 Session Storage 中取得 `access_token` 和 `refresh_token`。建议两项都配置，方法可参考 [OpenList WoPan 文档](https://doc.oplist.org/guide/drivers/wopan)。`Family ID` 留空使用个人云，填写后使用家庭云。
 
-把凭据写入服务器的 `.env`，不要提交到 Git：
+登录管理页面后，在“设置”页面保存网盘凭据和执行计划，再到“网盘归档”页面手动执行并查看结果。录像固定上传到网盘根目录的 `/DouYinStreamKeeper`；目录存在时直接复用，不存在时自动创建。敏感字段不会回显；再次编辑时留空表示保持原值，也可以勾选清除凭据。归档会在服务器后台执行，页面关闭后仍会继续运行。
+
+也可以用 `.env` 初始化配置，适合自动化部署；不要把真实凭据提交到 Git：
 
 ```dotenv
 # 留空表示不启用夸克目标。
 DOUYIN_QUARK_COOKIE='完整的夸克 Cookie'
 DOUYIN_QUARK_ROOT_ID=0
-DOUYIN_QUARK_UPLOAD_PATH=/DouYinStreamKeeper
 
 # 留空表示不启用联通云盘目标；只有 refresh token 时会先自动换取 access token。
 DOUYIN_WOPAN_ACCESS_TOKEN='access_token'
 DOUYIN_WOPAN_REFRESH_TOKEN='refresh_token'
 DOUYIN_WOPAN_ROOT_ID=0
 DOUYIN_WOPAN_FAMILY_ID=
-DOUYIN_WOPAN_UPLOAD_PATH=/DouYinStreamKeeper
 
 DOUYIN_UPLOAD_HOUR=1
 DOUYIN_UPLOAD_MIN_AGE_MINUTES=10
 DOUYIN_UPLOAD_TIMEOUT_SECONDS=300
 ```
 
-Cookie 和 token 首次来自环境变量。夸克返回新的 `__puus` Cookie、或联通云盘刷新 access/refresh token 后，服务会把更新值保存到 `tasks.db`，重启后继续使用；当环境变量中的原始凭据发生变化时，会以新的环境变量为准重置已保存状态。只配置联通 access token 而不配置 refresh token 也能上传，但 access token 过期后无法自动续期。
+首次启动时环境变量会写入 SQLite；在 Web 页面保存过配置后，SQLite 配置优先，后续环境变量变化不会覆盖页面设置。夸克返回新的 `__puus` Cookie、或联通云盘刷新 access/refresh token 后，服务也会把更新值保存到 `tasks.db`，重启后继续使用。只配置联通 access token 而不配置 refresh token 也能上传，但 access token 过期后无法自动续期。
 
 归档器使用 `TZ` 指定的本地时区，默认每天 `01:00` 扫描 `.ts`、`.mp4`、`.mkv` 和 `.flv`：
 
-- 保留录像目录下的相对路径，自动在远端创建目录。
+- 检查网盘根目录的 `DouYinStreamKeeper`，存在时复用，不存在时自动创建。
+- 在该目录下保留录像的“主播/日期/文件”相对路径，并自动创建缺少的子目录。
 - 跳过正在录制的主播目录、最近 10 分钟仍有变化的文件、零字节文件和符号链接。
 - 以流式方式读取和分片，不会把整个视频载入内存；夸克上传前会顺序计算 MD5/SHA1 以支持秒传。
 - 上传完成后重新列出远端目录，按完整文件名和大小确认成功。
@@ -232,14 +240,12 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `DOUYIN_SESSION_TTL_HOURS` | `168` | 登录会话的滑动有效小时数，访问到半周期后自动续期，范围 1–720 |
 | `DOUYIN_LOGIN_MAX_ATTEMPTS` | `3` | 窗口内触发永久 IP 黑名单的失败次数 |
 | `DOUYIN_LOGIN_WINDOW_SECONDS` | `3600` | 统计登录失败的滚动窗口秒数 |
-| `DOUYIN_QUARK_COOKIE` | 无 | 完整夸克网页 Cookie；与上传路径同时配置后启用夸克目标 |
+| `DOUYIN_QUARK_COOKIE` | 无 | 首次启动时初始化完整夸克网页 Cookie；也可在 Web 页面配置 |
 | `DOUYIN_QUARK_ROOT_ID` | `0` | 夸克路径解析起点的目录 ID |
-| `DOUYIN_QUARK_UPLOAD_PATH` | 无 | 相对 Root ID 的夸克归档绝对路径 |
-| `DOUYIN_WOPAN_ACCESS_TOKEN` | 无 | 联通云盘 access token；可由 refresh token 自动获取 |
-| `DOUYIN_WOPAN_REFRESH_TOKEN` | 无 | 联通云盘 refresh token，用于自动续期 |
+| `DOUYIN_WOPAN_ACCESS_TOKEN` | 无 | 首次启动时初始化联通云盘 access token；可由 refresh token 自动获取 |
+| `DOUYIN_WOPAN_REFRESH_TOKEN` | 无 | 首次启动时初始化 refresh token，用于自动续期 |
 | `DOUYIN_WOPAN_ROOT_ID` | `0` | 联通云盘路径解析起点的目录 ID |
 | `DOUYIN_WOPAN_FAMILY_ID` | 无 | 留空使用个人云，填写后使用对应家庭云 |
-| `DOUYIN_WOPAN_UPLOAD_PATH` | 无 | 相对 Root ID 的联通云盘归档绝对路径 |
 | `DOUYIN_UPLOAD_HOUR` | `1` | 每日归档开始小时，使用 `TZ` 本地时区 |
 | `DOUYIN_UPLOAD_MIN_AGE_MINUTES` | `10` | 只处理至少多久未修改的录像 |
 | `DOUYIN_UPLOAD_TIMEOUT_SECONDS` | `300` | 单次网盘 API/分片网络读写超时 |
@@ -268,6 +274,8 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `POST` | `/api/auth/logout` | 撤销当前会话并清除 Cookie |
 | `GET` | `/api/auth/blocked-clients` | 查询永久登录黑名单 |
 | `DELETE` | `/api/auth/blocked-clients/{ip}` | 手动解除指定 IP 的登录黑名单 |
+| `GET/PUT` | `/api/cloud/archive` | 读取或保存网盘归档配置和运行状态；不返回明文凭据 |
+| `POST` | `/api/cloud/archive/run` | 在后台立即扫描并上传稳定录像 |
 | `GET/POST` | `/api/tasks` | 查询或创建任务 |
 | `PATCH/DELETE` | `/api/tasks/{id}` | 更新或删除任务 |
 | `POST` | `/api/tasks/{id}/start` | 启动值守 |
@@ -282,6 +290,7 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `client.py` | 抖音 URL 分流和 `streamget` 适配 |
 | `ffmpeg.py` | FLV/HLS 选择和 FFmpeg 参数 |
 | `recorder.py` | 文件命名、录制进程和优雅停止 |
+| `cloud/config.py` | 网盘归档配置、目标选择和校验 |
 | `cloud/quark.py` | 夸克目录、秒传和 OSS 分片上传协议 |
 | `cloud/wopan.py` | 联通云盘加密请求、token 续期和 upload2C 上传协议 |
 | `web/store.py` | SQLite 任务、会话、网盘凭据和登录黑名单持久化 |

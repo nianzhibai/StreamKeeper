@@ -227,6 +227,27 @@ class StoreTests(IsolatedAsyncioTestCase):
             replacement,
         )
 
+    async def test_web_cloud_config_overrides_later_environment_changes(self) -> None:
+        environment = {"quark_enabled": False, "upload_hour": 1}
+        self.assertEqual(
+            await self.store.sync_cloud_upload_config("environment-1", environment),
+            environment,
+        )
+
+        changed_environment = {"quark_enabled": True, "upload_hour": 2}
+        self.assertEqual(
+            await self.store.sync_cloud_upload_config("environment-2", changed_environment),
+            changed_environment,
+        )
+
+        web_config = {"quark_enabled": True, "upload_hour": 3}
+        await self.store.save_cloud_upload_config(web_config)
+        await self.store.initialize()
+        self.assertEqual(
+            await self.store.sync_cloud_upload_config("environment-3", environment),
+            web_config,
+        )
+
     async def test_login_failures_create_persistent_blacklist(self) -> None:
         client_key = "203.0.113.10"
         self.assertFalse(await self.store.is_login_blacklisted(client_key))

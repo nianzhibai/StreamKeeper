@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,7 +9,7 @@ from unittest import TestCase
 from fastapi.testclient import TestClient
 
 from douyin_recorder.models import LiveInfo
-from douyin_recorder.settings import Settings
+from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 from douyin_recorder.web.app import create_app
 from douyin_recorder.web.auth import SESSION_COOKIE_NAME
 from douyin_recorder.web.schemas import TaskStatus
@@ -115,7 +116,9 @@ class WebTests(TestCase):
         login_page = self.client.get("/login")
         self.assertEqual(login_page.status_code, 200)
         self.assertIn('<h1 id="login-title">登录</h1>', login_page.text)
-        self.assertEqual(self.client.get("/static/login.js").status_code, 200)
+        static_asset = self.client.get("/static/login.js")
+        self.assertEqual(static_asset.status_code, 200)
+        self.assertEqual(static_asset.headers["cache-control"], "no-cache, must-revalidate")
 
         unauthorized_page = self.client.get("/", follow_redirects=False)
         self.assertEqual(unauthorized_page.status_code, 303)
@@ -143,8 +146,11 @@ class WebTests(TestCase):
 
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("DouYinStreamKeeper", page.text)
+        self.assertIn("Stream Keeper", page.text)
         self.assertEqual(page.headers["x-frame-options"], "DENY")
+        self.assertIn("录制任务", self.client.get("/tasks").text)
+        self.assertIn("网盘归档", self.client.get("/archive").text)
+        self.assertIn("设置", self.client.get("/settings").text)
         current = self.client.get("/api/auth/session")
         self.assertEqual(current.status_code, 200)
         self.assertEqual(current.json()["username"], "admin")
@@ -379,3 +385,88 @@ class WebTests(TestCase):
             json={"url": "https://example.com/live", "unknown": True},
         )
         self.assertEqual(response.status_code, 422)
+
+    def test_cloud_archive_can_be_configured_and_run_from_web_without_exposing_secrets(self) -> None:
+        self.login()
+        overview_page = self.client.get("/")
+        archive_page = self.client.get("/archive")
+        settings_page = self.client.get("/settings")
+        self.assertNotIn('id="cloud-run-button"', overview_page.text)
+        self.assertIn('id="cloud-run-button"', archive_page.text)
+        self.assertIn('id="cloud-form"', settings_page.text)
+
+        initial = self.client.get("/api/cloud/archive")
+        self.assertEqual(initial.status_code, 200)
+        self.assertFalse(initial.json()["enabled"])
+        payload = {
+            "quark": {
+                "enabled": True,
+                "cookie": "session=quark-secret-cookie",
+                "clear_cookie": False,
+                "root_id": "0",
+                "upload_path": "/ignored-quark-path",
+            },
+            "wopan": {
+                "enabled": True,
+                "access_token": "wopan-access-token-123456",
+                "refresh_token": "wopan-refresh-secret",
+                "clear_tokens": False,
+                "root_id": "0",
+                "family_id": "",
+                "upload_path": "/ignored-wopan-path",
+            },
+            "schedule": {"hour": 1, "min_age_minutes": 10, "timeout_seconds": 300},
+        }
+        rejected = self.client.put("/api/cloud/archive", json=payload)
+        self.assertEqual(rejected.status_code, 403)
+
+        saved = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        self.assertEqual(saved.status_code, 200)
+        saved_payload = saved.json()
+        self.assertTrue(saved_payload["enabled"])
+        self.assertTrue(saved_payload["quark"]["credential_configured"])
+        self.assertTrue(saved_payload["wopan"]["access_token_configured"])
+        self.assertTrue(saved_payload["wopan"]["refresh_token_configured"])
+        self.assertEqual(saved_payload["quark"]["upload_path"], CLOUD_ARCHIVE_ROOT)
+        self.assertEqual(saved_payload["wopan"]["upload_path"], CLOUD_ARCHIVE_ROOT)
+        self.assertNotIn("quark-secret-cookie", saved.text)
+        self.assertNotIn("wopan-access-token", saved.text)
+        self.assertNotIn("wopan-refresh-secret", saved.text)
+
+        payload["quark"]["cookie"] = None
+        payload["wopan"]["access_token"] = None
+        payload["wopan"]["refresh_token"] = None
+        payload["schedule"]["hour"] = 2
+        preserved = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        self.assertEqual(preserved.status_code, 200)
+        self.assertTrue(preserved.json()["quark"]["credential_configured"])
+        self.assertTrue(preserved.json()["wopan"]["refresh_token_configured"])
+        self.assertEqual(preserved.json()["schedule"]["hour"], 2)
+
+        started = self.client.post("/api/cloud/archive/run", headers=self.csrf_headers)
+        self.assertEqual(started.status_code, 202)
+        last_status = None
+        for _ in range(50):
+            current = self.client.get("/api/cloud/archive").json()
+            if not current["running"] and current["last_run"]:
+                last_status = current["last_run"]
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(last_status)
+        self.assertEqual(last_status["status"], "success")
+        self.assertEqual(last_status["summary"]["scanned_files"], 0)
+
+        payload["quark"]["clear_cookie"] = True
+        invalid_clear = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        self.assertEqual(invalid_clear.status_code, 422)
+
+        payload["quark"]["enabled"] = False
+        payload["wopan"]["enabled"] = False
+        payload["wopan"]["clear_tokens"] = True
+        cleared = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(cleared.json()["enabled"])
+        self.assertFalse(cleared.json()["quark"]["credential_configured"])
+        self.assertFalse(cleared.json()["wopan"]["access_token_configured"])
+        disabled_run = self.client.post("/api/cloud/archive/run", headers=self.csrf_headers)
+        self.assertEqual(disabled_run.status_code, 409)

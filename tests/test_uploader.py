@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -5,7 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
 
 from douyin_recorder.cloud import CloudUploadError
-from douyin_recorder.settings import Settings
+from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 from douyin_recorder.web.schemas import TaskConfig, TaskStatus
 from douyin_recorder.web.store import TaskStore
 from douyin_recorder.web.uploader import RecordingUploadService, UploadTarget
@@ -70,8 +71,12 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.temp_dir.cleanup()
 
     async def test_uploads_stable_files_to_all_targets_then_deletes_local(self) -> None:
-        stable = make_old_file(self.settings.recordings_dir / "测试主播" / "stable.ts", b"video", self.now)
-        young = self.settings.recordings_dir / "测试主播" / "young.mp4"
+        stable = make_old_file(
+            self.settings.recordings_dir / "测试主播" / "2026-07-11" / "stable.ts",
+            b"video",
+            self.now,
+        )
+        young = self.settings.recordings_dir / "测试主播" / "2026-07-11" / "young.mp4"
         young.write_bytes(b"young")
         empty = make_old_file(self.settings.recordings_dir / "测试主播" / "empty.mkv", b"", self.now)
         (self.settings.recordings_dir / "测试主播" / "notes.txt").write_text("ignore", encoding="utf-8")
@@ -89,11 +94,11 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
             output_path=str(active),
         )
 
-        client = FakeUploadClient()
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
         service = RecordingUploadService(
             self.settings,
             self.store,
-            client_factory=lambda _target: client,
+            client_factory=lambda target: clients[target.name],
             active_directories_provider=lambda: {provider_active.parent.resolve()},
             clock=lambda: self.now,
         )
@@ -109,21 +114,25 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertTrue(empty.exists())
         self.assertTrue(active.exists())
         self.assertTrue(provider_active.exists())
-        self.assertEqual(client.close_count, 1)
+        self.assertEqual(clients["quark"].close_count, 1)
+        self.assertEqual(clients["wopan"].close_count, 1)
         self.assertEqual(
-            [remote_path for _, remote_path in client.calls],
+            [clients[name].calls[0][1] for name in ("quark", "wopan")],
             [
-                "/QuarkArchive/测试主播/stable.ts",
-                "/WoPanArchive/测试主播/stable.ts",
+                f"{CLOUD_ARCHIVE_ROOT}/测试主播/2026-07-11/stable.ts",
+                f"{CLOUD_ARCHIVE_ROOT}/测试主播/2026-07-11/stable.ts",
             ],
         )
 
     async def test_partial_failure_keeps_file_and_next_run_resumes(self) -> None:
         recording = make_old_file(self.settings.recordings_dir / "主播" / "retry.ts", b"video", self.now)
-        client = FakeUploadClient(fail_fragment="/WoPanArchive/")
+        clients = {
+            "quark": FakeUploadClient(),
+            "wopan": FakeUploadClient(fail_fragment=CLOUD_ARCHIVE_ROOT),
+        }
 
-        def client_factory(_target: UploadTarget) -> FakeUploadClient:
-            return client
+        def client_factory(target: UploadTarget) -> FakeUploadClient:
+            return clients[target.name]
 
         service = RecordingUploadService(
             self.settings,
@@ -137,11 +146,42 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(first.failed_files, 1)
         self.assertTrue(recording.exists())
 
-        client.fail_fragment = None
+        clients["wopan"].fail_fragment = None
         second = await service.run_once()
         self.assertEqual(second.uploaded_copies, 1)
         self.assertEqual(second.deleted_files, 1)
         self.assertFalse(recording.exists())
+
+    async def test_manual_trigger_runs_in_background_and_rejects_overlap(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "manual.ts", b"video", self.now)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingUploadClient(FakeUploadClient):
+            async def upload_verified(self, local_path: Path, remote_path: str) -> bool:
+                started.set()
+                await release.wait()
+                return await super().upload_verified(local_path, remote_path)
+
+        client = BlockingUploadClient()
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda _target: client,
+            clock=lambda: self.now,
+        )
+
+        self.assertTrue(await service.trigger("manual"))
+        await started.wait()
+        self.assertTrue(service.running)
+        self.assertFalse(await service.trigger("manual"))
+        release.set()
+        await service._active_run
+
+        self.assertFalse(service.running)
+        self.assertFalse(recording.exists())
+        self.assertEqual(service.last_execution.status, "success")
+        self.assertEqual(service.last_execution.summary.deleted_files, 1)
 
 
 class UploadScheduleTests(TestCase):

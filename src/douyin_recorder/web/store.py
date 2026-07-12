@@ -165,7 +165,98 @@ class TaskStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cloud_upload_config (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    source_fingerprint TEXT,
+                    config_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
+
+    @staticmethod
+    def _decode_json_object(value: str) -> dict[str, Any] | None:
+        try:
+            decoded = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return decoded if isinstance(decoded, dict) else None
+
+    async def sync_cloud_upload_config(
+        self,
+        source_fingerprint: str,
+        defaults: dict[str, object],
+    ) -> dict[str, Any]:
+        """Seed from environment until a Web save makes SQLite authoritative."""
+
+        return await asyncio.to_thread(
+            self._sync_cloud_upload_config_sync,
+            source_fingerprint,
+            defaults,
+        )
+
+    def _sync_cloud_upload_config_sync(
+        self,
+        source_fingerprint: str,
+        defaults: dict[str, object],
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT source_fingerprint, config_json FROM cloud_upload_config WHERE id = 1"
+            ).fetchone()
+            if row is not None:
+                stored = self._decode_json_object(row["config_json"])
+                web_managed = row["source_fingerprint"] is None
+                source_matches = not web_managed and secrets.compare_digest(
+                    row["source_fingerprint"],
+                    source_fingerprint,
+                )
+                if stored is not None and (web_managed or source_matches):
+                    return stored
+
+            config_json = json.dumps(defaults, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            connection.execute(
+                """
+                INSERT INTO cloud_upload_config (id, source_fingerprint, config_json, updated_at)
+                VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source_fingerprint = excluded.source_fingerprint,
+                    config_json = excluded.config_json,
+                    updated_at = excluded.updated_at
+                """,
+                (source_fingerprint, config_json, utc_now().isoformat()),
+            )
+        return dict(defaults)
+
+    async def get_cloud_upload_config(self) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_cloud_upload_config_sync)
+
+    def _get_cloud_upload_config_sync(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()
+        return self._decode_json_object(row["config_json"]) if row is not None else None
+
+    async def save_cloud_upload_config(self, config: dict[str, object]) -> None:
+        await asyncio.to_thread(self._save_cloud_upload_config_sync, config)
+
+    def _save_cloud_upload_config_sync(self, config: dict[str, object]) -> None:
+        config_json = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO cloud_upload_config (id, source_fingerprint, config_json, updated_at)
+                VALUES (1, NULL, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source_fingerprint = NULL,
+                    config_json = excluded.config_json,
+                    updated_at = excluded.updated_at
+                """,
+                (config_json, utc_now().isoformat()),
+            )
 
     @staticmethod
     def _validate_cloud_state(provider: str, state: dict[str, str]) -> None:
@@ -257,6 +348,15 @@ class TaskStore:
                 """,
                 (provider, source_fingerprint, state_json, utc_now().isoformat()),
             )
+
+    async def delete_cloud_credentials(self, provider: str) -> bool:
+        self._validate_cloud_state(provider, {})
+        return await asyncio.to_thread(self._delete_cloud_credentials_sync, provider)
+
+    def _delete_cloud_credentials_sync(self, provider: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM cloud_credentials WHERE provider = ?", (provider,))
+        return cursor.rowcount > 0
 
     @staticmethod
     def _credential_digest(password: str, salt: bytes) -> bytes:

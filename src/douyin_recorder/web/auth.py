@@ -193,7 +193,9 @@ class SecurityHeadersMiddleware:
                 if scope.get("scheme") == "https":
                     headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
                 path = str(scope.get("path", ""))
-                if path == "/login" or path.startswith("/api/"):
+                if path.startswith("/static/"):
+                    headers.append((b"cache-control", b"no-cache, must-revalidate"))
+                elif path == "/login" or path.startswith("/api/"):
                     headers.append((b"cache-control", b"no-store"))
                 message["headers"] = headers
             await send(message)

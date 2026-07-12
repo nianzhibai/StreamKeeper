@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from douyin_recorder.settings import Settings
+from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 
 
 def make_settings(root: Path, **overrides) -> Settings:
@@ -23,6 +23,8 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.session_ttl_hours, 24 * 7)
         self.assertEqual(settings.login_max_attempts, 3)
         self.assertEqual(settings.login_window_seconds, 3600)
+        self.assertEqual(settings.quark_upload_path, CLOUD_ARCHIVE_ROOT)
+        self.assertEqual(settings.wopan_upload_path, CLOUD_ARCHIVE_ROOT)
 
     def test_prepare_creates_server_directories(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -76,19 +78,16 @@ class SettingsTests(TestCase):
             self.assertTrue(settings.upload_enabled)
             self.assertEqual(
                 settings.upload_targets,
-                (("quark", "/recordings"), ("wopan", "/recordings")),
+                (("quark", CLOUD_ARCHIVE_ROOT), ("wopan", CLOUD_ARCHIVE_ROOT)),
             )
 
     def test_incomplete_native_upload_configuration_is_rejected(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             invalid_values = (
-                {"quark_upload_path": "/recordings"},
-                {"quark_cookie": "cookie=value"},
-                {"quark_cookie": "cookie=value", "quark_upload_path": "/../escape"},
-                {"wopan_refresh_token": "refresh-token"},
-                {"wopan_upload_path": "/recordings"},
-                {"wopan_access_token": "short", "wopan_upload_path": "/recordings"},
+                {"quark_root_id": "folder-without-cookie"},
+                {"wopan_family_id": "family-without-token"},
+                {"wopan_access_token": "short"},
             )
             for overrides in invalid_values:
                 with self.subTest(overrides=overrides), self.assertRaises(RuntimeError):
@@ -99,10 +98,9 @@ class SettingsTests(TestCase):
             settings = make_settings(
                 Path(tmp),
                 wopan_refresh_token="refresh-token",
-                wopan_upload_path="/DouYinStreamKeeper",
             )
             settings.prepare()
-            self.assertEqual(settings.upload_targets, (("wopan", "/DouYinStreamKeeper"),))
+            self.assertEqual(settings.upload_targets, (("wopan", CLOUD_ARCHIVE_ROOT),))
 
     def test_cookie_file_takes_precedence(self) -> None:
         with TemporaryDirectory() as tmp:

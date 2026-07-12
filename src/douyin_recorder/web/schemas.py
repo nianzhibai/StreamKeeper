@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from ..client import DouyinClient
+from ..settings import CLOUD_ARCHIVE_ROOT
 
 Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
@@ -137,3 +138,92 @@ class SystemInfo(StrictModel):
     active_tasks: int
     recording_tasks: int
     max_concurrent_recordings: int
+
+
+class CloudQuarkUpdate(StrictModel):
+    enabled: bool = False
+    cookie: SecretStr | None = Field(default=None, max_length=32768)
+    clear_cookie: bool = False
+    root_id: str = Field(default="0", min_length=1, max_length=512)
+    upload_path: str = Field(default=CLOUD_ARCHIVE_ROOT, max_length=1024)
+
+    @field_validator("root_id", "upload_path")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class CloudWoPanUpdate(StrictModel):
+    enabled: bool = False
+    access_token: SecretStr | None = Field(default=None, max_length=4096)
+    refresh_token: SecretStr | None = Field(default=None, max_length=4096)
+    clear_tokens: bool = False
+    root_id: str = Field(default="0", min_length=1, max_length=512)
+    family_id: str = Field(default="", max_length=512)
+    upload_path: str = Field(default=CLOUD_ARCHIVE_ROOT, max_length=1024)
+
+    @field_validator("root_id", "family_id", "upload_path")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class CloudScheduleUpdate(StrictModel):
+    hour: int = Field(default=1, ge=0, le=23)
+    min_age_minutes: int = Field(default=10, ge=0, le=1440)
+    timeout_seconds: int = Field(default=300, ge=30, le=86400)
+
+
+class CloudArchiveUpdate(StrictModel):
+    quark: CloudQuarkUpdate
+    wopan: CloudWoPanUpdate
+    schedule: CloudScheduleUpdate
+
+
+class CloudQuarkView(StrictModel):
+    enabled: bool
+    credential_configured: bool
+    root_id: str
+    upload_path: str
+
+
+class CloudWoPanView(StrictModel):
+    enabled: bool
+    access_token_configured: bool
+    refresh_token_configured: bool
+    root_id: str
+    family_id: str
+    upload_path: str
+
+
+class CloudScheduleView(StrictModel):
+    hour: int
+    min_age_minutes: int
+    timeout_seconds: int
+    next_run_at: datetime | None
+
+
+class CloudUploadSummaryView(StrictModel):
+    scanned_files: int
+    skipped_files: int
+    uploaded_copies: int
+    deleted_files: int
+    failed_files: int
+
+
+class CloudUploadExecutionView(StrictModel):
+    trigger: Literal["manual", "scheduled"]
+    status: Literal["running", "success", "partial", "failed", "cancelled"]
+    started_at: datetime
+    finished_at: datetime | None
+    summary: CloudUploadSummaryView | None
+    error: str | None
+
+
+class CloudArchiveView(StrictModel):
+    enabled: bool
+    running: bool
+    quark: CloudQuarkView
+    wopan: CloudWoPanView
+    schedule: CloudScheduleView
+    last_run: CloudUploadExecutionView | None
