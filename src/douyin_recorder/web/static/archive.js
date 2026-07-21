@@ -9,7 +9,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260712-ui1";
+} from "/static/ui.js?v=20260721-ui2";
 
 let cloud = null;
 let loading = false;
@@ -84,7 +84,7 @@ function render(value) {
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
-  document.querySelector("#refresh-button")?.classList.add("is-loading");
+  if (!quiet) document.querySelector("#refresh-button")?.classList.add("is-loading");
   try {
     render(await api("/api/cloud/archive"));
     clearPageError();

@@ -11,6 +11,20 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+export function setHtmlIfChanged(element, html) {
+  if (!element || element.innerHTML === html) return false;
+  element.innerHTML = html;
+  return true;
+}
+
+export function setTextIfChanged(element, text) {
+  if (!element) return false;
+  const next = String(text ?? "");
+  if (element.textContent === next) return false;
+  element.textContent = next;
+  return true;
+}
+
 export function formatTime(value, { seconds = false } = {}) {
   if (!value) return "—";
   const date = new Date(value);
@@ -123,6 +137,7 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
     initializeShell(sessionState.value);
     await load();
     setHealth(true);
+    document.body.classList.add("is-ready");
     if (interval > 0) {
       window.setInterval(async () => {
         try {
@@ -135,6 +150,7 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
       }, interval);
     }
   } catch (error) {
+    document.body.classList.add("is-ready");
     if (!String(error.message).includes("登录已过期")) {
       setHealth(false);
       showPageError(error.message || "页面加载失败");

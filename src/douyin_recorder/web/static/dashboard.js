@@ -7,9 +7,11 @@ import {
   formatTime,
   providerStatus,
   setHealth,
+  setHtmlIfChanged,
+  setTextIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260712-ui1";
+} from "/static/ui.js?v=20260721-ui2";
 
 const statusLabels = {
   stopped: "已停止",
@@ -45,7 +47,7 @@ function renderTasks(tasks) {
     .slice(0, 5);
   const list = document.querySelector("#active-task-list");
   const empty = document.querySelector("#active-task-empty");
-  list.innerHTML = active.map(taskItem).join("");
+  setHtmlIfChanged(list, active.map(taskItem).join(""));
   list.classList.toggle("hidden", active.length === 0);
   empty.classList.toggle("hidden", active.length !== 0);
 }
@@ -57,47 +59,58 @@ function renderArchive(cloud) {
   badge.innerHTML = `<i></i>${escapeHtml(status.label)}`;
 
   const lastRun = cloud.last_run;
-  document.querySelector("#overview-archive-time").textContent = cloud.running
-    ? "任务正在后台执行"
-    : lastRun
-      ? formatTime(lastRun.finished_at || lastRun.started_at)
-      : "暂无执行记录";
-  document.querySelector("#overview-next-run").textContent = cloud.schedule.next_run_at
-    ? formatTime(cloud.schedule.next_run_at)
-    : "—";
+  setTextIfChanged(
+    document.querySelector("#overview-archive-time"),
+    cloud.running
+      ? "任务正在后台执行"
+      : lastRun
+        ? formatTime(lastRun.finished_at || lastRun.started_at)
+        : "暂无执行记录",
+  );
+  setTextIfChanged(
+    document.querySelector("#overview-next-run"),
+    cloud.schedule.next_run_at ? formatTime(cloud.schedule.next_run_at) : "—",
+  );
 
   for (const kind of ["quark", "wopan"]) {
     const provider = cloud[kind];
     const providerState = providerStatus(provider, kind);
     const badgeNode = document.querySelector(`#overview-${kind}-status`);
-    badgeNode.textContent = providerState.label;
+    setTextIfChanged(badgeNode, providerState.label);
     badgeNode.className = `mini-status tone-${providerState.tone}`;
   }
 }
 
 function renderSystem(system) {
-  document.querySelector("#stat-disk").textContent = `${system.free_space_gb} GB`;
-  document.querySelector("#system-recording-limit").textContent = `${system.recording_tasks} / ${system.max_concurrent_recordings}`;
-  document.querySelector("#system-ffmpeg").textContent = system.ffmpeg_available ? "可用" : "不可用";
-  document.querySelector("#system-node").textContent = system.node_available ? "可用" : "不可用";
+  setTextIfChanged(document.querySelector("#stat-disk"), `${system.free_space_gb} GB`);
+  setTextIfChanged(
+    document.querySelector("#system-recording-limit"),
+    `${system.recording_tasks} / ${system.max_concurrent_recordings}`,
+  );
+  setTextIfChanged(document.querySelector("#system-ffmpeg"), system.ffmpeg_available ? "可用" : "不可用");
+  setTextIfChanged(document.querySelector("#system-node"), system.node_available ? "可用" : "不可用");
 }
 
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
   const refreshButton = document.querySelector("#refresh-button");
-  refreshButton?.classList.add("is-loading");
+  if (!quiet) refreshButton?.classList.add("is-loading");
   try {
     const [tasks, system, cloud] = await Promise.all([
       api("/api/tasks"),
       api("/api/system"),
       api("/api/cloud/archive"),
     ]);
-    document.querySelector("#stat-total").textContent = tasks.length;
-    document.querySelector("#stat-recording").textContent = tasks.filter((task) => task.status === "recording").length;
-    document.querySelector("#stat-waiting").textContent = tasks.filter(
-      (task) => task.enabled && task.status !== "recording",
-    ).length;
+    setTextIfChanged(document.querySelector("#stat-total"), String(tasks.length));
+    setTextIfChanged(
+      document.querySelector("#stat-recording"),
+      String(tasks.filter((task) => task.status === "recording").length),
+    );
+    setTextIfChanged(
+      document.querySelector("#stat-waiting"),
+      String(tasks.filter((task) => task.enabled && task.status !== "recording").length),
+    );
     renderTasks(tasks);
     renderArchive(cloud);
     renderSystem(system);

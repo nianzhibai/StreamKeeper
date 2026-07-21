@@ -5,9 +5,10 @@ import {
   escapeHtml,
   formatTime,
   setHealth,
+  setHtmlIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260712-ui1";
+} from "/static/ui.js?v=20260721-ui2";
 
 const state = {
   tasks: [],
@@ -101,7 +102,7 @@ function updateFilterCounts() {
 
 function render() {
   const visible = state.tasks.filter(matchesFilter);
-  elements.list.innerHTML = visible.map(renderTask).join("");
+  setHtmlIfChanged(elements.list, visible.map(renderTask).join(""));
   elements.list.classList.toggle("hidden", visible.length === 0);
   elements.empty.classList.toggle("hidden", visible.length !== 0);
   elements.emptyTitle.textContent = state.tasks.length === 0 ? "还没有录制任务" : "没有符合条件的任务";
@@ -111,7 +112,7 @@ function render() {
 async function load({ quiet = false } = {}) {
   if (state.loading) return;
   state.loading = true;
-  elements.refreshButton?.classList.add("is-loading");
+  if (!quiet) elements.refreshButton?.classList.add("is-loading");
   try {
     state.tasks = await api("/api/tasks");
     render();

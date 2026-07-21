@@ -5,7 +5,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260712-ui1";
+} from "/static/ui.js?v=20260721-ui2";
 
 const form = document.querySelector("#cloud-form");
 const saveButton = document.querySelector("#cloud-save-button");
