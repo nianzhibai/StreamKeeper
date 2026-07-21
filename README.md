@@ -18,7 +18,7 @@
 - 健康检查与登录静态资源公开，管理页面和 API 需要有效会话。
 - Docker Compose 一键部署，数据和录像保存在持久化卷中。
 
-抖音接口和直播流解析由 `streamget` 提供；本项目负责单平台 Web 管理、调度和录制生命周期。
+抖音直播流通过 Web 进房接口（`/webcast/room/web/enter/`）解析；本项目负责单平台 Web 管理、调度和录制生命周期。
 
 ## 架构
 
@@ -30,7 +30,7 @@ FastAPI（单 worker）
   ├─ 静态管理页面
   ├─ SQLite 任务仓库
   ├─ asyncio 任务调度器
-       ├─ streamget：检查开播、解析 FLV/HLS
+       ├─ Web 进房接口：检查开播、解析 FLV/HLS
        └─ FFmpeg：服务器本地落盘
   └─ 每日归档器
        ├─ Quark API → OSS 分片上传
@@ -206,7 +206,6 @@ DOUYIN_COOKIE_FILE=/run/secrets/douyin-cookie
 
 - Python 3.10+
 - FFmpeg
-- Node.js
 
 安装并启动：
 
@@ -293,13 +292,14 @@ DOUYIN_ALLOW_INSECURE=true python -m douyin_recorder
 | `POST` | `/api/tasks/{id}/start` | 启动值守 |
 | `POST` | `/api/tasks/{id}/stop` | 停止值守和录制 |
 | `POST` | `/api/inspect` | 检测直播间，不返回签名流地址 |
-| `GET` | `/api/system` | 磁盘、FFmpeg、Node 和并发状态 |
+| `GET` | `/api/system` | 磁盘、FFmpeg 和并发状态 |
 
 ## 代码结构
 
 | 模块 | 职责 |
 | --- | --- |
-| `client.py` | 抖音 URL 分流和 `streamget` 适配 |
+| `client.py` | 抖音 URL 校验与 Web 进房接口适配 |
+| `web_resolver.py` | Web 进房、全量档位解析与选流 |
 | `ffmpeg.py` | FLV/HLS 选择和 FFmpeg 参数 |
 | `recorder.py` | 文件命名、录制进程和优雅停止 |
 | `cloud/config.py` | 网盘归档配置、目标选择和校验 |
@@ -326,6 +326,6 @@ ruff format --check .
 
 ## 许可与使用提示
 
-本项目从 Apache-2.0 许可的 StreamCap 抽离和重构，`streamget` 使用 MIT 许可。迁移到新仓库时请保留 `LICENSE` 和 `NOTICE`。
+本项目从 Apache-2.0 许可的 StreamCap 抽离和重构。迁移到新仓库时请保留 `LICENSE` 和 `NOTICE`。
 
 请只录制你有权保存的直播内容，并遵守平台规则及当地法律。

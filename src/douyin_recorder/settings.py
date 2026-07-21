@@ -170,4 +170,8 @@ class Settings:
         return self.cookies
 
     def create_client(self) -> DouyinClient:
-        return DouyinClient(proxy=self.proxy, cookies=self.load_cookies())
+        return DouyinClient(
+            proxy=self.proxy,
+            cookies=self.load_cookies(),
+            timeout=float(self.fetch_timeout_seconds),
+        )

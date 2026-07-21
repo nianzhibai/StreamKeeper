@@ -10,6 +10,14 @@ class DouyinFetchError(DouyinRecorderError):
     """Raised when live room information cannot be fetched."""
 
 
+class ResolverError(DouyinFetchError, RuntimeError):
+    """Raised when the Web room/stream resolver fails."""
+
+
+class RoomOfflineError(ResolverError):
+    """Raised when the live room is offline or has no stream URLs."""
+
+
 class SourceUnavailableError(DouyinRecorderError):
     """Raised when the requested FLV or HLS source is unavailable."""
 

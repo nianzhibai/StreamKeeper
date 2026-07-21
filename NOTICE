@@ -6,10 +6,11 @@ https://github.com/ihmily/StreamCap
 
 StreamCap is licensed under the Apache License, Version 2.0.
 
-This product depends on StreamGet:
+This product previously depended on StreamGet for Douyin stream resolution.
+StreamGet is licensed under the MIT License:
 https://github.com/ihmily/streamget
 
-StreamGet is licensed under the MIT License.
+Douyin live stream resolution now uses the public Web enter-room API directly.
 
 The native China Unicom WoPan protocol implementation was developed with
 reference to OpenListTeam/wopan-sdk-go:

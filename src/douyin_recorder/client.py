@@ -1,23 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlparse
 
-from .errors import DouyinFetchError, InvalidDouyinUrl
+from .errors import DouyinFetchError, InvalidDouyinUrl, ResolverError, RoomOfflineError
 from .models import LiveInfo
+from .web_resolver import (
+    DouyinWebClient,
+    RoomResult,
+    StreamCandidate,
+    _normal_gear,
+    choose_candidate,
+    collect_candidates,
+)
 
-
-class _DouyinStream(Protocol):
-    async def fetch_app_stream_data(self, url: str) -> dict[str, Any]: ...
-
-    async def fetch_web_stream_data(self, url: str) -> dict[str, Any]: ...
-
-    async def fetch_stream_url(self, data: dict[str, Any], quality: str) -> object: ...
-
-
-StreamFactory = Callable[..., _DouyinStream]
+WebClientFactory = Callable[..., DouyinWebClient]
 
 _URL_CANDIDATE_PATTERN = re.compile(
     r"https?://[A-Z0-9._~:/?#\[\]@!$&()*+,;=%-]+",
@@ -25,17 +25,18 @@ _URL_CANDIDATE_PATTERN = re.compile(
 )
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？、）》】」』"
 
-
-def _default_stream_factory(**kwargs: Any) -> _DouyinStream:
-    try:
-        from streamget import DouyinLiveStream
-    except ImportError as exc:  # pragma: no cover - exercised only in an incomplete installation
-        raise DouyinFetchError("streamget 未安装，请先执行: pip install -e .") from exc
-    return DouyinLiveStream(**kwargs)
+# UI labels: OD=原画 UHD=超清 HD=高清 SD=标清 LD=流畅 → Web sdk_key aliases.
+_QUALITY_GEARS: dict[str, tuple[str, ...]] = {
+    "OD": ("origin", "origion", "original", "source", "uhd", "full_hd1", "fullhd1", "fhd"),
+    "UHD": ("hd", "uhd", "fhd"),
+    "HD": ("sd", "hd"),
+    "SD": ("ld", "sd"),
+    "LD": ("md", "ld"),
+}
 
 
 class DouyinClient:
-    """A small adapter around ``streamget.DouyinLiveStream``."""
+    """Resolve Douyin live streams through the Web enter-room API."""
 
     QUALITY_VALUES = ("OD", "UHD", "HD", "SD", "LD")
 
@@ -44,16 +45,21 @@ class DouyinClient:
         *,
         proxy: str | None = None,
         cookies: str | None = None,
+        timeout: float = 25.0,
+        web_client_factory: WebClientFactory | None = None,
         stream_orientation: int = 1,
-        stream_factory: StreamFactory | None = None,
     ) -> None:
         if stream_orientation not in (1, 2):
             raise ValueError("stream_orientation 必须是 1 或 2")
+        if timeout <= 0:
+            raise ValueError("timeout 必须大于 0")
         self.proxy = proxy or None
         self.cookies = cookies or None
+        self.timeout = timeout
+        # Kept for API compatibility; Web pull_datas already enumerates dual streams.
         self.stream_orientation = stream_orientation
-        self._stream_factory = stream_factory or _default_stream_factory
-        self._stream: _DouyinStream | None = None
+        self._web_client_factory = web_client_factory or DouyinWebClient
+        self._web_client: DouyinWebClient | None = None
 
     @staticmethod
     def validate_url(url: str) -> str:
@@ -73,37 +79,141 @@ class DouyinClient:
             "https://v.douyin.com/... 或 https://www.douyin.com/user/..."
         )
 
-    @staticmethod
-    def _uses_app_parser(url: str) -> bool:
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        return host == "v.douyin.com" or (host == "www.douyin.com" and parsed.path.startswith("/user/"))
-
-    def _get_stream(self) -> _DouyinStream:
-        if self._stream is None:
-            self._stream = self._stream_factory(
-                proxy_addr=self.proxy,
-                cookies=self.cookies,
-                stream_orientation=self.stream_orientation,
+    def _get_web_client(self) -> DouyinWebClient:
+        if self._web_client is None:
+            self._web_client = self._web_client_factory(
+                timeout=self.timeout,
+                cookie=self.cookies or "",
+                proxy=self.proxy,
             )
-        return self._stream
+        return self._web_client
 
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+    @staticmethod
+    def _room_is_live(room: dict[str, Any]) -> bool:
+        return int(room.get("status") or 0) == 2
+
+    @staticmethod
+    def _pick_urls(candidates: list[StreamCandidate], selected: StreamCandidate) -> tuple[str | None, str | None]:
+        same_gear = [
+            item
+            for item in candidates
+            if _normal_gear(item.gear) == _normal_gear(selected.gear) and not item.is_audio_only and not item.encrypted
+        ]
+        main_lines = [item for item in same_gear if item.line in {"main", ""}]
+        pool = main_lines or same_gear
+
+        def pick(protocol: str) -> str | None:
+            for item in pool:
+                if item.protocol == protocol and item.url:
+                    return item.url
+            for item in same_gear:
+                if item.protocol == protocol and item.url:
+                    return item.url
+            return selected.url if selected.protocol == protocol else None
+
+        flv_url = pick("flv")
+        hls_url = pick("hls")
+        if selected.protocol == "flv" and selected.url:
+            flv_url = selected.url
+        if selected.protocol == "hls" and selected.url:
+            hls_url = selected.url
+        return flv_url, hls_url
+
+    def _choose_quality(self, candidates: list[StreamCandidate], quality: str) -> StreamCandidate:
+        aliases = _QUALITY_GEARS[quality]
+        last_error: Exception | None = None
+        for gear in aliases:
+            try:
+                return choose_candidate(candidates, gear, "auto")
+            except ResolverError as exc:
+                last_error = exc
+        if quality == "OD":
+            return choose_candidate(candidates, "max-bitrate", "auto")
+        if quality == "LD":
+            video = [item for item in candidates if not item.is_audio_only and item.protocol in {"flv", "hls"}]
+            if video:
+                return min(
+                    video,
+                    key=lambda item: (
+                        item.effective_bitrate or 10**18,
+                        item.pixels or 10**18,
+                        0 if item.protocol == "flv" else 1,
+                    ),
+                )
+        available = ", ".join(sorted({item.gear for item in candidates})) or "(无)"
+        raise DouyinFetchError(f"找不到画质 {quality}；可用档位: {available}") from last_error
+
+    def _resolve_live_info(self, url: str, quality: str) -> LiveInfo:
         normalized_url = self.validate_url(url)
         normalized_quality = quality.upper()
         if normalized_quality not in self.QUALITY_VALUES:
             raise ValueError(f"不支持的画质 {quality!r}，可选值: {', '.join(self.QUALITY_VALUES)}")
 
-        stream = self._get_stream()
+        client = self._get_web_client()
         try:
-            if self._uses_app_parser(normalized_url):
-                raw_data = await stream.fetch_app_stream_data(normalized_url)
-            else:
-                raw_data = await stream.fetch_web_stream_data(normalized_url)
-            stream_data = await stream.fetch_stream_url(raw_data, normalized_quality)
-        except Exception as exc:
+            room: RoomResult = client.resolve(normalized_url)
+        except RoomOfflineError:
+            raise
+        except ResolverError as exc:
             raise DouyinFetchError(f"获取抖音直播信息失败: {exc}") from exc
 
-        if stream_data is None:
-            raise DouyinFetchError("streamget 未返回直播信息")
-        return LiveInfo.from_stream_data(stream_data)
+        orientation = room.room.get("stream_orientation")
+        if orientation is None:
+            stream_url = room.room.get("stream_url")
+            if isinstance(stream_url, dict):
+                orientation = stream_url.get("stream_orientation")
+
+        if not self._room_is_live(room.room):
+            return LiveInfo(
+                platform="抖音",
+                anchor_name=room.owner or None,
+                is_live=False,
+                title=room.title or None,
+                quality=None,
+                m3u8_url=None,
+                flv_url=None,
+                record_url=None,
+                live_url=room.referer or normalized_url,
+                stream_orientation=int(orientation) if orientation is not None else None,
+            )
+
+        try:
+            candidates = collect_candidates(room.room)
+            if not candidates:
+                return LiveInfo(
+                    platform="抖音",
+                    anchor_name=room.owner or None,
+                    is_live=False,
+                    title=room.title or None,
+                    quality=None,
+                    m3u8_url=None,
+                    flv_url=None,
+                    record_url=None,
+                    live_url=room.referer or normalized_url,
+                    stream_orientation=int(orientation) if orientation is not None else None,
+                )
+            selected = self._choose_quality(candidates, normalized_quality)
+        except ResolverError as exc:
+            raise DouyinFetchError(f"解析直播流失败: {exc}") from exc
+
+        flv_url, hls_url = self._pick_urls(candidates, selected)
+        return LiveInfo(
+            platform="抖音",
+            anchor_name=room.owner or None,
+            is_live=True,
+            title=room.title or None,
+            quality=normalized_quality,
+            m3u8_url=hls_url,
+            flv_url=flv_url,
+            record_url=hls_url or flv_url,
+            live_url=room.referer or normalized_url,
+            stream_orientation=int(orientation) if orientation is not None else None,
+        )
+
+    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+        try:
+            return await asyncio.to_thread(self._resolve_live_info, url, quality)
+        except (DouyinFetchError, InvalidDouyinUrl, RoomOfflineError, ValueError):
+            raise
+        except Exception as exc:  # pragma: no cover - defensive wrap for unexpected resolver bugs
+            raise DouyinFetchError(f"获取抖音直播信息失败: {exc}") from exc

@@ -1,66 +1,177 @@
-from types import SimpleNamespace
+from __future__ import annotations
+
 from unittest import IsolatedAsyncioTestCase, TestCase
 
 from douyin_recorder.client import DouyinClient
 from douyin_recorder.errors import InvalidDouyinUrl
+from douyin_recorder.web_resolver import RoomResult
 
 
-class FakeStream:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, object]] = []
+def _live_room(*, status: int = 2) -> dict:
+    return {
+        "status": status,
+        "title": "测试直播",
+        "owner": {"nickname": "测试主播"},
+        "stream_orientation": 1,
+        "stream_url": {
+            "stream_orientation": 1,
+            "extra": {"width": 1088, "height": 1920},
+            "live_core_sdk_data": {
+                "pull_data": {
+                    "options": {
+                        "qualities": [
+                            {"sdk_key": "origin", "name": "原画"},
+                            {"sdk_key": "hd", "name": "超清"},
+                            {"sdk_key": "sd", "name": "高清"},
+                            {"sdk_key": "ld", "name": "标清"},
+                            {"sdk_key": "md", "name": "流畅"},
+                        ]
+                    },
+                    "stream_data": {
+                        "data": {
+                            "origin": {
+                                "main": {
+                                    "flv": "https://cdn.example/origin.flv",
+                                    "hls": "https://cdn.example/origin.m3u8",
+                                    "sdk_params": {
+                                        "VCodec": "h264",
+                                        "vbitrate": 3_000_000,
+                                        "resolution": "1088x1920",
+                                        "fps": 20,
+                                    },
+                                }
+                            },
+                            "hd": {
+                                "main": {
+                                    "flv": "https://cdn.example/hd.flv",
+                                    "hls": "https://cdn.example/hd.m3u8",
+                                    "sdk_params": {
+                                        "VCodec": "h264",
+                                        "vbitrate": 2_000_000,
+                                        "resolution": "720x1280",
+                                        "fps": 20,
+                                    },
+                                }
+                            },
+                            "sd": {
+                                "main": {
+                                    "flv": "https://cdn.example/sd.flv",
+                                    "hls": "https://cdn.example/sd.m3u8",
+                                    "sdk_params": {
+                                        "VCodec": "h264",
+                                        "vbitrate": 1_500_000,
+                                        "resolution": "540x960",
+                                        "fps": 20,
+                                    },
+                                }
+                            },
+                            "ld": {
+                                "main": {
+                                    "flv": "https://cdn.example/ld.flv",
+                                    "hls": "https://cdn.example/ld.m3u8",
+                                    "sdk_params": {
+                                        "VCodec": "h264",
+                                        "vbitrate": 1_000_000,
+                                        "resolution": "480x848",
+                                        "fps": 20,
+                                    },
+                                }
+                            },
+                            "md": {
+                                "main": {
+                                    "flv": "https://cdn.example/md.flv",
+                                    "hls": "https://cdn.example/md.m3u8",
+                                    "sdk_params": {
+                                        "VCodec": "h264",
+                                        "vbitrate": 250_000,
+                                        "resolution": "240x424",
+                                        "fps": 15,
+                                    },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+    }
 
-    async def fetch_app_stream_data(self, url: str) -> dict:
-        self.calls.append(("app", url))
-        return {"source": "app"}
 
-    async def fetch_web_stream_data(self, url: str) -> dict:
-        self.calls.append(("web", url))
-        return {"source": "web"}
+class FakeWebClient:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.targets: list[str] = []
+        self.room = _live_room()
 
-    async def fetch_stream_url(self, data: dict, quality: str) -> object:
-        self.calls.append(("stream", (data, quality)))
-        return SimpleNamespace(
-            platform="抖音",
-            anchor_name="测试主播",
-            is_live=True,
-            title="测试直播",
-            quality=quality,
-            m3u8_url="https://example.com/live.m3u8",
-            flv_url="https://example.com/live.flv?codec=h264",
-            record_url="https://example.com/live.m3u8",
-            live_url="https://live.douyin.com/123",
-            extra={"stream_orientation": 1},
+    def resolve(self, target: str) -> RoomResult:
+        self.targets.append(target)
+        owner = self.room.get("owner") or {}
+        return RoomResult(
+            room=self.room,
+            response={"data": {"data": [self.room]}},
+            web_rid="123",
+            room_id="456",
+            title=str(self.room.get("title") or ""),
+            owner=str(owner.get("nickname") or ""),
+            referer="https://live.douyin.com/123",
         )
 
 
 class ClientTests(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.stream = FakeStream()
+        self.web = FakeWebClient()
         self.factory_kwargs = None
 
         def factory(**kwargs):
             self.factory_kwargs = kwargs
-            return self.stream
+            self.web.kwargs = kwargs
+            return self.web
 
-        self.client = DouyinClient(proxy="http://127.0.0.1:7890", cookies="a=b", stream_factory=factory)
+        self.client = DouyinClient(
+            proxy="http://127.0.0.1:7890",
+            cookies="a=b",
+            timeout=30,
+            web_client_factory=factory,
+        )
 
-    async def test_live_url_uses_web_parser(self) -> None:
+    async def test_live_url_uses_web_resolver(self) -> None:
         info = await self.client.fetch(" https://live.douyin.com/123?foo=bar ", "HD")
 
-        self.assertEqual(self.stream.calls[0][0], "web")
+        self.assertEqual(self.web.targets[0], "https://live.douyin.com/123?foo=bar")
         self.assertEqual(info.anchor_name, "测试主播")
         self.assertEqual(info.quality, "HD")
+        self.assertTrue(info.is_live)
+        self.assertEqual(info.flv_url, "https://cdn.example/sd.flv")
+        self.assertEqual(info.m3u8_url, "https://cdn.example/sd.m3u8")
         self.assertEqual(info.stream_orientation, 1)
-        self.assertEqual(self.factory_kwargs["proxy_addr"], "http://127.0.0.1:7890")
+        self.assertEqual(self.factory_kwargs["proxy"], "http://127.0.0.1:7890")
+        self.assertEqual(self.factory_kwargs["cookie"], "a=b")
+        self.assertEqual(self.factory_kwargs["timeout"], 30)
 
-    async def test_share_and_profile_urls_use_app_parser(self) -> None:
+    async def test_quality_mapping_matches_ui_labels(self) -> None:
+        mapping = {
+            "OD": "origin",
+            "UHD": "hd",
+            "HD": "sd",
+            "SD": "ld",
+            "LD": "md",
+        }
+        for quality, gear in mapping.items():
+            info = await self.client.fetch("https://live.douyin.com/123", quality)
+            self.assertEqual(info.flv_url, f"https://cdn.example/{gear}.flv", quality)
+
+    async def test_offline_room_returns_is_live_false(self) -> None:
+        self.web.room = _live_room(status=4)
+        info = await self.client.fetch("https://live.douyin.com/123")
+        self.assertFalse(info.is_live)
+        self.assertIsNone(info.flv_url)
+
+    async def test_share_and_profile_urls_are_accepted(self) -> None:
         await self.client.fetch("https://v.douyin.com/AbCdE/")
-        self.assertEqual(self.stream.calls[0][0], "app")
+        self.assertEqual(self.web.targets[-1], "https://v.douyin.com/AbCdE/")
 
-        stream = FakeStream()
-        client = DouyinClient(stream_factory=lambda **_: stream)
-        await client.fetch("https://www.douyin.com/user/abc")
-        self.assertEqual(stream.calls[0][0], "app")
+        await self.client.fetch("https://www.douyin.com/user/abc")
+        self.assertEqual(self.web.targets[-1], "https://www.douyin.com/user/abc")
 
     async def test_share_text_extracts_short_url(self) -> None:
         share_text = (
@@ -70,8 +181,7 @@ class ClientTests(IsolatedAsyncioTestCase):
         )
 
         await self.client.fetch(share_text)
-
-        self.assertEqual(self.stream.calls[0], ("app", "https://v.douyin.com/eAb3MZKYD48/"))
+        self.assertEqual(self.web.targets[-1], "https://v.douyin.com/eAb3MZKYD48/")
 
 
 class UrlValidationTests(TestCase):
