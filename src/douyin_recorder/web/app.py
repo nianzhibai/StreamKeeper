@@ -479,7 +479,7 @@ def create_app(
 
     @app.get("/api/tasks", response_model=list[TaskRecord])
     async def list_tasks() -> list[TaskRecord]:
-        return await store.list()
+        return scheduler.enrich_records(await store.list())
 
     @app.post("/api/tasks", response_model=TaskRecord, status_code=status.HTTP_201_CREATED)
     async def create_task(payload: TaskCreate) -> TaskRecord:
@@ -489,14 +489,14 @@ def create_app(
             await scheduler.start(record.id)
         created = await store.get(record.id)
         assert created is not None
-        return created
+        return scheduler.enrich_record(created)
 
     @app.get("/api/tasks/{task_id}", response_model=TaskRecord)
     async def get_task(task_id: str) -> TaskRecord:
         record = await store.get(task_id)
         if record is None:
             raise _not_found(task_id)
-        return record
+        return scheduler.enrich_record(record)
 
     @app.patch("/api/tasks/{task_id}", response_model=TaskRecord)
     async def update_task(task_id: str, payload: TaskUpdate) -> TaskRecord:
@@ -524,7 +524,7 @@ def create_app(
             raise _not_found(task_id)
         result = await store.get(task_id)
         assert result is not None
-        return result
+        return scheduler.enrich_record(result)
 
     @app.post("/api/tasks/{task_id}/start", response_model=TaskRecord)
     async def start_task(task_id: str) -> TaskRecord:
@@ -533,14 +533,14 @@ def create_app(
             raise _not_found(task_id)
         result = await store.get(task_id)
         assert result is not None
-        return result
+        return scheduler.enrich_record(result)
 
     @app.post("/api/tasks/{task_id}/stop", response_model=TaskRecord)
     async def stop_task(task_id: str) -> TaskRecord:
         record = await scheduler.stop(task_id)
         if record is None:
             raise _not_found(task_id)
-        return record
+        return scheduler.enrich_record(record)
 
     @app.delete("/api/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_task(task_id: str) -> Response:

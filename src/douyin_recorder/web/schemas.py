@@ -107,6 +107,9 @@ class TaskRecord(TaskConfig):
     updated_at: datetime
     last_checked_at: datetime | None = None
     started_at: datetime | None = None
+    recording_elapsed_seconds: float | None = None
+    recording_segment_index: int | None = None
+    recording_segment_progress: float | None = None
 
 
 class InspectRequest(StrictModel):

@@ -4,17 +4,19 @@ import {
   clearPageError,
   escapeHtml,
   formatTime,
+  recordingProgressMarkup,
   setHealth,
   setHtmlIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui2";
+} from "/static/ui.js?v=20260721-ui3";
 
 const state = {
   tasks: [],
   filter: "all",
   loading: false,
   editingTaskId: null,
+  progressTimer: 0,
 };
 
 const elements = {
@@ -60,6 +62,7 @@ function renderTask(task) {
   const status = statusLabels[task.status] || task.status;
   const source = task.source === "auto" ? "自动源" : task.source.toUpperCase();
   const specs = [qualityLabels[task.quality] || task.quality, task.output_format.toUpperCase(), source];
+  const progress = recordingProgressMarkup(task);
   return `
     <article class="task-row ${escapeHtml(task.status)}">
       <div class="task-main">
@@ -71,7 +74,7 @@ function renderTask(task) {
       </div>
       <div class="task-state">
         <span class="status-pill tone-${escapeHtml(task.status)}"><i></i>${escapeHtml(status)}</span>
-        <small title="${escapeHtml(task.status_message || "")}">${escapeHtml(task.status_message || "等待操作")}</small>
+        ${progress || `<small title="${escapeHtml(task.status_message || "")}">${escapeHtml(task.status_message || "等待操作")}</small>`}
       </div>
       <div class="task-specs">${specs.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>
       <time class="task-time" datetime="${escapeHtml(task.last_checked_at || "")}">${escapeHtml(formatTime(task.last_checked_at))}</time>
@@ -85,6 +88,33 @@ function renderTask(task) {
         </button>
       </div>
     </article>`;
+}
+
+function syncProgressClock(tasks) {
+  const syncedAt = Date.now();
+  return tasks.map((task) => (
+    task.status === "recording"
+      ? { ...task, _progressSyncedAt: syncedAt }
+      : task
+  ));
+}
+
+function ensureProgressTicker() {
+  const hasRecording = state.tasks.some((task) => task.status === "recording");
+  if (hasRecording && !state.progressTimer) {
+    state.progressTimer = window.setInterval(() => {
+      if (!state.tasks.some((task) => task.status === "recording")) {
+        window.clearInterval(state.progressTimer);
+        state.progressTimer = 0;
+        return;
+      }
+      render();
+    }, 1000);
+  }
+  if (!hasRecording && state.progressTimer) {
+    window.clearInterval(state.progressTimer);
+    state.progressTimer = 0;
+  }
 }
 
 function updateFilterCounts() {
@@ -107,6 +137,7 @@ function render() {
   elements.empty.classList.toggle("hidden", visible.length !== 0);
   elements.emptyTitle.textContent = state.tasks.length === 0 ? "还没有录制任务" : "没有符合条件的任务";
   updateFilterCounts();
+  ensureProgressTicker();
 }
 
 async function load({ quiet = false } = {}) {
@@ -114,7 +145,7 @@ async function load({ quiet = false } = {}) {
   state.loading = true;
   if (!quiet) elements.refreshButton?.classList.add("is-loading");
   try {
-    state.tasks = await api("/api/tasks");
+    state.tasks = syncProgressClock(await api("/api/tasks"));
     render();
     clearPageError();
     setHealth(true);

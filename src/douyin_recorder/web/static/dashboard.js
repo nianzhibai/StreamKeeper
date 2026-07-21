@@ -6,12 +6,13 @@ import {
   escapeHtml,
   formatTime,
   providerStatus,
+  recordingProgressMarkup,
   setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui2";
+} from "/static/ui.js?v=20260721-ui3";
 
 const statusLabels = {
   stopped: "已停止",
@@ -23,9 +24,21 @@ const statusLabels = {
 };
 
 let loading = false;
+let activeTasks = [];
+let progressTimer = 0;
+
+function syncProgressClock(tasks) {
+  const syncedAt = Date.now();
+  return tasks.map((task) => (
+    task.status === "recording"
+      ? { ...task, _progressSyncedAt: syncedAt }
+      : task
+  ));
+}
 
 function taskItem(task) {
   const title = task.label || task.anchor_name || "未命名任务";
+  const progress = recordingProgressMarkup(task);
   return `
     <a class="compact-task" href="/tasks">
       <span class="avatar avatar-small">${escapeHtml([...title][0] || "录")}</span>
@@ -34,11 +47,31 @@ function taskItem(task) {
         <small>${escapeHtml(task.status_message || formatTime(task.last_checked_at))}</small>
       </span>
       <span class="status-pill tone-${escapeHtml(task.status)}"><i></i>${escapeHtml(statusLabels[task.status] || task.status)}</span>
+      ${progress}
     </a>`;
 }
 
-function renderTasks(tasks) {
-  const active = tasks
+function ensureProgressTicker() {
+  const hasRecording = activeTasks.some((task) => task.status === "recording");
+  if (hasRecording && !progressTimer) {
+    progressTimer = window.setInterval(() => {
+      if (!activeTasks.some((task) => task.status === "recording")) {
+        window.clearInterval(progressTimer);
+        progressTimer = 0;
+        return;
+      }
+      renderTasks(activeTasks, { tick: true });
+    }, 1000);
+  }
+  if (!hasRecording && progressTimer) {
+    window.clearInterval(progressTimer);
+    progressTimer = 0;
+  }
+}
+
+function renderTasks(tasks, { tick = false } = {}) {
+  if (!tick) activeTasks = tasks;
+  const active = activeTasks
     .filter((task) => task.enabled || task.status === "recording" || task.status === "error")
     .sort((a, b) => {
       const priority = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4 };
@@ -50,6 +83,7 @@ function renderTasks(tasks) {
   setHtmlIfChanged(list, active.map(taskItem).join(""));
   list.classList.toggle("hidden", active.length === 0);
   empty.classList.toggle("hidden", active.length !== 0);
+  ensureProgressTicker();
 }
 
 function renderArchive(cloud) {
@@ -111,7 +145,7 @@ async function load({ quiet = false } = {}) {
       document.querySelector("#stat-waiting"),
       String(tasks.filter((task) => task.enabled && task.status !== "recording").length),
     );
-    renderTasks(tasks);
+    renderTasks(syncProgressClock(tasks));
     renderArchive(cloud);
     renderSystem(system);
     clearPageError();

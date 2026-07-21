@@ -64,6 +64,38 @@ class TaskScheduler:
                 directories.add(Path(output_path).expanduser().resolve().parent)
         return directories
 
+    def enrich_record(self, record: TaskRecord) -> TaskRecord:
+        if record.status != TaskStatus.RECORDING:
+            return record
+        recorder = self._recorders.get(record.id)
+        elapsed = float(getattr(recorder, "progress_seconds", 0.0) or 0.0) if recorder else 0.0
+        if elapsed <= 0 and record.started_at is not None:
+            started = record.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            elapsed = max(0.0, (_now() - started).total_seconds())
+
+        segment_index: int | None = None
+        segment_progress: float | None = None
+        if record.segment_seconds > 0:
+            segment_index = int(elapsed // record.segment_seconds) + 1
+            if record.segment_count > 0:
+                segment_index = min(segment_index, record.segment_count)
+            segment_elapsed = elapsed % record.segment_seconds
+            segment_progress = min(1.0, segment_elapsed / record.segment_seconds)
+        return record.model_copy(
+            update={
+                "recording_elapsed_seconds": round(elapsed, 1),
+                "recording_segment_index": segment_index,
+                "recording_segment_progress": (
+                    None if segment_progress is None else round(segment_progress, 4)
+                ),
+            }
+        )
+
+    def enrich_records(self, records: list[TaskRecord]) -> list[TaskRecord]:
+        return [self.enrich_record(record) for record in records]
+
     async def startup(self) -> None:
         self._shutting_down = False
         await self.store.recover_interrupted()

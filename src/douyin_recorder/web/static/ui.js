@@ -39,6 +39,68 @@ export function formatTime(value, { seconds = false } = {}) {
   }).format(date);
 }
 
+export function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+export function recordingProgress(task, now = Date.now()) {
+  if (task?.status !== "recording") return null;
+
+  let elapsed = Number(task.recording_elapsed_seconds);
+  if (Number.isFinite(elapsed) && elapsed >= 0) {
+    if (task._progressSyncedAt) {
+      elapsed += Math.max(0, (now - task._progressSyncedAt) / 1000);
+    }
+  } else if (task.started_at) {
+    const started = new Date(task.started_at).getTime();
+    elapsed = Number.isNaN(started) ? 0 : Math.max(0, (now - started) / 1000);
+  } else {
+    return null;
+  }
+
+  const segmentSeconds = Number(task.segment_seconds) || 0;
+  const segmentCount = Number(task.segment_count) || 0;
+  if (segmentSeconds > 0) {
+    let index = Math.floor(elapsed / segmentSeconds) + 1;
+    if (segmentCount > 0) index = Math.min(index, segmentCount);
+    const segmentElapsed = elapsed % segmentSeconds;
+    const ratio = Math.min(1, segmentElapsed / segmentSeconds);
+    const label = segmentCount > 0
+      ? `第 ${index}/${segmentCount} 段 ${formatDuration(segmentElapsed)} / ${formatDuration(segmentSeconds)}`
+      : `第 ${index} 段 ${formatDuration(segmentElapsed)} / ${formatDuration(segmentSeconds)}`;
+    return { elapsed, index, ratio, label, segmented: true };
+  }
+
+  return {
+    elapsed,
+    index: null,
+    ratio: null,
+    label: `已录制 ${formatDuration(elapsed)}`,
+    segmented: false,
+  };
+}
+
+export function recordingProgressMarkup(task, now = Date.now()) {
+  const progress = recordingProgress(task, now);
+  if (!progress) return "";
+  if (progress.segmented) {
+    const percent = Math.round(progress.ratio * 100);
+    return `
+      <div class="recording-progress" title="${escapeHtml(progress.label)}">
+        <div class="recording-progress-track" aria-hidden="true"><i style="width:${percent}%"></i></div>
+        <small>${escapeHtml(progress.label)}</small>
+      </div>`;
+  }
+  return `<div class="recording-progress"><small>${escapeHtml(progress.label)}</small></div>`;
+}
+
 export function toast(message, type = "info") {
   const region = document.querySelector("#toast-region");
   if (!region) return;

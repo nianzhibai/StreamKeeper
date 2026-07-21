@@ -9,7 +9,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui2";
+} from "/static/ui.js?v=20260721-ui3";
 
 let cloud = null;
 let loading = false;

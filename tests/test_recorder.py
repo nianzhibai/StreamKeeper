@@ -95,8 +95,10 @@ class RecorderProcessTests(IsolatedAsyncioTestCase):
         stream = asyncio.StreamReader()
         stream.feed_data(b"out_time_us=1800000000\nprogress=continue\nout_time_us=7200000000\n")
         stream.feed_eof()
+        recorder = Recorder()
 
-        self.assertEqual(await Recorder._consume_progress(stream), 7200.0)
+        self.assertEqual(await recorder._consume_progress(stream), 7200.0)
+        self.assertEqual(recorder.progress_seconds, 7200.0)
 
     async def test_process_start_error_is_wrapped(self) -> None:
         async def process_factory(*_args, **_kwargs):

@@ -114,10 +114,15 @@ class Recorder:
         self._executable_resolver = executable_resolver or shutil.which
         self._process: asyncio.subprocess.Process | None = None
         self._current_output_path: Path | None = None
+        self._progress_seconds = 0.0
 
     @property
     def current_output_path(self) -> Path | None:
         return self._current_output_path
+
+    @property
+    def progress_seconds(self) -> float:
+        return self._progress_seconds
 
     def _resolve_ffmpeg(self) -> str:
         resolved = self._executable_resolver(self.options.ffmpeg)
@@ -141,6 +146,7 @@ class Recorder:
             name=self.options.name,
         )
         self._current_output_path = output_path
+        self._progress_seconds = 0.0
         command = build_ffmpeg_command(
             selected_source.url,
             output_path,
@@ -158,7 +164,7 @@ class Recorder:
             process = await self._process_factory(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE if self.options.segment_count else asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
             )
@@ -182,6 +188,7 @@ class Recorder:
                 progress_result = await asyncio.gather(progress_task, return_exceptions=True)
                 if progress_result and isinstance(progress_result[0], float):
                     progress_seconds = progress_result[0]
+                    self._progress_seconds = progress_seconds
             self._process = None
 
         if return_code not in {0, 255}:
@@ -200,14 +207,14 @@ class Recorder:
             if message:
                 logger.warning("FFmpeg: %s", message)
 
-    @staticmethod
-    async def _consume_progress(stream: asyncio.StreamReader) -> float:
+    async def _consume_progress(self, stream: asyncio.StreamReader) -> float:
         max_seconds = 0.0
         while line := await stream.readline():
             key, separator, value = line.decode(errors="replace").strip().partition("=")
             if separator and key == "out_time_us":
                 try:
                     max_seconds = max(max_seconds, int(value) / 1_000_000)
+                    self._progress_seconds = max_seconds
                 except ValueError:
                     continue
         return max_seconds

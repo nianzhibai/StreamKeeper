@@ -616,6 +616,7 @@ svg {
 
 .compact-task {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   min-height: 66px;
@@ -1017,9 +1018,47 @@ svg {
 
 .task-state small {
   max-width: 100%;
-  margin-top: 5px;
-  color: var(--muted-dark);
-  font-size: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.recording-progress {
+  display: grid;
+  gap: 5px;
+  width: min(100%, 220px);
+  margin-top: 7px;
+}
+
+.recording-progress-track {
+  overflow: hidden;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.recording-progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
+
+.recording-progress small {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.compact-task .recording-progress {
+  flex: 1 0 100%;
+  width: auto;
+  margin-top: 0;
+  margin-left: 48px;
+  padding-right: 8px;
 }
 
 .task-specs {

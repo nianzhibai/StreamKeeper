@@ -109,12 +109,13 @@ def build_ffmpeg_command(
         "-reconnect_delay_max",
         "60",
     ]
-    if segment_count:
-        command.extend(["-progress", "pipe:1", "-nostats"])
     if proxy:
         command.extend(["-http_proxy", proxy])
     command.extend(
         [
+            "-progress",
+            "pipe:1",
+            "-nostats",
             "-i",
             source_url,
             "-map",

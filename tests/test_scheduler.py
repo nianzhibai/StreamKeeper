@@ -188,3 +188,25 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertTrue(result.enabled)
         self.assertEqual(result.status, TaskStatus.WAITING)
         self.assertIn("恢复", result.status_message)
+
+    async def test_enrich_record_exposes_current_segment_progress(self) -> None:
+        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        scheduler = TaskScheduler(self.store, self.settings)
+        record = await self.store.update_runtime(
+            task.id,
+            status=TaskStatus.RECORDING,
+            status_message="正在录制",
+        )
+        assert record is not None
+
+        class LiveRecorder:
+            progress_seconds = 1850.0
+            current_output_path = None
+
+        scheduler._recorders[task.id] = LiveRecorder()
+        enriched = scheduler.enrich_record(record)
+
+        self.assertEqual(enriched.recording_elapsed_seconds, 1850.0)
+        self.assertEqual(enriched.recording_segment_index, 2)
+        self.assertAlmostEqual(enriched.recording_segment_progress or 0.0, 50 / 1800, places=4)
+        await scheduler.shutdown()

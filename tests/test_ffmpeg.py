@@ -45,6 +45,7 @@ class FFmpegCommandTests(TestCase):
         self.assertLess(command.index("-http_proxy"), command.index("-i"))
         self.assertEqual(command[-1], "output.ts")
         self.assertIn("mpegts", command)
+        self.assertEqual(command[command.index("-progress") + 1], "pipe:1")
         self.assertNotIn("-reconnect_at_eof", command)
 
     def test_segmented_mp4_command(self) -> None:

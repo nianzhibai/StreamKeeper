@@ -6,7 +6,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui2";
+} from "/static/ui.js?v=20260721-ui3";
 
 const icons = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /></svg>',
