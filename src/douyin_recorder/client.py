@@ -24,6 +24,7 @@ _URL_CANDIDATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？、）》】」』"
+_FOLLOW_LIVE_PATH = re.compile(r"^/follow/live/(\d+)/?$")
 
 # UI labels: OD=原画 UHD=超清 HD=高清 SD=标清 LD=流畅 → Web sdk_key aliases.
 _QUALITY_GEARS: dict[str, tuple[str, ...]] = {
@@ -67,16 +68,21 @@ class DouyinClient:
             candidate = match.group(0).rstrip(_TRAILING_URL_PUNCTUATION)
             parsed = urlparse(candidate)
             host = (parsed.hostname or "").lower().rstrip(".")
+            follow_live = _FOLLOW_LIVE_PATH.fullmatch(parsed.path)
             has_supported_path = (
                 (host == "live.douyin.com" and bool(parsed.path.strip("/")))
                 or (host == "v.douyin.com" and bool(parsed.path.strip("/")))
                 or (host == "www.douyin.com" and parsed.path.startswith("/user/"))
+                or (host == "www.douyin.com" and follow_live is not None)
             )
             if parsed.scheme.lower() in {"http", "https"} and has_supported_path:
+                if host == "www.douyin.com" and follow_live is not None:
+                    return f"https://live.douyin.com/{follow_live.group(1)}"
                 return candidate
         raise InvalidDouyinUrl(
             "未找到支持的抖音链接，例如 https://live.douyin.com/...、"
-            "https://v.douyin.com/... 或 https://www.douyin.com/user/..."
+            "https://v.douyin.com/...、https://www.douyin.com/follow/live/... "
+            "或 https://www.douyin.com/user/..."
         )
 
     def _get_web_client(self) -> DouyinWebClient:

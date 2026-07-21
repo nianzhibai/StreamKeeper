@@ -208,3 +208,13 @@ class UrlValidationTests(TestCase):
     def test_rejects_unsupported_www_path(self) -> None:
         with self.assertRaises(InvalidDouyinUrl):
             DouyinClient.validate_url("https://www.douyin.com/video/123")
+
+    def test_normalizes_follow_live_url(self) -> None:
+        self.assertEqual(
+            DouyinClient.validate_url("https://www.douyin.com/follow/live/935126084727"),
+            "https://live.douyin.com/935126084727",
+        )
+
+    def test_extracts_follow_live_url_from_share_text(self) -> None:
+        value = "关注直播间 https://www.douyin.com/follow/live/935126084727 打开抖音"
+        self.assertEqual(DouyinClient.validate_url(value), "https://live.douyin.com/935126084727")

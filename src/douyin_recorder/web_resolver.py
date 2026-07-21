@@ -656,6 +656,10 @@ class DouyinWebClient:
             segment = parsed.path.strip("/").split("/")[0]
             if segment and segment not in {"hot_live", "category", "search"}:
                 web_rid = segment
+        elif parsed.netloc.endswith("www.douyin.com"):
+            follow = re.fullmatch(r"/follow/live/(\d+)/?", parsed.path)
+            if follow:
+                web_rid = follow.group(1)
 
         patterns = (
             ("web", r'(?:\\?"web_rid\\?"\s*:\s*\\?")(\d+)'),

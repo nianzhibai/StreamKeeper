@@ -5,7 +5,7 @@
 ## 功能
 
 - 浏览器中新建、编辑、启动、停止和删除录制任务。
-- 支持直接粘贴抖音分享文案，自动提取 `live.douyin.com`、`v.douyin.com` 或 `www.douyin.com/user/...` 链接。
+- 支持直接粘贴抖音分享文案，自动提取 `live.douyin.com`、`v.douyin.com`、`www.douyin.com/follow/live/...` 或 `www.douyin.com/user/...` 链接。
 - 支持 OD、UHD、HD、SD、LD 画质。
 - 支持 TS、MP4、MKV、FLV 和按时长分段；段数默认 4，达到上限或本次直播提前结束都会自动停止任务。
 - 内置本地录像文件管理器，可按主播和日期浏览、搜索、下载并直接在线播放录像。
