@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <title>本地录像 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260721-ui3" />
+    <link rel="stylesheet" href="/static/style.css?v=20260721-ui10" />
   </head>
   <body data-page="recordings">
     <div class="app-shell">
@@ -67,26 +67,43 @@
 
     <dialog id="recording-player-dialog" class="modal player-modal" aria-labelledby="recording-player-title">
       <header class="modal-header">
-        <div class="player-heading"><h2 id="recording-player-title">播放录像</h2><span id="recording-player-path">—</span></div>
+        <div>
+          <h2 id="recording-player-title">播放录像</h2>
+          <small id="recording-player-meta">—</small>
+        </div>
         <button id="recording-player-close" class="icon-button subtle" type="button" aria-label="关闭播放器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
       </header>
-      <div class="player-stage">
-        <video id="recording-player" controls playsinline preload="metadata"></video>
-        <div id="recording-player-loading" class="player-message"><span class="button-spinner"></span><strong>正在准备视频</strong><small>正在无损封装为浏览器可读取的 MP4</small></div>
-        <div id="recording-player-error" class="player-message player-error hidden"><strong>浏览器无法播放这段录像</strong><small>录像内部编码可能不受支持，请下载后使用本地播放器打开</small></div>
+      <div class="player-shell">
+        <div class="player-stage">
+          <video id="recording-player" playsinline preload="metadata"></video>
+          <div id="recording-player-loading" class="player-message">
+            <span class="button-spinner"></span>
+            <strong>正在准备视频</strong>
+            <small id="recording-player-loading-detail">首次播放会无损封装为 MP4</small>
+          </div>
+          <div id="recording-player-error" class="player-message player-error hidden">
+            <strong>浏览器无法播放这段录像</strong>
+            <small>编码可能不受支持，请下载后用本地播放器打开</small>
+          </div>
+        </div>
+        <div class="player-controls" aria-label="播放控制">
+          <button id="recording-play-toggle" class="icon-button subtle" type="button" aria-label="播放">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="m10.5 9 4.5 3-4.5 3z" /></svg>
+          </button>
+          <span id="recording-player-time" class="player-time">0:00 / 0:00</span>
+          <input id="recording-player-seek" class="player-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="播放进度" disabled />
+          <button id="recording-fullscreen" class="icon-button subtle" type="button" aria-label="全屏">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5" /></svg>
+          </button>
+        </div>
       </div>
       <footer class="player-footer">
-        <div class="player-summary"><span id="recording-player-mode" class="status-pill tone-neutral"><i></i>在线播放</span><small id="recording-player-meta">—</small></div>
-        <div class="player-actions" aria-label="播放器控制">
-          <button id="recording-play-toggle" class="secondary-button player-control" type="button" aria-label="播放"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="m10.5 9 4.5 3-4.5 3z" /></svg><span>播放</span></button>
-          <button id="recording-mute-toggle" class="secondary-button player-control" type="button" aria-label="静音"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3zM16 9.5a4 4 0 0 1 0 5" /></svg><span>静音</span></button>
-          <button id="recording-fullscreen" class="secondary-button player-control" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5" /></svg><span>全屏</span></button>
-          <a id="recording-download" class="secondary-button player-control" href="#" download><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg><span>下载</span></a>
-        </div>
+        <small id="recording-player-path">—</small>
+        <a id="recording-download" class="secondary-button" href="#" download>下载原文件</a>
       </footer>
     </dialog>
 
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/recordings.js?v=20260721-ui3"></script>
+    <script type="module" src="/static/recordings.js?v=20260721-ui10"></script>
   </body>
 </html>

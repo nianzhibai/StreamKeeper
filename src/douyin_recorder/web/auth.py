@@ -178,7 +178,8 @@ class SecurityHeadersMiddleware:
                 else:
                     content_security_policy = (
                         b"default-src 'self'; script-src 'self'; style-src 'self'; "
-                        b"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+                        b"img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; "
+                        b"connect-src 'self'; frame-ancestors 'none'; "
                         b"base-uri 'none'; form-action 'self'"
                     )
                 headers.extend(

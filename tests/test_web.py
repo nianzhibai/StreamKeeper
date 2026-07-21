@@ -59,6 +59,12 @@ class FakeScheduler:
         await self.stop(task_id, disable=False)
         return await self.start(task_id)
 
+    def enrich_record(self, record):
+        return record
+
+    def enrich_records(self, records):
+        return list(records)
+
 
 class FakeInspectClient:
     async def fetch(self, url: str, quality: str) -> LiveInfo:
@@ -179,6 +185,8 @@ class WebTests(TestCase):
         self.assertIn("Stream Keeper", page.text)
         self.assertEqual(page.headers["x-frame-options"], "DENY")
         self.assertIn("fullscreen=(self)", page.headers["permissions-policy"])
+        self.assertIn("media-src 'self' blob:", page.headers["content-security-policy"])
+        self.assertIn("worker-src 'self' blob:", page.headers["content-security-policy"])
         self.assertIn("录制任务", self.client.get("/tasks").text)
         self.assertIn("本地录像", self.client.get("/recordings").text)
         self.assertIn("网盘归档", self.client.get("/archive").text)
@@ -199,14 +207,18 @@ class WebTests(TestCase):
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
         self.login()
         recording_page = self.client.get("/recordings")
+        self.assertIn('id="recording-player"', recording_page.text)
+        self.assertIn('id="recording-download"', recording_page.text)
         self.assertIn('id="recording-play-toggle"', recording_page.text)
-        self.assertIn('id="recording-mute-toggle"', recording_page.text)
+        self.assertIn('id="recording-player-seek"', recording_page.text)
         self.assertIn('id="recording-fullscreen"', recording_page.text)
         player_script = self.client.get("/static/recordings.js").text
-        self.assertIn("playerStage.requestFullscreen", player_script)
-        self.assertIn("player.webkitEnterFullscreen", player_script)
-        self.assertIn("player.videoWidth", player_script)
-        self.assertIn('classList.toggle("is-portrait"', player_script)
+        self.assertIn("playback_mode", player_script)
+        self.assertIn('preview ? "preview" : "file"', player_script)
+        self.assertIn('"remux"', player_script)
+        self.assertIn("requestFullscreen", player_script)
+        self.assertNotIn("mpegts", player_script)
+        self.assertNotIn("is-portrait", player_script)
 
         recording_dir = self.settings.recordings_dir / "测试 主播" / "2026-07-12"
         recording_dir.mkdir(parents=True)
@@ -216,7 +228,11 @@ class WebTests(TestCase):
         (recording_dir / "内部信息.txt").write_text("not public", encoding="utf-8")
         outside = Path(self.temp_dir.name) / "outside.mp4"
         outside.write_bytes(b"secret")
-        (self.settings.recordings_dir / "越界链接.mp4").symlink_to(outside)
+        try:
+            (self.settings.recordings_dir / "越界链接.mp4").symlink_to(outside)
+            has_symlink = True
+        except OSError:
+            has_symlink = False
 
         root = self.client.get("/api/recordings")
         self.assertEqual(root.status_code, 200)
@@ -230,7 +246,10 @@ class WebTests(TestCase):
         listing = self.client.get("/api/recordings", params={"path": "测试 主播/2026-07-12"})
         self.assertEqual(listing.status_code, 200)
         entries = listing.json()["entries"]
-        self.assertEqual([entry["name"] for entry in entries], ["测试 主播_2026-07-12_12-00-00.mp4", "空录像.ts"])
+        self.assertEqual(
+            [entry["name"] for entry in entries],
+            ["测试 主播_2026-07-12_12-00-00.mp4", "空录像.ts"],
+        )
         self.assertEqual(entries[0]["size"], 10)
         self.assertEqual(entries[0]["extension"], "mp4")
         self.assertEqual(entries[0]["playback_mode"], "direct")
@@ -282,7 +301,8 @@ class WebTests(TestCase):
         self.assertEqual(preview_range.headers["content-range"], "bytes 8-17/26")
 
         self.assertEqual(self.client.get("/api/recordings", params={"path": "../"}).status_code, 400)
-        self.assertEqual(self.client.get("/api/recordings/file/越界链接.mp4").status_code, 400)
+        if has_symlink:
+            self.assertEqual(self.client.get("/api/recordings/file/越界链接.mp4").status_code, 400)
         self.assertEqual(
             self.client.get("/api/recordings/file/测试 主播/2026-07-12/内部信息.txt").status_code,
             404,

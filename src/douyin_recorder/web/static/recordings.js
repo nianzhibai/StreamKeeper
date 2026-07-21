@@ -13,10 +13,9 @@ const icons = {
   video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m10 9 5 3-5 3z" /></svg>',
   play: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="m10.5 9 4.5 3-4.5 3z" /></svg>',
   pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M10 9v6M14 9v6" /></svg>',
-  volume: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3zM16 9.5a4 4 0 0 1 0 5" /></svg>',
-  muted: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3zM16 10l4 4M20 10l-4 4" /></svg>',
   download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg>',
   chevron: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>',
+  fullscreen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5" /></svg>',
 };
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
@@ -25,17 +24,21 @@ let searchTerm = "";
 let requestController = null;
 let activeEntry = null;
 let closingPlayer = false;
+let seeking = false;
 
 const listNode = document.querySelector("#recording-list");
 const emptyNode = document.querySelector("#recording-empty");
 const searchNode = document.querySelector("#recording-search");
 const playerDialog = document.querySelector("#recording-player-dialog");
+const playerShell = document.querySelector(".player-shell");
 const player = document.querySelector("#recording-player");
-const playerStage = document.querySelector(".player-stage");
 const playerLoading = document.querySelector("#recording-player-loading");
 const playerError = document.querySelector("#recording-player-error");
+const playerLoadingDetail = document.querySelector("#recording-player-loading-detail");
 const playToggle = document.querySelector("#recording-play-toggle");
-const muteToggle = document.querySelector("#recording-mute-toggle");
+const seekBar = document.querySelector("#recording-player-seek");
+const timeLabel = document.querySelector("#recording-player-time");
+const fullscreenButton = document.querySelector("#recording-fullscreen");
 
 function encodePath(path) {
   return path.split("/").map((part) => encodeURIComponent(part)).join("/");
@@ -174,42 +177,46 @@ function navigate(path) {
 }
 
 function showPlayerMessage(kind) {
-  playerLoading.classList.toggle("hidden", kind !== "loading");
+  playerLoading.classList.toggle("hidden", kind !== "loading" && kind !== "buffering");
+  playerLoading.classList.toggle("player-buffering", kind === "buffering");
   playerError.classList.toggle("hidden", kind !== "error");
 }
 
-function resetPlayerLayout() {
-  playerDialog.classList.remove("is-portrait");
-  playerDialog.style.removeProperty("--media-aspect");
-  player.style.removeProperty("width");
-  player.style.removeProperty("height");
+function formatClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
 }
 
-function fitPlayerToStage() {
-  if (!player.videoWidth || !player.videoHeight || document.fullscreenElement === player) return;
-  const stage = playerStage.getBoundingClientRect();
-  if (!stage.width || !stage.height) return;
-  const scale = Math.min(stage.width / player.videoWidth, stage.height / player.videoHeight);
-  player.style.width = `${Math.max(1, Math.floor(player.videoWidth * scale))}px`;
-  player.style.height = `${Math.max(1, Math.floor(player.videoHeight * scale))}px`;
-}
-
-function updatePlayerLayout() {
-  if (!player.videoWidth || !player.videoHeight) return;
-  playerDialog.classList.toggle("is-portrait", player.videoHeight > player.videoWidth);
-  playerDialog.style.setProperty("--media-aspect", `${player.videoWidth} / ${player.videoHeight}`);
-  window.requestAnimationFrame(() => window.requestAnimationFrame(fitPlayerToStage));
-}
-
-function renderPlayerControls() {
+function renderPlayToggle() {
   const playing = !player.paused && !player.ended;
-  playToggle.innerHTML = `${playing ? icons.pause : icons.play}<span>${playing ? "暂停" : "播放"}</span>`;
+  playToggle.innerHTML = playing ? icons.pause : icons.play;
   playToggle.setAttribute("aria-label", playing ? "暂停" : "播放");
   playToggle.setAttribute("aria-pressed", String(playing));
-  const muted = player.muted || player.volume === 0;
-  muteToggle.innerHTML = `${muted ? icons.muted : icons.volume}<span>${muted ? "恢复声音" : "静音"}</span>`;
-  muteToggle.setAttribute("aria-label", muted ? "恢复声音" : "静音");
-  muteToggle.setAttribute("aria-pressed", String(muted));
+}
+
+function syncSeekBar() {
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  seekBar.max = duration > 0 ? String(duration) : "0";
+  seekBar.disabled = !(duration > 0);
+  if (!seeking) seekBar.value = String(player.currentTime || 0);
+  timeLabel.textContent = `${formatClock(player.currentTime || 0)} / ${formatClock(duration)}`;
+}
+
+function resetPlayer() {
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  seeking = false;
+  seekBar.value = "0";
+  seekBar.max = "0";
+  seekBar.disabled = true;
+  timeLabel.textContent = "0:00 / 0:00";
+  renderPlayToggle();
 }
 
 function togglePlayback() {
@@ -221,23 +228,18 @@ function togglePlayback() {
 }
 
 function requestPlayerFullscreen() {
+  const target = playerShell || player;
   try {
-    if (playerStage.requestFullscreen) {
-      const request = playerStage.requestFullscreen();
-      request?.catch(() => toast("浏览器拒绝了全屏请求", "error"));
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+      return;
+    }
+    if (target.requestFullscreen) {
+      target.requestFullscreen().catch(() => toast("浏览器拒绝了全屏请求", "error"));
       return;
     }
     if (player.webkitEnterFullscreen) {
       player.webkitEnterFullscreen();
-      return;
-    }
-    if (player.webkitRequestFullscreen) {
-      player.webkitRequestFullscreen();
-      return;
-    }
-    if (player.requestFullscreen) {
-      const request = player.requestFullscreen();
-      request?.catch(() => toast("浏览器拒绝了全屏请求", "error"));
       return;
     }
     toast("当前浏览器不支持视频全屏", "error");
@@ -246,19 +248,18 @@ function requestPlayerFullscreen() {
   }
 }
 
-function setPlayerSource(mode) {
-  if (!activeEntry) return;
-  resetPlayerLayout();
+function setPlayerSource(entry) {
+  if (!entry) return;
+  const remux = entry.playback_mode === "remux";
+  playerLoadingDetail.textContent = remux
+    ? "首次播放会无损封装为 MP4，完成后可直接拖动进度"
+    : "正在加载视频";
   showPlayerMessage("loading");
-  const remuxed = mode === "remux";
-  const badge = document.querySelector("#recording-player-mode");
-  badge.className = "status-pill tone-success";
-  badge.innerHTML = `<i></i>${remuxed ? "无损封装播放" : "原文件播放"}`;
-  player.src = fileUrl(activeEntry.path, { preview: remuxed });
-  player.controls = true;
+  resetPlayer();
+  player.controls = false;
+  player.src = fileUrl(entry.path, { preview: remux });
   player.load();
-  renderPlayerControls();
-  player.play().catch(renderPlayerControls);
+  player.play().catch(renderPlayToggle);
 }
 
 function openPlayer(entry) {
@@ -269,16 +270,14 @@ function openPlayer(entry) {
   document.querySelector("#recording-player-meta").textContent = `${String(entry.extension).toUpperCase()} · ${formatBytes(entry.size)} · ${formatModified(entry.modified_at)}`;
   document.querySelector("#recording-download").href = fileUrl(entry.path, { download: true });
   playerDialog.showModal();
-  setPlayerSource(entry.playback_mode);
+  setPlayerSource(entry);
 }
 
 function closePlayer() {
   closingPlayer = true;
-  player.pause();
-  player.removeAttribute("src");
-  player.load();
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  resetPlayer();
   activeEntry = null;
-  resetPlayerLayout();
   if (playerDialog.open) playerDialog.close();
   showPlayerMessage("loading");
   window.setTimeout(() => {
@@ -310,10 +309,24 @@ listNode.addEventListener("click", (event) => {
 });
 document.querySelector("#recording-player-close")?.addEventListener("click", closePlayer);
 playToggle.addEventListener("click", togglePlayback);
-muteToggle.addEventListener("click", () => {
-  player.muted = !player.muted;
+fullscreenButton.addEventListener("click", requestPlayerFullscreen);
+seekBar.addEventListener("pointerdown", () => {
+  seeking = true;
 });
-document.querySelector("#recording-fullscreen")?.addEventListener("click", requestPlayerFullscreen);
+seekBar.addEventListener("input", () => {
+  timeLabel.textContent = `${formatClock(Number(seekBar.value) || 0)} / ${formatClock(player.duration || 0)}`;
+});
+seekBar.addEventListener("change", () => {
+  player.currentTime = Number(seekBar.value) || 0;
+  seeking = false;
+  syncSeekBar();
+});
+seekBar.addEventListener("pointerup", () => {
+  if (!seeking) return;
+  player.currentTime = Number(seekBar.value) || 0;
+  seeking = false;
+  syncSeekBar();
+});
 playerDialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   closePlayer();
@@ -321,34 +334,43 @@ playerDialog.addEventListener("cancel", (event) => {
 playerDialog.addEventListener("click", (event) => {
   if (event.target === playerDialog) closePlayer();
 });
-player.addEventListener("loadeddata", () => showPlayerMessage(null));
-player.addEventListener("loadedmetadata", updatePlayerLayout);
-player.addEventListener("playing", () => showPlayerMessage(null));
-player.addEventListener("play", renderPlayerControls);
-player.addEventListener("pause", renderPlayerControls);
-player.addEventListener("ended", renderPlayerControls);
-player.addEventListener("volumechange", renderPlayerControls);
-document.addEventListener("fullscreenchange", () => {
-  window.requestAnimationFrame(() => window.requestAnimationFrame(fitPlayerToStage));
+function clearPlayerLoading() {
+  if (!playerError.classList.contains("hidden")) return;
+  showPlayerMessage(null);
+}
+
+player.addEventListener("loadedmetadata", () => {
+  clearPlayerLoading();
+  syncSeekBar();
 });
-player.addEventListener("webkitendfullscreen", () => window.requestAnimationFrame(fitPlayerToStage));
+player.addEventListener("loadeddata", clearPlayerLoading);
+player.addEventListener("canplay", () => {
+  clearPlayerLoading();
+  syncSeekBar();
+});
+player.addEventListener("playing", clearPlayerLoading);
+player.addEventListener("timeupdate", syncSeekBar);
+player.addEventListener("durationchange", syncSeekBar);
+player.addEventListener("play", renderPlayToggle);
+player.addEventListener("pause", renderPlayToggle);
+player.addEventListener("ended", () => {
+  renderPlayToggle();
+  syncSeekBar();
+});
 player.addEventListener("waiting", () => {
-  if (!player.paused) showPlayerMessage("loading");
+  if (!player.paused && playerError.classList.contains("hidden")) {
+    showPlayerMessage("buffering");
+  }
 });
 player.addEventListener("error", () => {
   if (closingPlayer || !activeEntry) return;
   showPlayerMessage("error");
 });
+player.addEventListener("click", togglePlayback);
 window.addEventListener("popstate", () => {
   const path = new URLSearchParams(window.location.search).get("path") || "";
   load({ path, quiet: true });
 });
-
-if ("ResizeObserver" in window) {
-  new ResizeObserver(fitPlayerToStage).observe(playerStage);
-} else {
-  window.addEventListener("resize", fitPlayerToStage);
-}
 
 let firstLoad = true;
 bootstrap((options = {}) => {
