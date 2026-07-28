@@ -2,62 +2,78 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
     <title>本地录像 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260721-ui10" />
+    <script src="/static/theme.js?v=20260728"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260728" />
   </head>
   <body data-page="recordings">
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="Stream Keeper 首页"><span class="brand-mark"><i></i></span><span class="brand-copy"><strong>Stream Keeper</strong><small>直播录制</small></span></a>
-        <nav class="side-nav" aria-label="主要导航">
-          <a class="nav-item" href="/" data-nav="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg><span>概览</span></a>
-          <a class="nav-item" href="/tasks" data-nav="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="8" /></svg><span>录制任务</span></a>
-          <a class="nav-item" href="/recordings" data-nav="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /><path d="m10 12.5 4 2.5-4 2.5z" /></svg><span>本地录像</span></a>
-          <a class="nav-item" href="/archive" data-nav="archive"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5h14v10.25A1.25 1.25 0 0 1 17.75 20H6.25A1.25 1.25 0 0 1 5 18.75zM4 4h16v4.5H4zM9 12h6" /></svg><span>网盘归档</span></a>
-          <a class="nav-item" href="/settings" data-nav="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.72.6 1 .3.3.69.44 1.1.4h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z" /></svg><span>设置</span></a>
-        </nav>
-        <div class="sidebar-footer">
-          <div id="server-health" class="server-state"><i></i><span>正在连接</span></div>
-          <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API 文档 <span>↗</span></a>
-          <div class="account"><span class="account-avatar" data-account-avatar>A</span><span class="account-copy"><strong data-account-name>—</strong><small>管理员</small></span><button class="icon-button subtle" type="button" data-logout aria-label="退出登录" title="退出登录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10M14 8l4 4-4 4M18 12H9" /></svg></button></div>
-        </div>
-      </aside>
-
-      <main class="main-content recordings-content">
-        <header class="page-header">
-          <div><p class="page-kicker">存储</p><h1>本地录像</h1></div>
-          <div class="page-actions">
-            <button id="refresh-button" class="icon-button" type="button" aria-label="刷新录像列表" title="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6" /></svg></button>
+    <script src="/static/sprite.js?v=20260728"></script>
+    <div class="app" id="app">
+      <main class="main">
+        <header class="page-head">
+          <div class="page-heading">
+            <h1>本地录像</h1>
+            <p>浏览、播放并下载服务器上已保存的录像</p>
+          </div>
+          <div class="page-tools">
+            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新录像列表" title="刷新">
+              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
+            </button>
           </div>
         </header>
 
-        <div id="page-error" class="error-banner hidden" role="alert"></div>
+        <div id="page-error" class="alert alert-bad hidden" role="alert">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+          <span data-error-text></span>
+        </div>
 
-        <section class="recording-explorer panel" aria-label="录像文件管理器">
-          <header class="explorer-toolbar">
-            <div class="explorer-location">
-              <button id="recording-up" class="icon-button subtle" type="button" disabled aria-label="返回上一级" title="返回上一级"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button>
-              <nav id="recording-breadcrumbs" class="breadcrumbs" aria-label="当前位置"><button type="button" data-path="">全部录像</button></nav>
+        <section class="card explorer" aria-label="录像文件管理器">
+          <header class="explorer-bar">
+            <div class="explorer-place">
+              <button id="recording-up" class="btn btn-icon btn-soft" type="button" disabled aria-label="返回上一级" title="返回上一级">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronLeft" /></svg>
+              </button>
+              <nav id="recording-breadcrumbs" class="crumbs" aria-label="当前位置">
+                <button type="button" data-path="">全部录像</button>
+              </nav>
             </div>
-            <label class="explorer-search">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-              <input id="recording-search" type="search" autocomplete="off" placeholder="搜索当前目录" aria-label="搜索当前目录" />
-            </label>
+            <div class="explorer-actions">
+              <label class="search">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-search" /></svg>
+                <input id="recording-search" type="search" autocomplete="off" placeholder="搜索当前目录" aria-label="搜索当前目录" />
+              </label>
+              <label class="select-inline">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-sort" /></svg>
+                <select id="recording-sort" aria-label="排序方式">
+                  <option value="name">按名称</option>
+                  <option value="modified">按时间</option>
+                  <option value="size">按大小</option>
+                </select>
+              </label>
+            </div>
           </header>
 
-          <div class="explorer-summary">
+          <div class="explorer-meta">
             <span id="recording-summary">正在读取…</span>
             <span id="recording-location">录像根目录</span>
           </div>
 
-          <div class="file-table-head" aria-hidden="true"><span>名称</span><span>大小</span><span>修改时间</span><span></span></div>
-          <div id="recording-list" class="file-list" aria-live="polite">
-            <div class="file-row file-skeleton"></div><div class="file-row file-skeleton"></div><div class="file-row file-skeleton"></div>
+          <div class="table-head file-head" aria-hidden="true">
+            <span>名称</span><span>大小</span><span>修改时间</span><span></span>
           </div>
-          <div id="recording-empty" class="explorer-empty hidden">
-            <span class="empty-symbol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h6l1.5 2H20v9H4z" /></svg></span>
+
+          <div id="recording-list" class="file-list" aria-live="polite">
+            <div class="skeleton skeleton-file"></div>
+            <div class="skeleton skeleton-file"></div>
+            <div class="skeleton skeleton-file"></div>
+            <div class="skeleton skeleton-file"></div>
+          </div>
+
+          <div id="recording-empty" class="empty hidden">
+            <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-folder" /></svg></span>
             <strong id="recording-empty-title">这个目录里还没有录像</strong>
             <small id="recording-empty-detail">录制完成后，视频会自动出现在这里</small>
           </div>
@@ -65,45 +81,54 @@
       </main>
     </div>
 
-    <dialog id="recording-player-dialog" class="modal player-modal" aria-labelledby="recording-player-title">
-      <header class="modal-header">
-        <div>
+    <dialog id="recording-player-dialog" class="modal modal-player" aria-labelledby="recording-player-title">
+      <header class="modal-head">
+        <div class="modal-heading is-truncated">
           <h2 id="recording-player-title">播放录像</h2>
-          <small id="recording-player-meta">—</small>
+          <p id="recording-player-meta">—</p>
         </div>
-        <button id="recording-player-close" class="icon-button subtle" type="button" aria-label="关闭播放器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+        <button id="recording-player-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭播放器">
+          <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
+        </button>
       </header>
+
       <div class="player-shell">
         <div class="player-stage">
           <video id="recording-player" playsinline preload="metadata"></video>
-          <div id="recording-player-loading" class="player-message">
-            <span class="button-spinner"></span>
+          <div id="recording-player-loading" class="player-msg">
+            <span class="spinner"></span>
             <strong>正在准备视频</strong>
             <small id="recording-player-loading-detail">首次播放会无损封装为 MP4</small>
           </div>
-          <div id="recording-player-error" class="player-message player-error hidden">
+          <div id="recording-player-error" class="player-msg is-error hidden">
+            <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-alert" /></svg></span>
             <strong>浏览器无法播放这段录像</strong>
             <small>编码可能不受支持，请下载后用本地播放器打开</small>
           </div>
         </div>
-        <div class="player-controls" aria-label="播放控制">
-          <button id="recording-play-toggle" class="icon-button subtle" type="button" aria-label="播放">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="m10.5 9 4.5 3-4.5 3z" /></svg>
+        <div class="player-ctrl" aria-label="播放控制">
+          <button id="recording-play-toggle" class="btn btn-icon btn-ghost" type="button" aria-label="播放">
+            <svg class="ic" aria-hidden="true"><use href="#ic-play" /></svg>
           </button>
           <span id="recording-player-time" class="player-time">0:00 / 0:00</span>
-          <input id="recording-player-seek" class="player-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="播放进度" disabled />
-          <button id="recording-fullscreen" class="icon-button subtle" type="button" aria-label="全屏">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5" /></svg>
+          <input id="recording-player-seek" class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="播放进度" disabled />
+          <button id="recording-volume" class="btn btn-icon btn-ghost" type="button" aria-label="静音">
+            <svg class="ic" aria-hidden="true"><use href="#ic-volume" /></svg>
+          </button>
+          <button id="recording-fullscreen" class="btn btn-icon btn-ghost" type="button" aria-label="全屏">
+            <svg class="ic" aria-hidden="true"><use href="#ic-expand" /></svg>
           </button>
         </div>
       </div>
-      <footer class="player-footer">
-        <small id="recording-player-path">—</small>
-        <a id="recording-download" class="secondary-button" href="#" download>下载原文件</a>
+
+      <footer class="player-foot">
+        <small id="recording-player-path" class="mono">—</small>
+        <a id="recording-download" class="btn btn-soft btn-sm" href="#" download>
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-download" /></svg>下载原文件
+        </a>
       </footer>
     </dialog>
 
-    <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/recordings.js?v=20260721-ui10"></script>
+    <script type="module" src="/static/recordings.js?v=20260728"></script>
   </body>
 </html>

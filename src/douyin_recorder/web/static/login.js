@@ -1,8 +1,16 @@
+import { mountThemeSwitch, themeSwitchMarkup } from "/static/shell.js?v=20260728";
+
 const form = document.querySelector("#login-form");
 const username = document.querySelector("#login-username");
 const password = document.querySelector("#login-password");
 const submit = document.querySelector("#login-submit");
 const errorBox = document.querySelector("#login-error");
+const themeSlot = document.querySelector("#login-theme");
+
+if (themeSlot) {
+  themeSlot.innerHTML = themeSwitchMarkup();
+  mountThemeSwitch(themeSlot);
+}
 
 function destination() {
   const candidate = new URLSearchParams(window.location.search).get("next") || "/";

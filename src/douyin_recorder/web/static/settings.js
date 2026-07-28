@@ -5,17 +5,22 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui3";
+} from "/static/ui.js?v=20260728";
 
 const form = document.querySelector("#cloud-form");
 const saveButton = document.querySelector("#cloud-save-button");
+const saveBar = document.querySelector(".save-bar");
+const saveHint = document.querySelector("[data-save-hint]");
+const resetButton = document.querySelector("[data-reset-form]");
 const loginDialog = document.querySelector("#cloud-login-dialog");
 const loginImage = document.querySelector("#cloud-login-image");
 const loginStatus = document.querySelector("#cloud-login-status");
 const loginTip = document.querySelector("#cloud-login-tip");
 const loginRefresh = document.querySelector("#cloud-login-refresh");
 const loginClose = document.querySelector("#cloud-login-close");
+
 let cloud = null;
+let pristine = "";
 let activeLogin = null;
 let activeProvider = null;
 let loginPollTimer = null;
@@ -26,19 +31,32 @@ const providerNames = {
   wopan: { name: "联通云盘", app: "联通云盘 App" },
 };
 
+function formSignature() {
+  return JSON.stringify([...new FormData(form).entries()]);
+}
+
+function updateDirtyState() {
+  const dirty = formSignature() !== pristine;
+  saveBar.classList.toggle("is-dirty", dirty);
+  saveButton.disabled = !dirty;
+  resetButton.disabled = !dirty;
+  saveHint.textContent = dirty ? "有未保存的更改" : "所有更改已保存";
+}
+
 function updateProviderAppearance() {
   document.querySelector("#quark-settings")?.classList.toggle("is-enabled", form.elements.quark_enabled.checked);
   document.querySelector("#wopan-settings")?.classList.toggle("is-enabled", form.elements.wopan_enabled.checked);
 }
 
 function updateCredentialHints(value) {
-  document.querySelector("#quark-credential-hint").textContent = value.quark.credential_configured
-    ? "账号已登录"
-    : "未登录";
+  const quarkNode = document.querySelector("#quark-credential-hint");
+  quarkNode.textContent = value.quark.credential_configured ? "账号已登录" : "尚未登录，扫码后即可上传";
+  quarkNode.classList.toggle("is-ok", value.quark.credential_configured);
+
   const wopanConfigured = value.wopan.access_token_configured || value.wopan.refresh_token_configured;
-  document.querySelector("#wopan-credential-hint").textContent = wopanConfigured
-    ? "账号已登录"
-    : "未登录";
+  const wopanNode = document.querySelector("#wopan-credential-hint");
+  wopanNode.textContent = wopanConfigured ? "账号已登录" : "尚未登录，扫码后即可上传";
+  wopanNode.classList.toggle("is-ok", wopanConfigured);
 }
 
 function populate(value) {
@@ -57,6 +75,8 @@ function populate(value) {
 
   updateCredentialHints(cloud);
   updateProviderAppearance();
+  pristine = formSignature();
+  updateDirtyState();
 }
 
 function clearLoginPoll() {
@@ -91,7 +111,8 @@ function renderLogin(value) {
   if (value.qr_image && loginImage.src !== value.qr_image) loginImage.src = value.qr_image;
   const terminal = ["success", "expired", "error", "cancelled"].includes(value.state);
   loginRefresh.classList.toggle("hidden", !["expired", "error"].includes(value.state));
-  loginImage.closest(".qr-image-frame")?.classList.toggle("is-dimmed", terminal && value.state !== "success");
+  loginDialog.querySelector(".qr-frame")?.classList.toggle("is-dimmed", terminal && value.state !== "success");
+  loginStatus.classList.toggle("is-ok", value.state === "success");
 }
 
 async function finishSuccessfulLogin(value) {
@@ -101,8 +122,9 @@ async function finishSuccessfulLogin(value) {
   try {
     cloud = await api("/api/cloud/archive");
     updateCredentialHints(cloud);
-    form.elements[`${value.provider === "quark" ? "quark_clear_cookie" : "wopan_clear_tokens"}`].checked = false;
-    toast(`${providerNames[value.provider].name}登录成功`);
+    form.elements[value.provider === "quark" ? "quark_clear_cookie" : "wopan_clear_tokens"].checked = false;
+    updateDirtyState();
+    toast(`${providerNames[value.provider].name}登录成功`, "success");
   } catch (error) {
     toast(error.message, "error");
   }
@@ -142,10 +164,11 @@ async function startCloudLogin(provider) {
   setLoginButtonsDisabled(true);
   loginDialog.querySelector("#cloud-login-title").textContent = `${providerNames[provider].name}登录`;
   loginStatus.textContent = "正在生成二维码";
+  loginStatus.classList.remove("is-ok");
   loginTip.textContent = "";
   loginRefresh.classList.add("hidden");
   loginImage.removeAttribute("src");
-  loginImage.closest(".qr-image-frame")?.classList.remove("is-dimmed");
+  loginDialog.querySelector(".qr-frame")?.classList.remove("is-dimmed");
   if (!loginDialog.open) loginDialog.showModal();
   try {
     const created = await api(`/api/cloud/login/${provider}`, { method: "POST" });
@@ -209,18 +232,24 @@ async function submit(event) {
   saveButton.textContent = "保存中…";
   try {
     populate(await api("/api/cloud/archive", { method: "PUT", body: JSON.stringify(payload) }));
-    toast("设置已保存");
+    toast("设置已保存", "success");
   } catch (error) {
     toast(error.message, "error");
   } finally {
-    saveButton.disabled = false;
     saveButton.textContent = "保存设置";
+    updateDirtyState();
   }
 }
 
 form.addEventListener("submit", submit);
-form.elements.quark_enabled.addEventListener("change", updateProviderAppearance);
-form.elements.wopan_enabled.addEventListener("change", updateProviderAppearance);
+form.addEventListener("input", updateDirtyState);
+form.addEventListener("change", () => {
+  updateProviderAppearance();
+  updateDirtyState();
+});
+resetButton.addEventListener("click", () => {
+  if (cloud) populate(cloud);
+});
 document.querySelectorAll("[data-cloud-login]").forEach((button) => {
   button.addEventListener("click", () => startCloudLogin(button.dataset.cloudLogin));
 });
@@ -229,4 +258,10 @@ loginClose.addEventListener("click", () => loginDialog.close());
 loginDialog.addEventListener("close", () => {
   cancelActiveLogin();
 });
+window.addEventListener("beforeunload", (event) => {
+  if (formSignature() === pristine) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
 bootstrap(load, { interval: 0 });

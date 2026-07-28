@@ -3,32 +3,31 @@ import {
   bootstrap,
   clearPageError,
   escapeHtml,
+  formatBytes,
+  formatTime,
+  icon,
+  setBusy,
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260721-ui3";
-
-const icons = {
-  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /></svg>',
-  video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m10 9 5 3-5 3z" /></svg>',
-  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="m10.5 9 4.5 3-4.5 3z" /></svg>',
-  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M10 9v6M14 9v6" /></svg>',
-  download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg>',
-  chevron: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>',
-  fullscreen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5" /></svg>',
-};
+  toggle,
+} from "/static/ui.js?v=20260728";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };
 let searchTerm = "";
+let sortMode = "name";
 let requestController = null;
 let activeEntry = null;
 let closingPlayer = false;
 let seeking = false;
 
 const listNode = document.querySelector("#recording-list");
+const headNode = document.querySelector(".file-head");
 const emptyNode = document.querySelector("#recording-empty");
 const searchNode = document.querySelector("#recording-search");
+const sortNode = document.querySelector("#recording-sort");
+const refreshButton = document.querySelector("#refresh-button");
 const playerDialog = document.querySelector("#recording-player-dialog");
 const playerShell = document.querySelector(".player-shell");
 const player = document.querySelector("#recording-player");
@@ -38,6 +37,7 @@ const playerLoadingDetail = document.querySelector("#recording-player-loading-de
 const playToggle = document.querySelector("#recording-play-toggle");
 const seekBar = document.querySelector("#recording-player-seek");
 const timeLabel = document.querySelector("#recording-player-time");
+const volumeButton = document.querySelector("#recording-volume");
 const fullscreenButton = document.querySelector("#recording-fullscreen");
 
 function encodePath(path) {
@@ -49,67 +49,62 @@ function fileUrl(path, { preview = false, download = false } = {}) {
   return `/api/recordings/${kind}/${encodePath(path)}${download ? "?download=true" : ""}`;
 }
 
-function formatBytes(value) {
-  if (!Number.isFinite(value)) return "—";
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let size = value;
-  let unit = -1;
-  do {
-    size /= 1024;
-    unit += 1;
-  } while (size >= 1024 && unit < units.length - 1);
-  return `${size >= 10 ? size.toFixed(1) : size.toFixed(2)} ${units[unit]}`;
-}
-
-function formatModified(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
-
 function renderBreadcrumbs() {
   const breadcrumbs = document.querySelector("#recording-breadcrumbs");
   const parts = currentPath ? currentPath.split("/") : [];
   const nodes = ['<button type="button" data-path="">全部录像</button>'];
   parts.forEach((part, index) => {
     const path = parts.slice(0, index + 1).join("/");
-    nodes.push(`<span>${icons.chevron}</span><button type="button" data-path="${escapeHtml(path)}"${index === parts.length - 1 ? ' aria-current="page"' : ""}>${escapeHtml(part)}</button>`);
+    const current = index === parts.length - 1;
+    nodes.push(`<span aria-hidden="true">${icon("chevronRight", "ic-xs")}</span>`);
+    nodes.push(`<button type="button" data-path="${escapeHtml(path)}"${current ? ' aria-current="page"' : ""}>${escapeHtml(part)}</button>`);
   });
   breadcrumbs.innerHTML = nodes.join("");
   document.querySelector("#recording-up").disabled = !currentPath;
-  document.querySelector("#recording-location").textContent = currentPath || "录像根目录";
+  document.querySelector("#recording-location").textContent = currentPath ? `/${currentPath}` : "录像根目录";
+}
+
+function sortedEntries(entries) {
+  const compare = {
+    name: (a, b) => a.name.localeCompare(b.name, "zh-CN"),
+    modified: (a, b) => new Date(b.modified_at) - new Date(a.modified_at),
+    size: (a, b) => (b.size || 0) - (a.size || 0),
+  }[sortMode];
+  return [...entries].sort((a, b) => {
+    const folderFirst = (a.kind !== "directory") - (b.kind !== "directory");
+    return folderFirst || compare(a, b);
+  });
 }
 
 function visibleEntries() {
   const term = searchTerm.trim().toLocaleLowerCase("zh-CN");
-  if (!term) return directory.entries;
-  return directory.entries.filter((entry) => entry.name.toLocaleLowerCase("zh-CN").includes(term));
+  const matched = term
+    ? directory.entries.filter((entry) => entry.name.toLocaleLowerCase("zh-CN").includes(term))
+    : directory.entries;
+  return sortedEntries(matched);
 }
 
 function rowTemplate(entry, index) {
   const isFolder = entry.kind === "directory";
-  const icon = isFolder ? icons.folder : icons.video;
   const detail = isFolder ? "文件夹" : `${String(entry.extension || "视频").toUpperCase()} 视频`;
-  const action = isFolder
-    ? `<button class="icon-button subtle file-open-icon" type="button" data-action="open" aria-label="打开 ${escapeHtml(entry.name)}">${icons.chevron}</button>`
-    : `<button class="small-button file-play" type="button" data-action="play"${entry.playable ? "" : " disabled"}>${icons.play}<span>播放</span></button><a class="icon-button subtle" href="${fileUrl(entry.path, { download: true })}" data-action="download" download aria-label="下载 ${escapeHtml(entry.name)}" title="下载原文件">${icons.download}</a>`;
+  const actions = isFolder
+    ? `<button class="btn btn-icon btn-sm btn-ghost" type="button" data-action="open" aria-label="打开 ${escapeHtml(entry.name)}">${icon("chevronRight", "ic-sm")}</button>`
+    : `<button class="btn btn-sm btn-ghost" type="button" data-action="play"${entry.playable ? "" : " disabled"}>${icon("play", "ic-xs")}<span>播放</span></button>
+       <a class="btn btn-icon btn-sm btn-ghost" href="${fileUrl(entry.path, { download: true })}" data-action="download" download aria-label="下载 ${escapeHtml(entry.name)}" title="下载原文件">${icon("download", "ic-sm")}</a>`;
   return `
     <article class="file-row${isFolder ? " is-folder" : ""}" data-entry-index="${index}">
       <button class="file-main" type="button" data-action="${isFolder ? "open" : "play"}"${entry.playable || isFolder ? "" : " disabled"}>
-        <span class="file-icon ${isFolder ? "folder" : "video"}">${icon}${isFolder ? "" : `<b>${escapeHtml(entry.extension || "")}</b>`}</span>
-        <span class="file-copy"><strong>${escapeHtml(entry.name)}</strong><small>${escapeHtml(detail)}</small></span>
+        <span class="file-icon ${isFolder ? "is-folder" : "is-video"}">
+          ${icon(isFolder ? "folder" : "video")}${isFolder ? "" : `<b>${escapeHtml(entry.extension || "")}</b>`}
+        </span>
+        <span class="file-copy">
+          <strong>${escapeHtml(entry.name)}</strong>
+          <small>${escapeHtml(detail)}</small>
+        </span>
       </button>
-      <span class="file-size">${isFolder ? "—" : formatBytes(entry.size)}</span>
-      <time class="file-modified" datetime="${escapeHtml(entry.modified_at)}">${formatModified(entry.modified_at)}</time>
-      <div class="file-actions">${action}</div>
+      <span class="file-size">${isFolder ? "—" : escapeHtml(formatBytes(entry.size))}</span>
+      <time class="file-time" datetime="${escapeHtml(entry.modified_at)}">${escapeHtml(formatTime(entry.modified_at))}</time>
+      <div class="file-ops">${actions}</div>
     </article>`;
 }
 
@@ -118,12 +113,17 @@ function renderList() {
   const folders = directory.entries.filter((entry) => entry.kind === "directory").length;
   const videos = directory.entries.length - folders;
   const size = directory.entries.reduce((total, entry) => total + (entry.size || 0), 0);
-  const sizeText = size ? ` · ${formatBytes(size)}` : "";
-  document.querySelector("#recording-summary").textContent = `${folders} 个文件夹 · ${videos} 个视频${sizeText}`;
+  const summary = [
+    folders ? `${folders} 个文件夹` : "",
+    `${videos} 个视频`,
+    size ? formatBytes(size) : "",
+  ].filter(Boolean).join(" · ");
+  document.querySelector("#recording-summary").textContent = summary;
 
   listNode.innerHTML = entries.map(rowTemplate).join("");
-  listNode.classList.toggle("hidden", entries.length === 0);
-  emptyNode.classList.toggle("hidden", entries.length !== 0);
+  toggle(listNode, entries.length > 0);
+  toggle(headNode, entries.length > 0);
+  toggle(emptyNode, entries.length === 0);
   if (entries.length === 0) {
     document.querySelector("#recording-empty-title").textContent = searchTerm ? "没有匹配的文件" : "这个目录里还没有录像";
     document.querySelector("#recording-empty-detail").textContent = searchTerm
@@ -142,8 +142,7 @@ function updateUrl(path, { replace = false } = {}) {
 async function load({ quiet = false, path = currentPath, history = null } = {}) {
   requestController?.abort();
   requestController = new AbortController();
-  const refreshButton = document.querySelector("#refresh-button");
-  if (!quiet) refreshButton?.classList.add("is-loading");
+  if (!quiet) setBusy(refreshButton, true);
   try {
     const query = path ? `?path=${encodeURIComponent(path)}` : "";
     const value = await api(`/api/recordings${query}`, { signal: requestController.signal });
@@ -167,7 +166,7 @@ async function load({ quiet = false, path = currentPath, history = null } = {}) 
     if (!quiet) toast(error.message, "error");
     throw error;
   } finally {
-    refreshButton?.classList.remove("is-loading");
+    setBusy(refreshButton, false);
   }
 }
 
@@ -177,9 +176,9 @@ function navigate(path) {
 }
 
 function showPlayerMessage(kind) {
-  playerLoading.classList.toggle("hidden", kind !== "loading" && kind !== "buffering");
-  playerLoading.classList.toggle("player-buffering", kind === "buffering");
-  playerError.classList.toggle("hidden", kind !== "error");
+  toggle(playerLoading, kind === "loading" || kind === "buffering");
+  playerLoading.classList.toggle("is-buffering", kind === "buffering");
+  toggle(playerError, kind === "error");
 }
 
 function formatClock(seconds) {
@@ -194,9 +193,27 @@ function formatClock(seconds) {
 
 function renderPlayToggle() {
   const playing = !player.paused && !player.ended;
-  playToggle.innerHTML = playing ? icons.pause : icons.play;
+  playToggle.innerHTML = icon(playing ? "pause" : "play");
   playToggle.setAttribute("aria-label", playing ? "暂停" : "播放");
   playToggle.setAttribute("aria-pressed", String(playing));
+}
+
+function renderFullscreenButton() {
+  const active = Boolean(document.fullscreenElement);
+  fullscreenButton.innerHTML = icon(active ? "collapse" : "expand");
+  fullscreenButton.setAttribute("aria-label", active ? "退出全屏" : "全屏");
+}
+
+function renderVolumeButton() {
+  const muted = player.muted || player.volume === 0;
+  volumeButton.innerHTML = icon(muted ? "volumeOff" : "volume");
+  volumeButton.setAttribute("aria-label", muted ? "取消静音" : "静音");
+}
+
+function paintSeekBar() {
+  const max = Number(seekBar.max) || 0;
+  const ratio = max > 0 ? Math.min(1, Number(seekBar.value) / max) : 0;
+  seekBar.style.setProperty("--seek-progress", `${(ratio * 100).toFixed(2)}%`);
 }
 
 function syncSeekBar() {
@@ -205,6 +222,7 @@ function syncSeekBar() {
   seekBar.disabled = !(duration > 0);
   if (!seeking) seekBar.value = String(player.currentTime || 0);
   timeLabel.textContent = `${formatClock(player.currentTime || 0)} / ${formatClock(duration)}`;
+  paintSeekBar();
 }
 
 function resetPlayer() {
@@ -216,6 +234,7 @@ function resetPlayer() {
   seekBar.max = "0";
   seekBar.disabled = true;
   timeLabel.textContent = "0:00 / 0:00";
+  paintSeekBar();
   renderPlayToggle();
 }
 
@@ -225,6 +244,12 @@ function togglePlayback() {
   } else {
     player.pause();
   }
+}
+
+function skip(seconds) {
+  if (!Number.isFinite(player.duration) || player.duration <= 0) return;
+  player.currentTime = Math.min(player.duration, Math.max(0, player.currentTime + seconds));
+  syncSeekBar();
 }
 
 function requestPlayerFullscreen() {
@@ -266,10 +291,16 @@ function openPlayer(entry) {
   if (!entry.playable) return;
   activeEntry = entry;
   document.querySelector("#recording-player-title").textContent = entry.name;
-  document.querySelector("#recording-player-path").textContent = entry.path;
-  document.querySelector("#recording-player-meta").textContent = `${String(entry.extension).toUpperCase()} · ${formatBytes(entry.size)} · ${formatModified(entry.modified_at)}`;
+  document.querySelector("#recording-player-path").textContent = `/${entry.path}`;
+  document.querySelector("#recording-player-meta").textContent = [
+    String(entry.extension).toUpperCase(),
+    formatBytes(entry.size),
+    formatTime(entry.modified_at),
+  ].join(" · ");
   document.querySelector("#recording-download").href = fileUrl(entry.path, { download: true });
   playerDialog.showModal();
+  playToggle.focus();
+  renderVolumeButton();
   setPlayerSource(entry);
 }
 
@@ -285,7 +316,7 @@ function closePlayer() {
   }, 0);
 }
 
-document.querySelector("#refresh-button")?.addEventListener("click", () => load());
+refreshButton?.addEventListener("click", () => load());
 document.querySelector("#recording-up")?.addEventListener("click", () => {
   if (!currentPath) return;
   navigate(currentPath.split("/").slice(0, -1).join("/"));
@@ -296,6 +327,10 @@ document.querySelector("#recording-breadcrumbs")?.addEventListener("click", (eve
 });
 searchNode.addEventListener("input", () => {
   searchTerm = searchNode.value;
+  renderList();
+});
+sortNode?.addEventListener("change", () => {
+  sortMode = sortNode.value;
   renderList();
 });
 listNode.addEventListener("click", (event) => {
@@ -309,12 +344,17 @@ listNode.addEventListener("click", (event) => {
 });
 document.querySelector("#recording-player-close")?.addEventListener("click", closePlayer);
 playToggle.addEventListener("click", togglePlayback);
+volumeButton.addEventListener("click", () => {
+  player.muted = !player.muted;
+  renderVolumeButton();
+});
 fullscreenButton.addEventListener("click", requestPlayerFullscreen);
 seekBar.addEventListener("pointerdown", () => {
   seeking = true;
 });
 seekBar.addEventListener("input", () => {
   timeLabel.textContent = `${formatClock(Number(seekBar.value) || 0)} / ${formatClock(player.duration || 0)}`;
+  paintSeekBar();
 });
 seekBar.addEventListener("change", () => {
   player.currentTime = Number(seekBar.value) || 0;
@@ -334,6 +374,25 @@ playerDialog.addEventListener("cancel", (event) => {
 playerDialog.addEventListener("click", (event) => {
   if (event.target === playerDialog) closePlayer();
 });
+playerDialog.addEventListener("keydown", (event) => {
+  if (event.target instanceof Element && event.target.closest("input, select")) return;
+  const shortcuts = {
+    " ": togglePlayback,
+    k: togglePlayback,
+    ArrowLeft: () => skip(-5),
+    ArrowRight: () => skip(5),
+    f: requestPlayerFullscreen,
+    m: () => {
+      player.muted = !player.muted;
+      renderVolumeButton();
+    },
+  };
+  const handler = shortcuts[event.key];
+  if (!handler) return;
+  event.preventDefault();
+  handler();
+});
+
 function clearPlayerLoading() {
   if (!playerError.classList.contains("hidden")) return;
   showPlayerMessage(null);
@@ -353,6 +412,7 @@ player.addEventListener("timeupdate", syncSeekBar);
 player.addEventListener("durationchange", syncSeekBar);
 player.addEventListener("play", renderPlayToggle);
 player.addEventListener("pause", renderPlayToggle);
+player.addEventListener("volumechange", renderVolumeButton);
 player.addEventListener("ended", () => {
   renderPlayToggle();
   syncSeekBar();
@@ -367,9 +427,18 @@ player.addEventListener("error", () => {
   showPlayerMessage("error");
 });
 player.addEventListener("click", togglePlayback);
+document.addEventListener("fullscreenchange", renderFullscreenButton);
 window.addEventListener("popstate", () => {
   const path = new URLSearchParams(window.location.search).get("path") || "";
   load({ path, quiet: true });
+});
+document.addEventListener("keydown", (event) => {
+  if (playerDialog.open || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target instanceof Element && event.target.closest("input, select, textarea")) return;
+  if (event.key === "/") {
+    event.preventDefault();
+    searchNode.focus();
+  }
 });
 
 let firstLoad = true;

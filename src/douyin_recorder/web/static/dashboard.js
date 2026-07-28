@@ -4,50 +4,53 @@ import {
   bootstrap,
   clearPageError,
   escapeHtml,
+  formatRelative,
   formatTime,
+  paintProgress,
   providerStatus,
   recordingProgressMarkup,
+  setBusy,
   setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
   showPageError,
+  statusPill,
+  syncProgressClock,
+  TASK_STATUS,
   toast,
-} from "/static/ui.js?v=20260721-ui3";
+  toggle,
+} from "/static/ui.js?v=20260728";
 
-const statusLabels = {
-  stopped: "已停止",
-  waiting: "值守中",
-  checking: "检查中",
-  queued: "排队中",
-  recording: "录制中",
-  error: "异常",
+const MAX_VISIBLE_TASKS = 6;
+const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
+
+const elements = {
+  list: document.querySelector("#active-task-list"),
+  empty: document.querySelector("#active-task-empty"),
+  refresh: document.querySelector("#refresh-button"),
 };
 
 let loading = false;
 let activeTasks = [];
 let progressTimer = 0;
 
-function syncProgressClock(tasks) {
-  const syncedAt = Date.now();
-  return tasks.map((task) => (
-    task.status === "recording"
-      ? { ...task, _progressSyncedAt: syncedAt }
-      : task
-  ));
-}
-
 function taskItem(task) {
   const title = task.label || task.anchor_name || "未命名任务";
-  const progress = recordingProgressMarkup(task);
+  const checkedAt = task.last_checked_at ? `最近检查 ${formatRelative(task.last_checked_at)}` : "等待首次检查";
+  const detail = task.status_message && task.status_message !== TASK_STATUS[task.status]?.label
+    ? task.status_message
+    : checkedAt;
   return `
-    <a class="compact-task" href="/tasks">
-      <span class="avatar avatar-small">${escapeHtml([...title][0] || "录")}</span>
-      <span class="compact-task-main">
-        <strong>${escapeHtml(title)}</strong>
-        <small>${escapeHtml(task.status_message || formatTime(task.last_checked_at))}</small>
+    <a class="mini-item${task.status === "recording" ? " is-recording" : ""}" href="/tasks">
+      <span class="avatar avatar-sm" aria-hidden="true">${escapeHtml([...title][0] || "录")}</span>
+      <span class="mini-body">
+        <span class="mini-top">
+          <strong>${escapeHtml(title)}</strong>
+          ${statusPill(task.status)}
+        </span>
+        <small>${escapeHtml(detail)}</small>
+        ${recordingProgressMarkup(task)}
       </span>
-      <span class="status-pill tone-${escapeHtml(task.status)}"><i></i>${escapeHtml(statusLabels[task.status] || task.status)}</span>
-      ${progress}
     </a>`;
 }
 
@@ -73,24 +76,20 @@ function renderTasks(tasks, { tick = false } = {}) {
   if (!tick) activeTasks = tasks;
   const active = activeTasks
     .filter((task) => task.enabled || task.status === "recording" || task.status === "error")
-    .sort((a, b) => {
-      const priority = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4 };
-      return (priority[a.status] ?? 9) - (priority[b.status] ?? 9);
-    })
-    .slice(0, 5);
-  const list = document.querySelector("#active-task-list");
-  const empty = document.querySelector("#active-task-empty");
-  setHtmlIfChanged(list, active.map(taskItem).join(""));
-  list.classList.toggle("hidden", active.length === 0);
-  empty.classList.toggle("hidden", active.length !== 0);
+    .sort((a, b) => (STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9))
+    .slice(0, MAX_VISIBLE_TASKS);
+  setHtmlIfChanged(elements.list, active.map(taskItem).join(""));
+  paintProgress(elements.list);
+  toggle(elements.list, active.length > 0);
+  toggle(elements.empty, active.length === 0);
   ensureProgressTicker();
 }
 
 function renderArchive(cloud) {
   const status = archiveStatus(cloud);
   const badge = document.querySelector("#overview-archive-status");
-  badge.className = `status-pill tone-${status.tone}`;
-  badge.innerHTML = `<i></i>${escapeHtml(status.label)}`;
+  badge.className = `pill tone-${status.tone}`;
+  badge.innerHTML = `<i class="dot"></i>${escapeHtml(status.label)}`;
 
   const lastRun = cloud.last_run;
   setTextIfChanged(
@@ -98,7 +97,7 @@ function renderArchive(cloud) {
     cloud.running
       ? "任务正在后台执行"
       : lastRun
-        ? formatTime(lastRun.finished_at || lastRun.started_at)
+        ? `最近执行 ${formatRelative(lastRun.finished_at || lastRun.started_at)}`
         : "暂无执行记录",
   );
   setTextIfChanged(
@@ -107,29 +106,39 @@ function renderArchive(cloud) {
   );
 
   for (const kind of ["quark", "wopan"]) {
-    const provider = cloud[kind];
-    const providerState = providerStatus(provider, kind);
-    const badgeNode = document.querySelector(`#overview-${kind}-status`);
-    setTextIfChanged(badgeNode, providerState.label);
-    badgeNode.className = `mini-status tone-${providerState.tone}`;
+    const state = providerStatus(cloud[kind], kind);
+    const node = document.querySelector(`#overview-${kind}-status`);
+    setTextIfChanged(node, state.label);
+    node.className = `mini-state tone-${state.tone}`;
   }
 }
 
-function renderSystem(system) {
+function renderSystem(system, tasks) {
+  const enabled = tasks.filter((task) => task.enabled).length;
   setTextIfChanged(document.querySelector("#stat-disk"), `${system.free_space_gb} GB`);
+  setTextIfChanged(
+    document.querySelector("#stat-recording-note"),
+    `并发上限 ${system.max_concurrent_recordings}`,
+  );
+  setTextIfChanged(document.querySelector("#stat-total-note"), `${enabled} 个已启用`);
   setTextIfChanged(
     document.querySelector("#system-recording-limit"),
     `${system.recording_tasks} / ${system.max_concurrent_recordings}`,
   );
-  setTextIfChanged(document.querySelector("#system-ffmpeg"), system.ffmpeg_available ? "可用" : "不可用");
-  setTextIfChanged(document.querySelector("#system-node"), system.node_available ? "可用" : "不可用");
+  setTextIfChanged(document.querySelector("#system-ffmpeg"), system.ffmpeg_available ? "可用" : "未安装");
+  setTextIfChanged(document.querySelector("#system-node"), system.node_available ? "可用" : "未安装");
+  const directory = document.querySelector("#system-directory");
+  setTextIfChanged(directory, system.recordings_dir);
+  directory.title = system.recordings_dir;
+
+  document.querySelector("#system-ffmpeg").classList.toggle("is-bad", !system.ffmpeg_available);
+  document.querySelector("#system-node").classList.toggle("is-bad", !system.node_available);
 }
 
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
-  const refreshButton = document.querySelector("#refresh-button");
-  if (!quiet) refreshButton?.classList.add("is-loading");
+  if (!quiet) setBusy(elements.refresh, true);
   try {
     const [tasks, system, cloud] = await Promise.all([
       api("/api/tasks"),
@@ -147,7 +156,7 @@ async function load({ quiet = false } = {}) {
     );
     renderTasks(syncProgressClock(tasks));
     renderArchive(cloud);
-    renderSystem(system);
+    renderSystem(system, tasks);
     clearPageError();
     setHealth(true);
   } catch (error) {
@@ -157,9 +166,9 @@ async function load({ quiet = false } = {}) {
     throw error;
   } finally {
     loading = false;
-    refreshButton?.classList.remove("is-loading");
+    setBusy(elements.refresh, false);
   }
 }
 
-document.querySelector("#refresh-button")?.addEventListener("click", () => load());
+elements.refresh?.addEventListener("click", () => load());
 bootstrap(load);

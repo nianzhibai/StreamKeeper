@@ -2,112 +2,205 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
     <title>设置 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260721-ui3" />
+    <script src="/static/theme.js?v=20260728"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260728" />
   </head>
   <body data-page="settings">
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="Stream Keeper 首页"><span class="brand-mark"><i></i></span><span class="brand-copy"><strong>Stream Keeper</strong><small>直播录制</small></span></a>
-        <nav class="side-nav" aria-label="主要导航">
-          <a class="nav-item" href="/" data-nav="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg><span>概览</span></a>
-          <a class="nav-item" href="/tasks" data-nav="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="8" /></svg><span>录制任务</span></a>
-          <a class="nav-item" href="/recordings" data-nav="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /><path d="m10 12.5 4 2.5-4 2.5z" /></svg><span>本地录像</span></a>
-          <a class="nav-item" href="/archive" data-nav="archive"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5h14v10.25A1.25 1.25 0 0 1 17.75 20H6.25A1.25 1.25 0 0 1 5 18.75zM4 4h16v4.5H4zM9 12h6" /></svg><span>网盘归档</span></a>
-          <a class="nav-item" href="/settings" data-nav="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.72.6 1 .3.3.69.44 1.1.4h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z" /></svg><span>设置</span></a>
-        </nav>
-        <div class="sidebar-footer">
-          <div id="server-health" class="server-state"><i></i><span>正在连接</span></div>
-          <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API 文档 <span>↗</span></a>
-          <div class="account"><span class="account-avatar" data-account-avatar>A</span><span class="account-copy"><strong data-account-name>—</strong><small>管理员</small></span><button class="icon-button subtle" type="button" data-logout aria-label="退出登录" title="退出登录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10M14 8l4 4-4 4M18 12H9" /></svg></button></div>
-        </div>
-      </aside>
-
-      <main class="main-content settings-content">
-        <header class="page-header">
-          <div><p class="page-kicker">系统</p><h1>设置</h1></div>
-          <div class="page-actions"><a class="secondary-button" href="/archive">查看归档</a><button id="cloud-save-button" class="primary-button" type="submit" form="cloud-form">保存设置</button></div>
+    <script src="/static/sprite.js?v=20260728"></script>
+    <div class="app" id="app">
+      <main class="main main-settings">
+        <header class="page-head">
+          <div class="page-heading">
+            <h1>设置</h1>
+            <p>网盘账号授权与归档执行计划</p>
+          </div>
+          <div class="page-tools">
+            <a class="btn btn-soft" href="/archive">查看归档</a>
+          </div>
         </header>
-        <div id="page-error" class="error-banner hidden" role="alert"></div>
 
-        <form id="cloud-form" class="settings-form">
-          <section id="quark-settings" class="settings-card provider-settings">
-            <header class="settings-card-header">
-              <span class="provider-logo quark">夸</span>
-              <div><h2>夸克网盘</h2><span id="quark-credential-hint">读取中</span></div>
-              <label class="switch-field"><input name="quark_enabled" type="checkbox" /><span class="switch"></span><strong>启用</strong></label>
-            </header>
-            <div class="settings-fields">
-              <div class="credential-login-row field-wide">
-                <div class="credential-login-copy"><strong>账号授权</strong><span>使用夸克 App</span></div>
-                <button class="secondary-button qr-login-button" type="button" data-cloud-login="quark">扫码登录</button>
+        <div id="page-error" class="alert alert-bad hidden" role="alert">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+          <span data-error-text></span>
+        </div>
+
+        <form id="cloud-form" class="settings">
+          <section id="quark-settings" class="card provider-card">
+            <header class="card-head">
+              <span class="provider-logo quark" aria-hidden="true">夸</span>
+              <div class="card-heading">
+                <h2>夸克网盘</h2>
+                <p id="quark-credential-hint">读取中</p>
               </div>
-              <label class="field"><span>Root ID</span><input name="quark_root_id" type="text" maxlength="512" value="0" autocomplete="off" /></label>
-              <label class="field"><span>上传目录</span><input name="quark_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
-              <details class="advanced-settings credential-fallback field-wide">
-                <summary>手动凭证 <span>⌄</span></summary>
-                <div class="settings-fields">
-                  <label class="field field-wide"><span>Cookie</span><input name="quark_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="留空保持现有 Cookie" /></label>
-                  <label class="check-field field-wide"><input name="quark_clear_cookie" type="checkbox" /><span>清除已保存的 Cookie</span></label>
+              <label class="switch-field">
+                <input name="quark_enabled" type="checkbox" />
+                <span class="switch" aria-hidden="true"></span>
+                <span>启用</span>
+              </label>
+            </header>
+            <div class="card-body">
+              <div class="auth-row">
+                <div>
+                  <strong>账号授权</strong>
+                  <small>使用夸克 App 扫码，无需手动复制 Cookie</small>
+                </div>
+                <button class="btn btn-soft" type="button" data-cloud-login="quark">
+                  <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg>扫码登录
+                </button>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">Root ID</span>
+                  <input class="input" name="quark_root_id" type="text" maxlength="512" value="0" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span class="field-label">上传目录</span>
+                  <input class="input" name="quark_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
+                </label>
+              </div>
+              <details class="disclosure">
+                <summary>
+                  <span>手动凭证</span>
+                  <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg>
+                </summary>
+                <div class="form-grid">
+                  <label class="field span-2">
+                    <span class="field-label">Cookie</span>
+                    <input class="input" name="quark_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="留空则保持现有 Cookie" />
+                  </label>
+                  <label class="check span-2">
+                    <input name="quark_clear_cookie" type="checkbox" />
+                    <span>清除已保存的 Cookie</span>
+                  </label>
                 </div>
               </details>
             </div>
           </section>
 
-          <section id="wopan-settings" class="settings-card provider-settings">
-            <header class="settings-card-header">
-              <span class="provider-logo wopan">联</span>
-              <div><h2>联通云盘</h2><span id="wopan-credential-hint">读取中</span></div>
-              <label class="switch-field"><input name="wopan_enabled" type="checkbox" /><span class="switch"></span><strong>启用</strong></label>
-            </header>
-            <div class="settings-fields">
-              <div class="credential-login-row field-wide">
-                <div class="credential-login-copy"><strong>账号授权</strong><span>使用联通云盘 App</span></div>
-                <button class="secondary-button qr-login-button" type="button" data-cloud-login="wopan">扫码登录</button>
+          <section id="wopan-settings" class="card provider-card">
+            <header class="card-head">
+              <span class="provider-logo wopan" aria-hidden="true">联</span>
+              <div class="card-heading">
+                <h2>联通云盘</h2>
+                <p id="wopan-credential-hint">读取中</p>
               </div>
-              <label class="field"><span>Root ID</span><input name="wopan_root_id" type="text" maxlength="512" value="0" autocomplete="off" /></label>
-              <label class="field"><span>Family ID</span><input name="wopan_family_id" type="text" maxlength="512" placeholder="个人云可留空" autocomplete="off" /></label>
-              <label class="field field-wide"><span>上传目录</span><input name="wopan_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
-              <details class="advanced-settings credential-fallback field-wide">
-                <summary>手动凭证 <span>⌄</span></summary>
-                <div class="settings-fields">
-                  <label class="field"><span>Access Token</span><input name="wopan_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
-                  <label class="field"><span>Refresh Token</span><input name="wopan_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空保持不变" /></label>
-                  <label class="check-field field-wide"><input name="wopan_clear_tokens" type="checkbox" /><span>清除已保存的 Token</span></label>
+              <label class="switch-field">
+                <input name="wopan_enabled" type="checkbox" />
+                <span class="switch" aria-hidden="true"></span>
+                <span>启用</span>
+              </label>
+            </header>
+            <div class="card-body">
+              <div class="auth-row">
+                <div>
+                  <strong>账号授权</strong>
+                  <small>使用联通云盘 App 扫码获取 Token</small>
+                </div>
+                <button class="btn btn-soft" type="button" data-cloud-login="wopan">
+                  <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg>扫码登录
+                </button>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">Root ID</span>
+                  <input class="input" name="wopan_root_id" type="text" maxlength="512" value="0" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span class="field-label">Family ID<em>选填</em></span>
+                  <input class="input" name="wopan_family_id" type="text" maxlength="512" placeholder="个人云可留空" autocomplete="off" />
+                </label>
+                <label class="field span-2">
+                  <span class="field-label">上传目录</span>
+                  <input class="input" name="wopan_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
+                </label>
+              </div>
+              <details class="disclosure">
+                <summary>
+                  <span>手动凭证</span>
+                  <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg>
+                </summary>
+                <div class="form-grid">
+                  <label class="field">
+                    <span class="field-label">Access Token</span>
+                    <input class="input" name="wopan_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空则保持不变" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Refresh Token</span>
+                    <input class="input" name="wopan_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空则保持不变" />
+                  </label>
+                  <label class="check span-2">
+                    <input name="wopan_clear_tokens" type="checkbox" />
+                    <span>清除已保存的 Token</span>
+                  </label>
                 </div>
               </details>
             </div>
           </section>
 
-          <section class="settings-card schedule-settings">
-            <header class="settings-card-header simple"><div><h2>执行计划</h2><span>使用服务器本地时区</span></div></header>
-            <div class="settings-fields three-columns">
-              <label class="field"><span>每日开始时间</span><div class="input-suffix"><input name="upload_hour" type="number" min="0" max="23" step="1" value="1" /><span>时</span></div></label>
-              <label class="field"><span>文件稳定时间</span><div class="input-suffix"><input name="upload_min_age_minutes" type="number" min="0" max="1440" step="1" value="10" /><span>分钟</span></div></label>
-              <label class="field"><span>网络超时</span><div class="input-suffix"><input name="upload_timeout_seconds" type="number" min="30" max="86400" step="1" value="300" /><span>秒</span></div></label>
+          <section class="card">
+            <header class="card-head">
+              <span class="provider-logo neutral" aria-hidden="true">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-clock" /></svg>
+              </span>
+              <div class="card-heading">
+                <h2>执行计划</h2>
+                <p>使用服务器本地时区</p>
+              </div>
+            </header>
+            <div class="card-body">
+              <div class="form-grid form-grid-3">
+                <label class="field">
+                  <span class="field-label">每日开始时间</span>
+                  <span class="suffix"><input class="input" name="upload_hour" type="number" min="0" max="23" step="1" value="1" /><em>时</em></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">文件稳定时间</span>
+                  <span class="suffix"><input class="input" name="upload_min_age_minutes" type="number" min="0" max="1440" step="1" value="10" /><em>分钟</em></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">网络超时</span>
+                  <span class="suffix"><input class="input" name="upload_timeout_seconds" type="number" min="30" max="86400" step="1" value="300" /><em>秒</em></span>
+                </label>
+                <p class="field-hint span-3">只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。</p>
+              </div>
             </div>
           </section>
 
-          <div class="mobile-save-bar"><button class="primary-button" type="submit">保存设置</button></div>
+          <div class="save-bar">
+            <span class="save-hint" data-save-hint>所有更改已保存</span>
+            <div class="save-actions">
+              <button class="btn btn-soft" type="button" data-reset-form>放弃更改</button>
+              <button id="cloud-save-button" class="btn btn-primary" type="submit">保存设置</button>
+            </div>
+          </div>
         </form>
       </main>
     </div>
 
-    <dialog id="cloud-login-dialog" class="modal qr-login-modal" aria-labelledby="cloud-login-title">
-      <div class="modal-header">
-        <h2 id="cloud-login-title">扫码登录</h2>
-        <button id="cloud-login-close" class="icon-button subtle" type="button" aria-label="关闭">×</button>
-      </div>
-      <div class="qr-login-body">
-        <div class="qr-image-frame"><img id="cloud-login-image" alt="网盘登录二维码" /></div>
+    <dialog id="cloud-login-dialog" class="modal modal-sm" aria-labelledby="cloud-login-title">
+      <header class="modal-head">
+        <div class="modal-heading">
+          <h2 id="cloud-login-title">扫码登录</h2>
+          <p>登录信息只保存在本机数据库中</p>
+        </div>
+        <button id="cloud-login-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭">
+          <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
+        </button>
+      </header>
+      <div class="qr-body">
+        <div class="qr-frame"><img id="cloud-login-image" alt="网盘登录二维码" /></div>
         <strong id="cloud-login-status" role="status">正在生成二维码</strong>
         <span id="cloud-login-tip"></span>
-        <button id="cloud-login-refresh" class="secondary-button hidden" type="button">刷新二维码</button>
+        <button id="cloud-login-refresh" class="btn btn-soft btn-sm hidden" type="button">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-refresh" /></svg>刷新二维码
+        </button>
       </div>
     </dialog>
-    <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/settings.js?v=20260721-ui3"></script>
+
+    <script type="module" src="/static/settings.js?v=20260728"></script>
   </body>
 </html>

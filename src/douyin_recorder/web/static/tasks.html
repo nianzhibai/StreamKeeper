@@ -2,147 +2,171 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
     <title>录制任务 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260721-ui3" />
+    <script src="/static/theme.js?v=20260728"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260728" />
   </head>
   <body data-page="tasks">
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="Stream Keeper 首页">
-          <span class="brand-mark"><i></i></span>
-          <span class="brand-copy"><strong>Stream Keeper</strong><small>直播录制</small></span>
-        </a>
-        <nav class="side-nav" aria-label="主要导航">
-          <a class="nav-item" href="/" data-nav="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg><span>概览</span></a>
-          <a class="nav-item" href="/tasks" data-nav="tasks"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="8" /></svg><span>录制任务</span></a>
-          <a class="nav-item" href="/recordings" data-nav="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /><path d="m10 12.5 4 2.5-4 2.5z" /></svg><span>本地录像</span></a>
-          <a class="nav-item" href="/archive" data-nav="archive"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5h14v10.25A1.25 1.25 0 0 1 17.75 20H6.25A1.25 1.25 0 0 1 5 18.75zM4 4h16v4.5H4zM9 12h6" /></svg><span>网盘归档</span></a>
-          <a class="nav-item" href="/settings" data-nav="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.72.6 1 .3.3.69.44 1.1.4h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z" /></svg><span>设置</span></a>
-        </nav>
-        <div class="sidebar-footer">
-          <div id="server-health" class="server-state"><i></i><span>正在连接</span></div>
-          <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API 文档 <span>↗</span></a>
-          <div class="account">
-            <span class="account-avatar" data-account-avatar>A</span>
-            <span class="account-copy"><strong data-account-name>—</strong><small>管理员</small></span>
-            <button class="icon-button subtle" type="button" data-logout aria-label="退出登录" title="退出登录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10M14 8l4 4-4 4M18 12H9" /></svg></button>
+    <script src="/static/sprite.js?v=20260728"></script>
+    <div class="app" id="app">
+      <main class="main">
+        <header class="page-head">
+          <div class="page-heading">
+            <h1>录制任务</h1>
+            <p>添加直播间后自动值守，开播即开始录制</p>
           </div>
-        </div>
-      </aside>
-
-      <main class="main-content">
-        <header class="page-header">
-          <div><p class="page-kicker">录制</p><h1>录制任务</h1></div>
-          <div class="page-actions">
-            <button id="refresh-button" class="icon-button" type="button" aria-label="刷新" title="刷新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6" /></svg></button>
-            <button class="primary-button" type="button" data-open-create><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>新建任务</button>
+          <div class="page-tools">
+            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新" title="刷新">
+              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
+            </button>
+            <button class="btn btn-primary" type="button" data-open-create>
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-plus" /></svg>新建任务
+            </button>
           </div>
         </header>
 
-        <div id="page-error" class="error-banner hidden" role="alert"></div>
+        <div id="page-error" class="alert alert-bad hidden" role="alert">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+          <span data-error-text></span>
+        </div>
 
-        <section class="task-toolbar" aria-label="任务筛选">
-          <div class="filter-tabs" role="group">
-            <button class="filter-tab active" type="button" data-filter="all">全部 <span>0</span></button>
-            <button class="filter-tab" type="button" data-filter="recording">录制中 <span>0</span></button>
-            <button class="filter-tab" type="button" data-filter="enabled">值守中 <span>0</span></button>
-            <button class="filter-tab" type="button" data-filter="error">异常 <span>0</span></button>
+        <section class="toolbar" aria-label="任务筛选">
+          <div class="seg" role="group" aria-label="按状态筛选">
+            <button class="seg-item is-active" type="button" data-filter="all">全部<span>0</span></button>
+            <button class="seg-item" type="button" data-filter="recording">录制中<span>0</span></button>
+            <button class="seg-item" type="button" data-filter="enabled">值守中<span>0</span></button>
+            <button class="seg-item" type="button" data-filter="error">异常<span>0</span></button>
           </div>
+          <label class="search">
+            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-search" /></svg>
+            <input id="task-search" type="search" autocomplete="off" placeholder="搜索任务名或主播" aria-label="搜索任务" />
+          </label>
         </section>
 
-        <div class="task-table-head" aria-hidden="true">
+        <div class="table-head task-head" aria-hidden="true">
           <span>任务</span><span>状态</span><span>录制配置</span><span>最近检查</span><span></span>
         </div>
+
         <section id="task-list" class="task-list" aria-live="polite">
-          <div class="task-row skeleton-row"></div>
-          <div class="task-row skeleton-row"></div>
+          <div class="skeleton skeleton-task"></div>
+          <div class="skeleton skeleton-task"></div>
+          <div class="skeleton skeleton-task"></div>
         </section>
-        <section id="task-empty" class="empty-state hidden">
-          <span class="empty-symbol">＋</span>
-          <h2 id="task-empty-title">还没有录制任务</h2>
-          <button class="secondary-button" type="button" data-open-create>新建任务</button>
+
+        <section id="task-empty" class="empty hidden">
+          <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-record" /></svg></span>
+          <strong id="task-empty-title">还没有录制任务</strong>
+          <small id="task-empty-detail">粘贴抖音直播间链接或分享文案，创建第一个任务</small>
+          <button class="btn btn-primary" type="button" data-open-create>
+            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-plus" /></svg>新建任务
+          </button>
         </section>
       </main>
     </div>
 
     <dialog id="task-dialog" class="modal" aria-labelledby="dialog-title">
       <form id="task-form" method="dialog">
-        <header class="modal-header">
-          <h2 id="dialog-title">新建任务</h2>
-          <button class="icon-button subtle" type="button" data-close-dialog aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button>
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 id="dialog-title">新建任务</h2>
+            <p>支持直接粘贴抖音分享文案</p>
+          </div>
+          <button class="btn btn-icon btn-ghost" type="button" data-close-dialog aria-label="关闭">
+            <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
+          </button>
         </header>
 
         <div class="modal-body">
-          <label class="field field-wide">
-            <span>直播间地址 <b>*</b></span>
-            <div class="input-action-row">
-              <input id="task-url" name="url" type="text" required maxlength="1000" inputmode="url" placeholder="粘贴直播链接或分享文案" autocomplete="off" />
-              <button id="inspect-button" class="secondary-button" type="button">检测</button>
-            </div>
+          <label class="field span-2">
+            <span class="field-label">直播间地址<b aria-hidden="true">*</b></span>
+            <span class="input-row">
+              <input id="task-url" class="input" name="url" type="text" required maxlength="1000" inputmode="url"
+                placeholder="https://live.douyin.com/… 或分享文案" autocomplete="off" />
+              <button id="inspect-button" class="btn btn-soft" type="button">检测</button>
+            </span>
           </label>
-          <div id="inspect-result" class="inspect-result hidden"></div>
+          <div id="inspect-result" class="inspect hidden" role="status"></div>
 
           <div class="form-grid">
-            <label class="field field-wide">
-              <span>任务名称</span>
-              <input name="label" type="text" maxlength="80" placeholder="选填" />
+            <label class="field span-2">
+              <span class="field-label">任务名称<em>选填</em></span>
+              <input class="input" name="label" type="text" maxlength="80" placeholder="留空时使用主播昵称" />
             </label>
             <label class="field">
-              <span>画质</span>
-              <select name="quality">
-                <option value="OD">原画</option><option value="UHD">超清</option><option value="HD">高清</option><option value="SD">标清</option><option value="LD">流畅</option>
+              <span class="field-label">画质</span>
+              <select class="input" name="quality">
+                <option value="OD">原画</option>
+                <option value="UHD">超清</option>
+                <option value="HD">高清</option>
+                <option value="SD">标清</option>
+                <option value="LD">流畅</option>
               </select>
             </label>
             <label class="field">
-              <span>格式</span>
-              <select name="output_format">
-                <option value="ts">TS</option><option value="mp4">MP4</option><option value="mkv">MKV</option><option value="flv">FLV</option>
+              <span class="field-label">保存格式</span>
+              <select class="input" name="output_format">
+                <option value="ts">TS</option>
+                <option value="mp4">MP4</option>
+                <option value="mkv">MKV</option>
+                <option value="flv">FLV</option>
               </select>
             </label>
           </div>
 
-          <div class="toggle-row">
-            <label class="toggle-field">
-              <input name="monitor" type="checkbox" checked /><span class="toggle"></span><span><strong>持续值守</strong><small>下播后继续等待</small></span>
+          <div class="option-row">
+            <label class="option">
+              <input name="monitor" type="checkbox" checked />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="option-text"><strong>持续值守</strong><small>下播后继续等待下一场</small></span>
             </label>
-            <label id="auto-start-field" class="toggle-field">
-              <input name="auto_start" type="checkbox" checked /><span class="toggle"></span><span><strong>立即启动</strong><small>创建后开始检查</small></span>
+            <label id="auto-start-field" class="option">
+              <input name="auto_start" type="checkbox" checked />
+              <span class="switch" aria-hidden="true"></span>
+              <span class="option-text"><strong>立即启动</strong><small>创建后马上开始检查</small></span>
             </label>
           </div>
 
-          <details class="advanced-settings">
-            <summary>高级设置 <span>⌄</span></summary>
+          <details class="disclosure">
+            <summary>
+              <span>高级设置</span>
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg>
+            </summary>
             <div class="form-grid">
               <label class="field">
-                <span>直播源</span>
-                <select name="source"><option value="auto">自动选择</option><option value="flv">优先 FLV</option><option value="hls">使用 HLS</option></select>
+                <span class="field-label">直播源</span>
+                <select class="input" name="source">
+                  <option value="auto">自动选择</option>
+                  <option value="flv">优先 FLV</option>
+                  <option value="hls">使用 HLS</option>
+                </select>
               </label>
               <label class="field">
-                <span>检查间隔（秒）</span>
-                <input name="interval_seconds" type="number" min="10" max="86400" step="1" value="60" />
+                <span class="field-label">检查间隔</span>
+                <span class="suffix"><input class="input" name="interval_seconds" type="number" min="10" max="86400" step="1" value="60" /><em>秒</em></span>
               </label>
               <label class="field">
-                <span>分段时长（秒）</span>
-                <input name="segment_seconds" type="number" min="0" max="86400" step="1" value="1800" />
+                <span class="field-label">分段时长</span>
+                <span class="suffix"><input class="input" name="segment_seconds" type="number" min="0" max="86400" step="1" value="1800" /><em>秒</em></span>
               </label>
               <label class="field">
-                <span>最大段数</span>
-                <input name="segment_count" type="number" min="0" max="10000" step="1" value="4" />
+                <span class="field-label">最大段数</span>
+                <span class="suffix"><input class="input" name="segment_count" type="number" min="0" max="10000" step="1" value="4" /><em>段</em></span>
               </label>
+              <p class="field-hint span-2">分段时长设为 0 表示不切分；最大段数设为 0 表示不限制。</p>
             </div>
           </details>
         </div>
 
-        <footer class="modal-actions">
-          <button class="secondary-button" type="button" data-close-dialog>取消</button>
-          <button id="task-submit" class="primary-button" type="submit">创建任务</button>
+        <footer class="modal-foot">
+          <button class="btn btn-soft" type="button" data-close-dialog>取消</button>
+          <button id="task-submit" class="btn btn-primary" type="submit">创建任务</button>
         </footer>
       </form>
     </dialog>
 
-    <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/tasks.js?v=20260721-ui3"></script>
+    <script type="module" src="/static/tasks.js?v=20260728"></script>
   </body>
 </html>

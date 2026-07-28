@@ -2,132 +2,146 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
     <title>概览 · Stream Keeper</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260721-ui3" />
+    <script src="/static/theme.js?v=20260728"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260728" />
   </head>
   <body data-page="dashboard">
-    <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="Stream Keeper 首页">
-          <span class="brand-mark"><i></i></span>
-          <span class="brand-copy"><strong>Stream Keeper</strong><small>直播录制</small></span>
-        </a>
-
-        <nav class="side-nav" aria-label="主要导航">
-          <a class="nav-item" href="/" data-nav="dashboard">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" /></svg>
-            <span>概览</span>
-          </a>
-          <a class="nav-item" href="/tasks" data-nav="tasks">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="8" /></svg>
-            <span>录制任务</span>
-          </a>
-          <a class="nav-item" href="/recordings" data-nav="recordings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5h6l1.7 2H20v8.75A1.75 1.75 0 0 1 18.25 20H5.25a1.75 1.75 0 0 1-1.75-1.75z" /><path d="m10 12.5 4 2.5-4 2.5z" /></svg>
-            <span>本地录像</span>
-          </a>
-          <a class="nav-item" href="/archive" data-nav="archive">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5h14v10.25A1.25 1.25 0 0 1 17.75 20H6.25A1.25 1.25 0 0 1 5 18.75zM4 4h16v4.5H4zM9 12h6" /></svg>
-            <span>网盘归档</span>
-          </a>
-          <a class="nav-item" href="/settings" data-nav="settings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.33.72.6 1 .3.3.69.44 1.1.4h.1v4h-.1A1.7 1.7 0 0 0 19.4 15z" /></svg>
-            <span>设置</span>
-          </a>
-        </nav>
-
-        <div class="sidebar-footer">
-          <div id="server-health" class="server-state"><i></i><span>正在连接</span></div>
-          <a class="api-link" href="/api/docs" target="_blank" rel="noreferrer">API 文档 <span>↗</span></a>
-          <div class="account">
-            <span class="account-avatar" data-account-avatar>A</span>
-            <span class="account-copy"><strong data-account-name>—</strong><small>管理员</small></span>
-            <button class="icon-button subtle" type="button" data-logout aria-label="退出登录" title="退出登录">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H6.5A1.5 1.5 0 0 0 5 6.5v11A1.5 1.5 0 0 0 6.5 19H10M14 8l4 4-4 4M18 12H9" /></svg>
-            </button>
+    <script src="/static/sprite.js?v=20260728"></script>
+    <div class="app" id="app">
+      <main class="main">
+        <header class="page-head">
+          <div class="page-heading">
+            <h1>概览</h1>
+            <p>录制状态与系统运行情况</p>
           </div>
-        </div>
-      </aside>
-
-      <main class="main-content">
-        <header class="page-header">
-          <div><p class="page-kicker">工作台</p><h1>概览</h1></div>
-          <div class="page-actions">
-            <button id="refresh-button" class="icon-button" type="button" aria-label="刷新" title="刷新">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6" /></svg>
+          <div class="page-tools">
+            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新" title="刷新">
+              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
             </button>
-            <a class="primary-button" href="/tasks?create=1">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-              新建任务
+            <a class="btn btn-primary" href="/tasks?create=1">
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-plus" /></svg>新建任务
             </a>
           </div>
         </header>
 
-        <div id="page-error" class="error-banner hidden" role="alert"></div>
+        <div id="page-error" class="alert alert-bad hidden" role="alert">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+          <span data-error-text></span>
+        </div>
 
-        <section class="metric-grid" aria-label="运行摘要">
-          <article class="metric-card metric-recording">
-            <span class="metric-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5" /></svg></span>
-            <div><small>录制中</small><strong id="stat-recording">—</strong></div>
+        <section class="stat-grid" aria-label="运行摘要">
+          <article class="stat is-live">
+            <header>
+              <p class="stat-label">录制中</p>
+              <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-record" /></svg></span>
+            </header>
+            <strong class="stat-value" id="stat-recording">—</strong>
+            <p class="stat-note" id="stat-recording-note">读取中</p>
           </article>
-          <article class="metric-card">
-            <span class="metric-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.64 5.64l2.12 2.12M16.24 16.24l2.12 2.12M18.36 5.64l-2.12 2.12M7.76 16.24l-2.12 2.12" /></svg></span>
-            <div><small>值守中</small><strong id="stat-waiting">—</strong></div>
+
+          <article class="stat">
+            <header>
+              <p class="stat-label">值守中</p>
+              <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-pulse" /></svg></span>
+            </header>
+            <strong class="stat-value" id="stat-waiting">—</strong>
+            <p class="stat-note" id="stat-waiting-note">等待开播</p>
           </article>
-          <article class="metric-card">
-            <span class="metric-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9" /></svg></span>
-            <div><small>全部任务</small><strong id="stat-total">—</strong></div>
+
+          <article class="stat">
+            <header>
+              <p class="stat-label">全部任务</p>
+              <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-layers" /></svg></span>
+            </header>
+            <strong class="stat-value" id="stat-total">—</strong>
+            <p class="stat-note" id="stat-total-note">读取中</p>
           </article>
-          <article class="metric-card">
-            <span class="metric-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" /></svg></span>
-            <div><small>可用空间</small><strong id="stat-disk">—</strong></div>
+
+          <article class="stat">
+            <header>
+              <p class="stat-label">可用空间</p>
+              <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-disk" /></svg></span>
+            </header>
+            <strong class="stat-value" id="stat-disk">—</strong>
+            <p class="stat-note" id="stat-disk-note">录像存储盘</p>
           </article>
         </section>
 
-        <section class="dashboard-grid">
-          <article class="panel runtime-panel">
-            <div class="panel-heading">
-              <div><h2>当前任务</h2><span>正在值守或需要处理</span></div>
-              <a class="text-link" href="/tasks">查看全部 <span>→</span></a>
+        <div class="dash-grid">
+          <section class="card card-runtime">
+            <header class="card-head">
+              <div class="card-heading">
+                <h2>当前任务</h2>
+                <p>正在录制或等待开播的直播间</p>
+              </div>
+              <a class="link" href="/tasks">全部任务<svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronRight" /></svg></a>
+            </header>
+            <div id="active-task-list" class="mini-list" aria-live="polite">
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
             </div>
-            <div id="active-task-list" class="compact-task-list">
-              <div class="list-skeleton"></div><div class="list-skeleton"></div>
+            <div id="active-task-empty" class="empty empty-sm hidden">
+              <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-checkCircle" /></svg></span>
+              <strong>当前没有运行中的任务</strong>
+              <small>启用任务后，开播会自动开始录制</small>
+              <a class="btn btn-soft btn-sm" href="/tasks">前往任务列表</a>
             </div>
-            <div id="active-task-empty" class="small-empty hidden">
-              <span class="empty-symbol">✓</span><strong>当前没有运行中的任务</strong>
-            </div>
-          </article>
+          </section>
 
-          <article class="panel archive-overview">
-            <div class="panel-heading">
-              <div><h2>网盘归档</h2><span id="overview-archive-time">读取中</span></div>
-              <a class="text-link" href="/archive">详情 <span>→</span></a>
+          <section class="card">
+            <header class="card-head">
+              <div class="card-heading">
+                <h2>网盘归档</h2>
+                <p id="overview-archive-time">读取中</p>
+              </div>
+              <a class="link" href="/archive">详情<svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronRight" /></svg></a>
+            </header>
+            <div class="card-body">
+              <div class="archive-brief">
+                <span id="overview-archive-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <div class="kv">
+                  <small>下次执行</small>
+                  <strong id="overview-next-run">—</strong>
+                </div>
+              </div>
+              <ul class="provider-mini">
+                <li>
+                  <span class="provider-logo quark" aria-hidden="true">夸</span>
+                  <strong>夸克网盘</strong>
+                  <span id="overview-quark-status" class="mini-state">—</span>
+                </li>
+                <li>
+                  <span class="provider-logo wopan" aria-hidden="true">联</span>
+                  <strong>联通云盘</strong>
+                  <span id="overview-wopan-status" class="mini-state">—</span>
+                </li>
+              </ul>
             </div>
-            <div class="archive-status-line">
-              <span id="overview-archive-status" class="status-pill tone-neutral"><i></i>读取中</span>
-              <div><small>下次执行</small><strong id="overview-next-run">—</strong></div>
-            </div>
-            <div class="provider-mini-list">
-              <div><span class="provider-logo quark">夸</span><strong>夸克网盘</strong><small id="overview-quark-status" class="mini-status">—</small></div>
-              <div><span class="provider-logo wopan">联</span><strong>联通云盘</strong><small id="overview-wopan-status" class="mini-status">—</small></div>
-            </div>
-          </article>
+          </section>
 
-          <article class="panel system-panel">
-            <div class="panel-heading"><div><h2>系统</h2><span>录制环境</span></div></div>
-            <dl class="system-list">
+          <section class="card">
+            <header class="card-head">
+              <div class="card-heading">
+                <h2>系统</h2>
+                <p>录制环境自检</p>
+              </div>
+            </header>
+            <dl class="spec-list">
               <div><dt>并发录制</dt><dd id="system-recording-limit">—</dd></div>
               <div><dt>FFmpeg</dt><dd id="system-ffmpeg">—</dd></div>
               <div><dt>Node.js</dt><dd id="system-node">—</dd></div>
+              <div><dt>录像目录</dt><dd id="system-directory" class="mono">—</dd></div>
             </dl>
-          </article>
-        </section>
+          </section>
+        </div>
       </main>
     </div>
 
-    <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script type="module" src="/static/dashboard.js?v=20260721-ui3"></script>
+    <script type="module" src="/static/dashboard.js?v=20260728"></script>
   </body>
 </html>
