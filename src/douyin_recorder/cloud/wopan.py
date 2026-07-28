@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 from Crypto.Cipher import AES
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, split_remote_file
+from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
 
 logger = logging.getLogger(__name__)
 
@@ -252,11 +252,13 @@ class WoPanClient:
                 return None
             param: dict[str, object] = {
                 "spaceType": self._space_type,
-                "familyId": self.family_id,
                 "parentDirectoryId": parent_id,
                 "directoryName": name,
                 "clientId": _CLIENT_ID,
             }
+            # Personal space rejects the key outright: an empty familyId answers 9999 系统异常.
+            if self.family_id:
+                param["familyId"] = self.family_id
             try:
                 data = await self._dispatcher("wohome", "CreateDirectory", param, {"secret": True})
             except CloudUploadError:
@@ -330,6 +332,7 @@ class WoPanClient:
         size: int,
         prefix: bytes,
         suffix: bytes,
+        on_streamed: Callable[[int], None] | None = None,
     ) -> AsyncIterator[bytes]:
         yield prefix
         stream = local_path.open("rb")
@@ -341,6 +344,8 @@ class WoPanClient:
                 if not chunk:
                     raise CloudUploadError(f"读取录像分片时提前到达文件末尾：{local_path}")
                 remaining -= len(chunk)
+                if on_streamed is not None:
+                    on_streamed(size - remaining)
                 yield chunk
         finally:
             stream.close()
@@ -357,7 +362,14 @@ class WoPanClient:
         offset: int,
         size: int,
         part_index: int,
+        progress: UploadProgress | None = None,
     ) -> None:
+        on_streamed = None
+        if progress is not None:
+            # Each attempt restarts the part, so the reported total rewinds with it.
+            def on_streamed(streamed: int) -> None:
+                progress("uploading", offset + streamed)
+
         last_error: Exception | None = None
         for attempt in range(3):
             boundary = f"----DouYinStreamKeeper{secrets.token_hex(12)}"
@@ -372,7 +384,7 @@ class WoPanClient:
                         "Origin": "https://pan.wo.cn",
                         "Referer": "https://pan.wo.cn/",
                     },
-                    content=self._multipart_content(local_path, offset, size, prefix, suffix),
+                    content=self._multipart_content(local_path, offset, size, prefix, suffix, on_streamed),
                 )
                 try:
                     payload = response.json()
@@ -399,7 +411,15 @@ class WoPanClient:
     def _file_type(filename: str) -> str:
         return "2" if Path(filename).suffix.lower() in _VIDEO_FILE_TYPES else "5"
 
-    async def _upload(self, local_path: Path, filename: str, parent_id: str) -> None:
+    async def _upload(
+        self,
+        local_path: Path,
+        filename: str,
+        parent_id: str,
+        progress: UploadProgress | None = None,
+    ) -> None:
+        if progress is not None:
+            progress("preparing", 0)
         await self._ensure_access_token()
         size = local_path.stat().st_size
         file_info: dict[str, object] = {
@@ -443,14 +463,27 @@ class WoPanClient:
                 offset=offset,
                 size=part_size,
                 part_index=part_index,
+                progress=progress,
             )
             offset += part_size
+            if progress is not None:
+                progress("uploading", offset)
 
-    async def upload_verified(self, local_path: Path, remote_path: str) -> bool:
+    async def upload_verified(
+        self,
+        local_path: Path,
+        remote_path: str,
+        *,
+        progress: UploadProgress | None = None,
+    ) -> bool:
         local_size = local_path.stat().st_size
+        if progress is not None:
+            progress("preparing", 0)
         existing_size = await self.remote_size(remote_path)
         if existing_size == local_size:
             logger.info("联通云盘远端文件已存在且大小一致，跳过重复上传：%s", remote_path)
+            if progress is not None:
+                progress("verifying", local_size)
             return False
         if existing_size is not None:
             raise CloudUploadError(
@@ -460,7 +493,9 @@ class WoPanClient:
         directory_parts, filename = split_remote_file(remote_path)
         parent_id = await self._walk_directories(directory_parts, create=True)
         assert parent_id is not None
-        await self._upload(local_path, filename, parent_id)
+        await self._upload(local_path, filename, parent_id, progress)
+        if progress is not None:
+            progress("verifying", local_size)
         uploaded_size: int | None = None
         for attempt in range(5):
             uploaded_size = await self.remote_size(remote_path)

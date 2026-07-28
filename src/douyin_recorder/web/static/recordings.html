@@ -7,6 +7,7 @@
     <title>本地录像 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260728"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/artplayer.css?v=5.4.1" />
     <link rel="stylesheet" href="/static/style.css?v=20260728" />
   </head>
   <body data-page="recordings">
@@ -19,6 +20,10 @@
             <p>浏览、播放并下载服务器上已保存的录像</p>
           </div>
           <div class="page-tools">
+            <button id="upload-all-button" class="btn btn-soft" type="button">
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-upload" /></svg>
+              <span id="upload-all-label">全部上传</span>
+            </button>
             <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新录像列表" title="刷新">
               <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
             </button>
@@ -61,6 +66,15 @@
             <span id="recording-location">录像根目录</span>
           </div>
 
+          <div id="upload-queue" class="upload-queue hidden" aria-live="polite">
+            <div class="upload-queue-copy">
+              <strong id="upload-queue-title">上传队列</strong>
+              <small id="upload-queue-detail">—</small>
+            </div>
+            <span id="upload-queue-track" class="progress-track" data-ratio="0" aria-hidden="true"><i></i></span>
+            <button id="upload-queue-cancel" class="btn btn-sm btn-ghost" type="button">全部取消</button>
+          </div>
+
           <div class="table-head file-head" aria-hidden="true">
             <span>名称</span><span>大小</span><span>修改时间</span><span></span>
           </div>
@@ -94,7 +108,7 @@
 
       <div class="player-shell">
         <div class="player-stage">
-          <video id="recording-player" playsinline preload="metadata"></video>
+          <div id="recording-player" class="recording-artplayer" aria-label="录像播放器"></div>
           <div id="recording-player-loading" class="player-msg">
             <span class="spinner"></span>
             <strong>正在准备视频</strong>
@@ -106,19 +120,6 @@
             <small>编码可能不受支持，请下载后用本地播放器打开</small>
           </div>
         </div>
-        <div class="player-ctrl" aria-label="播放控制">
-          <button id="recording-play-toggle" class="btn btn-icon btn-ghost" type="button" aria-label="播放">
-            <svg class="ic" aria-hidden="true"><use href="#ic-play" /></svg>
-          </button>
-          <span id="recording-player-time" class="player-time">0:00 / 0:00</span>
-          <input id="recording-player-seek" class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="播放进度" disabled />
-          <button id="recording-volume" class="btn btn-icon btn-ghost" type="button" aria-label="静音">
-            <svg class="ic" aria-hidden="true"><use href="#ic-volume" /></svg>
-          </button>
-          <button id="recording-fullscreen" class="btn btn-icon btn-ghost" type="button" aria-label="全屏">
-            <svg class="ic" aria-hidden="true"><use href="#ic-expand" /></svg>
-          </button>
-        </div>
       </div>
 
       <footer class="player-foot">
@@ -129,6 +130,7 @@
       </footer>
     </dialog>
 
+    <script src="/static/artplayer.js?v=5.4.1"></script>
     <script type="module" src="/static/recordings.js?v=20260728"></script>
   </body>
 </html>

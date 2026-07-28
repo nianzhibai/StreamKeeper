@@ -19,6 +19,7 @@ class QuarkClientTests(IsolatedAsyncioTestCase):
         directories: dict[str, list[dict[str, object]]] = {"0": []}
         uploaded_parts: dict[int, bytes] = {}
         credential_updates: list[dict[str, str]] = []
+        progress: list[tuple[str, int]] = []
         created_counter = 0
         upload_parent = ""
         upload_name = ""
@@ -125,10 +126,22 @@ class QuarkClientTests(IsolatedAsyncioTestCase):
             )
             try:
                 remote_path = "/DouYinStreamKeeper/remote.ts"
-                self.assertTrue(await client.upload_verified(local_path, remote_path))
+                self.assertTrue(
+                    await client.upload_verified(
+                        local_path,
+                        remote_path,
+                        progress=lambda stage, uploaded: progress.append((stage, uploaded)),
+                    )
+                )
                 self.assertFalse(await client.upload_verified(local_path, remote_path))
             finally:
                 await client.aclose()
+
+        # Consecutive repeats only mark phase boundaries, so collapse them.
+        self.assertEqual(
+            [event for index, event in enumerate(progress) if index == 0 or progress[index - 1] != event],
+            [("preparing", 0), ("uploading", 4), ("uploading", 6), ("verifying", 6)],
+        )
 
         self.assertTrue(finished)
         self.assertEqual(created_counter, 1)

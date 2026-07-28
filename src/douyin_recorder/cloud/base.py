@@ -4,7 +4,7 @@ import posixpath
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class CloudUploadError(RuntimeError):
@@ -13,9 +13,21 @@ class CloudUploadError(RuntimeError):
 
 CredentialUpdate = Callable[[dict[str, str]], Awaitable[None]]
 
+UploadStage = Literal["preparing", "uploading", "verifying"]
+# Called with the current stage and the absolute number of bytes handed to the
+# network for this file. Streaming runs slightly ahead of what the remote has
+# acknowledged, and a retried part rewinds the count to the part boundary.
+UploadProgress = Callable[[UploadStage, int], None]
+
 
 class CloudUploadClient(Protocol):
-    async def upload_verified(self, local_path: Path, remote_path: str) -> bool: ...
+    async def upload_verified(
+        self,
+        local_path: Path,
+        remote_path: str,
+        *,
+        progress: UploadProgress | None = None,
+    ) -> bool: ...
 
     async def aclose(self) -> None: ...
 

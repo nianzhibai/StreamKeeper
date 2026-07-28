@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import httpx
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, split_remote_file
+from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,12 @@ class QuarkClient:
         return md5.hexdigest(), sha1.hexdigest()
 
     @staticmethod
-    async def _file_range(path: Path, offset: int, size: int) -> AsyncIterator[bytes]:
+    async def _file_range(
+        path: Path,
+        offset: int,
+        size: int,
+        on_streamed: Callable[[int], None] | None = None,
+    ) -> AsyncIterator[bytes]:
         stream = path.open("rb")
         remaining = size
         try:
@@ -254,6 +259,8 @@ class QuarkClient:
                 if not chunk:
                     raise CloudUploadError(f"读取录像分片时提前到达文件末尾：{path}")
                 remaining -= len(chunk)
+                if on_streamed is not None:
+                    on_streamed(size - remaining)
                 yield chunk
         finally:
             stream.close()
@@ -277,6 +284,7 @@ class QuarkClient:
         part_number: int,
         offset: int,
         size: int,
+        progress: UploadProgress | None = None,
     ) -> str:
         task_id = str(pre_data.get("task_id") or "")
         upload_id = str(pre_data.get("upload_id") or "")
@@ -285,6 +293,12 @@ class QuarkClient:
         obj_key = str(pre_data.get("obj_key") or "")
         if not all((task_id, upload_id, auth_info, bucket, obj_key)):
             raise CloudUploadError("夸克预上传响应缺少分片参数")
+
+        on_streamed = None
+        if progress is not None:
+            # Each attempt restarts the part, so the reported total rewinds with it.
+            def on_streamed(streamed: int) -> None:
+                progress("uploading", offset + streamed)
 
         last_error: Exception | None = None
         for attempt in range(3):
@@ -317,7 +331,7 @@ class QuarkClient:
                         "x-oss-date": date,
                         "x-oss-user-agent": _OSS_USER_AGENT,
                     },
-                    content=self._file_range(local_path, offset, size),
+                    content=self._file_range(local_path, offset, size, on_streamed),
                 )
                 if response.status_code != 200:
                     raise CloudUploadError(
@@ -394,9 +408,17 @@ class QuarkClient:
                 f"夸克 OSS 合并分片失败（HTTP {response.status_code}）：{self._response_detail(response)}"
             )
 
-    async def _upload(self, local_path: Path, filename: str, parent_id: str) -> None:
+    async def _upload(
+        self,
+        local_path: Path,
+        filename: str,
+        parent_id: str,
+        progress: UploadProgress | None = None,
+    ) -> None:
         size = local_path.stat().st_size
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        if progress is not None:
+            progress("preparing", 0)
         md5, sha1 = await asyncio.to_thread(self._hash_file, local_path)
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         pre_payload = await self._api_request(
@@ -427,6 +449,9 @@ class QuarkClient:
         )
         hash_data = hash_payload.get("data")
         if isinstance(hash_data, dict) and bool(hash_data.get("finish")):
+            # The server matched the hash, so the whole file counts as transferred.
+            if progress is not None:
+                progress("uploading", size)
             return
 
         try:
@@ -445,8 +470,11 @@ class QuarkClient:
                     part_number=index,
                     offset=offset,
                     size=min(part_size, size - offset),
+                    progress=progress,
                 )
             )
+        if progress is not None:
+            progress("uploading", size)
         await self._commit(pre_data, etags)
         await self._api_request(
             "POST",
@@ -454,11 +482,21 @@ class QuarkClient:
             json_body={"obj_key": pre_data.get("obj_key"), "task_id": task_id},
         )
 
-    async def upload_verified(self, local_path: Path, remote_path: str) -> bool:
+    async def upload_verified(
+        self,
+        local_path: Path,
+        remote_path: str,
+        *,
+        progress: UploadProgress | None = None,
+    ) -> bool:
         local_size = local_path.stat().st_size
+        if progress is not None:
+            progress("preparing", 0)
         existing_size = await self.remote_size(remote_path)
         if existing_size == local_size:
             logger.info("夸克远端文件已存在且大小一致，跳过重复上传：%s", remote_path)
+            if progress is not None:
+                progress("verifying", local_size)
             return False
         if existing_size is not None:
             raise CloudUploadError(
@@ -468,7 +506,9 @@ class QuarkClient:
         directory_parts, filename = split_remote_file(remote_path)
         parent_id = await self._walk_directories(directory_parts, create=True)
         assert parent_id is not None
-        await self._upload(local_path, filename, parent_id)
+        await self._upload(local_path, filename, parent_id, progress)
+        if progress is not None:
+            progress("verifying", local_size)
         uploaded_size: int | None = None
         for attempt in range(5):
             uploaded_size = await self.remote_size(remote_path)

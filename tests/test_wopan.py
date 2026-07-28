@@ -17,6 +17,7 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
     async def test_native_encrypted_upload_refreshes_tokens_and_verifies(self) -> None:
         directories: dict[str, list[dict[str, object]]] = {"0": []}
         credential_updates: list[dict[str, str]] = []
+        progress: list[tuple[str, int]] = []
         first_query_expired = True
         created_counter = 0
         upload_requests = 0
@@ -89,6 +90,16 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
                 parent = str(param["parentDirectoryId"])
                 return dispatcher_response({"files": directories.get(parent, [])})
             if key == "CreateDirectory":
+                if "familyId" in param and not param["familyId"]:
+                    # Matches the live API: personal space rejects the key rather than ignoring it.
+                    return httpx.Response(
+                        200,
+                        json={
+                            "STATUS": "200",
+                            "MSG": "ok",
+                            "RSP": {"RSP_CODE": "9999", "RSP_DESC": "系统异常", "DATA": ""},
+                        },
+                    )
                 created_counter += 1
                 directory_id = f"directory-{created_counter}"
                 parent = str(param["parentDirectoryId"])
@@ -116,10 +127,22 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
             local_path = Path(tmp) / "local.ts"
             local_path.write_bytes(b"abcdef")
             try:
-                self.assertTrue(await client.upload_verified(local_path, "/DouYinStreamKeeper/remote.ts"))
+                self.assertTrue(
+                    await client.upload_verified(
+                        local_path,
+                        "/DouYinStreamKeeper/remote.ts",
+                        progress=lambda stage, uploaded: progress.append((stage, uploaded)),
+                    )
+                )
                 self.assertFalse(await client.upload_verified(local_path, "/DouYinStreamKeeper/remote.ts"))
             finally:
                 await client.aclose()
+
+        # Consecutive repeats only mark phase boundaries, so collapse them.
+        self.assertEqual(
+            [event for index, event in enumerate(progress) if index == 0 or progress[index - 1] != event],
+            [("preparing", 0), ("uploading", 6), ("verifying", 6)],
+        )
 
         self.assertEqual(upload_requests, 1)
         self.assertEqual(created_counter, 1)
@@ -128,3 +151,52 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
             credential_updates,
             [{"access_token": "new-access-token-123456", "refresh_token": "new-refresh-token"}],
         )
+
+    async def _capture_create_directory_param(self, family_id: str) -> dict[str, object]:
+        created_params: list[dict[str, object]] = []
+        client: WoPanClient
+
+        def dispatcher_response(data: object) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "STATUS": "200",
+                    "MSG": "ok",
+                    "RSP": {"RSP_CODE": "0000", "RSP_DESC": "ok", "DATA": client._encrypt(data, "wohome")},
+                },
+            )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(await request.aread())
+            param = client._decrypt(body["body"]["param"], "wohome")
+            if body["header"]["key"] == "QueryAllFiles":
+                return dispatcher_response({"files": []})
+            self.assertEqual(body["header"]["key"], "CreateDirectory")
+            created_params.append(param)
+            return dispatcher_response({"id": "directory-1"})
+
+        client = WoPanClient(
+            "access-token-1234567890",
+            "refresh-token",
+            family_id=family_id,
+            transport=httpx.MockTransport(handler),
+            sleep=no_sleep,
+        )
+        try:
+            self.assertEqual(await client._walk_directories(["归档"], create=True), "directory-1")
+        finally:
+            await client.aclose()
+
+        self.assertEqual(len(created_params), 1)
+        return created_params[0]
+
+    async def test_create_directory_only_sends_family_id_inside_family_space(self) -> None:
+        """Personal space answers 9999 系统异常 when the request carries an empty familyId."""
+
+        personal = await self._capture_create_directory_param("")
+        self.assertEqual(personal["spaceType"], "0")
+        self.assertNotIn("familyId", personal)
+
+        family = await self._capture_create_directory_param("family-1")
+        self.assertEqual(family["spaceType"], "1")
+        self.assertEqual(family["familyId"], "family-1")
