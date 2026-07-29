@@ -7,6 +7,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 
 from douyin_recorder.cloud import CloudUploadError, UploadProgress
 from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
+from douyin_recorder.web.recordings import RecordingPreviewCache
 from douyin_recorder.web.schemas import TaskConfig, TaskStatus
 from douyin_recorder.web.store import TaskStore
 from douyin_recorder.web.uploader import RecordingUploadService, UploadJob, UploadTarget
@@ -200,6 +201,37 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertFalse(recording.exists())
         self.assertEqual(service.last_execution.status, "success")
         self.assertEqual(service.last_execution.summary.deleted_files, 1)
+
+    async def test_successful_upload_also_drops_the_browser_playback_cache(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "played.ts", b"video", self.now)
+        kept = make_old_file(self.settings.recordings_dir / "主播" / "young.ts", b"video", self.now)
+        cache_dir = self.root / "preview-cache"
+        cache_dir.mkdir()
+        cache = RecordingPreviewCache(cache_dir, "ffmpeg")
+        stat = recording.stat()
+        preview = cache_dir / f"{cache._cache_key('主播/played.ts', (stat.st_size, stat.st_mtime_ns))}.mp4"
+        preview.write_bytes(b"remuxed-for-the-browser")
+        kept_stat = kept.stat()
+        other = cache_dir / f"{cache._cache_key('主播/young.ts', (kept_stat.st_size, kept_stat.st_mtime_ns))}.mp4"
+        other.write_bytes(b"still-needed")
+
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient(fail_fragment="young.ts")}
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            clock=lambda: self.now,
+            preview_cache=cache,
+        )
+        summary = await service.run_once()
+
+        self.assertEqual(summary.deleted_files, 1)
+        self.assertEqual(summary.failed_files, 1)
+        self.assertFalse(recording.exists())
+        self.assertFalse(preview.exists())
+        # The failed upload kept its recording, so its preview stays usable.
+        self.assertTrue(kept.exists())
+        self.assertTrue(other.exists())
 
     async def test_archive_run_reports_start_and_outcome_to_the_activity_log(self) -> None:
         make_old_file(self.settings.recordings_dir / "主播" / "ok.ts", b"video", self.now)

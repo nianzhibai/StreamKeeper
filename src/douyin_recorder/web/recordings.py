@@ -23,6 +23,7 @@ _DIRECT_PLAYBACK_EXTENSIONS = frozenset({".mp4"})
 _PREVIEW_CACHE_MAX_FILES = 8
 _PREVIEW_CACHE_MAX_BYTES = 10 * 1024**3
 _PREVIEW_CACHE_MAX_AGE_SECONDS = 24 * 3600
+_CACHE_HASH_LENGTH = 32
 
 
 def _invalid_path() -> HTTPException:
@@ -192,9 +193,20 @@ class RecordingPreviewCache:
         return stat.st_size, stat.st_mtime_ns
 
     @staticmethod
-    def _cache_key(relative_path: str, signature: tuple[int, int]) -> str:
-        value = f"{relative_path}\0{signature[0]}\0{signature[1]}".encode()
-        return hashlib.sha256(value).hexdigest()
+    def _path_prefix(relative_path: str) -> str:
+        return hashlib.sha256(relative_path.encode()).hexdigest()[:_CACHE_HASH_LENGTH]
+
+    @classmethod
+    def _cache_key(cls, relative_path: str, signature: tuple[int, int]) -> str:
+        """Name a cache entry ``<path>-<signature>``.
+
+        The signature half keeps a re-recorded file from being served its
+        predecessor's remux; the path half lets ``discard`` find the entry once
+        the source is gone and its size and mtime can no longer be read.
+        """
+        value = f"{signature[0]}\0{signature[1]}".encode()
+        signature_hash = hashlib.sha256(value).hexdigest()[:_CACHE_HASH_LENGTH]
+        return f"{cls._path_prefix(relative_path)}-{signature_hash}"
 
     @staticmethod
     def _unlink(path: Path) -> None:
@@ -247,6 +259,27 @@ class RecordingPreviewCache:
                 continue
             file_count -= 1
             total_bytes -= size
+
+    def _discard_sync(self, relative_path: str) -> int:
+        """Drop every finished remux of one recording; never raises."""
+        prefix = f"{self._path_prefix(relative_path)}-"
+        removed = 0
+        try:
+            children = tuple(self.directory.iterdir())
+        except OSError:
+            return 0
+        for path in children:
+            # In-flight temporaries are dot-prefixed and stay untouched: the
+            # remux that owns one already re-checks the source and cleans up.
+            if path.suffix != ".mp4" or not path.name.startswith(prefix):
+                continue
+            self._unlink(path)
+            if not path.exists():
+                removed += 1
+        return removed
+
+    async def discard(self, relative_path: str) -> int:
+        return await asyncio.to_thread(self._discard_sync, relative_path)
 
     @staticmethod
     async def _stop_process(process: asyncio.subprocess.Process) -> None:

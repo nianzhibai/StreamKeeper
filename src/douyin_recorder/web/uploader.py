@@ -23,6 +23,7 @@ from ..cloud import (
 )
 from ..settings import Settings
 from .events import EventLog
+from .recordings import RecordingPreviewCache
 from .schemas import TaskStatus
 from .store import TaskStore
 
@@ -159,10 +160,12 @@ class RecordingUploadService:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Sleep = asyncio.sleep,
         events: EventLog | None = None,
+        preview_cache: RecordingPreviewCache | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
         self.events = events or EventLog(store)
+        self.preview_cache = preview_cache
         self._seed_config = CloudArchiveConfig.from_settings(settings)
         self._seed_config.validate()
         self._clock = clock or (lambda: datetime.now().astimezone())
@@ -488,6 +491,13 @@ class RecordingUploadService:
         await asyncio.to_thread(candidate.path.unlink)
         record.deleted = True
         logger.info("所有目标上传成功，已删除本地录像：%s", candidate.path)
+        # The browser-playback remux is derived from a file that no longer
+        # exists, so it can never be served again. Dropping it here keeps the
+        # cache from holding a full-size copy of an archived recording.
+        if self.preview_cache is not None:
+            discarded = await self.preview_cache.discard(candidate.relative_path.as_posix())
+            if discarded:
+                logger.info("已清理 %d 个播放缓存文件：%s", discarded, candidate.relative_path.as_posix())
 
     async def run_once(self, config: CloudArchiveConfig | None = None) -> UploadRunSummary:
         config = config or await self.get_config()

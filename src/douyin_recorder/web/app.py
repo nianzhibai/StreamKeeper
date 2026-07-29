@@ -199,17 +199,18 @@ def create_app(
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
     event_log = EventLog(store)
+    recording_preview_cache = RecordingPreviewCache(settings.data_dir / "preview-cache", settings.ffmpeg)
     scheduler = scheduler or TaskScheduler(store, settings, events=event_log)
     upload_service = upload_service or RecordingUploadService(
         settings,
         store,
         active_directories_provider=getattr(scheduler, "recording_output_directories", None),
         events=event_log,
+        preview_cache=recording_preview_cache,
     )
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
-    recording_preview_cache = RecordingPreviewCache(settings.data_dir / "preview-cache", settings.ffmpeg)
 
     async def save_cloud_login_credentials(provider: str, credentials: dict[str, str]) -> None:
         async with cloud_config_lock:

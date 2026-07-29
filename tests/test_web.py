@@ -16,7 +16,7 @@ from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
 from douyin_recorder.web.app import create_app
 from douyin_recorder.web.auth import SESSION_COOKIE_NAME
 from douyin_recorder.web.cloud_login import CloudLoginPoll
-from douyin_recorder.web.recordings import build_remux_command
+from douyin_recorder.web.recordings import RecordingPreviewCache, build_remux_command
 from douyin_recorder.web.schemas import TaskStatus
 from douyin_recorder.web.store import TaskStore
 from douyin_recorder.web.uploader import UploadJob
@@ -322,6 +322,34 @@ class WebTests(TestCase):
             self.client.get("/api/recordings/file/测试 主播/2026-07-12/内部信息.txt").status_code,
             404,
         )
+
+    def test_preview_cache_entries_can_be_found_by_recording_path(self) -> None:
+        directory = Path(self.temp_dir.name) / "preview-cache"
+        directory.mkdir()
+        cache = RecordingPreviewCache(directory, "ffmpeg")
+
+        first = cache._cache_key("主播/2026-07-12/live.ts", (100, 111))
+        # A re-recorded file reuses the path but must not reuse the remux.
+        second = cache._cache_key("主播/2026-07-12/live.ts", (200, 222))
+        other = cache._cache_key("主播/2026-07-12/另一场.ts", (100, 111))
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.split("-")[0], second.split("-")[0])
+        self.assertNotEqual(first.split("-")[0], other.split("-")[0])
+
+        for key in (first, second, other):
+            (directory / f"{key}.mp4").write_bytes(b"remux")
+        keep_temporary = directory / f".{first}.abc123.mp4"
+        keep_temporary.write_bytes(b"in-flight")
+
+        self.assertEqual(asyncio.run(cache.discard("主播/2026-07-12/live.ts")), 2)
+        self.assertFalse((directory / f"{first}.mp4").exists())
+        self.assertFalse((directory / f"{second}.mp4").exists())
+        self.assertTrue((directory / f"{other}.mp4").exists())
+        # An in-flight remux owns its temporary file and cleans it up itself.
+        self.assertTrue(keep_temporary.exists())
+
+        self.assertEqual(asyncio.run(cache.discard("主播/2026-07-12/live.ts")), 0)
+        self.assertEqual(asyncio.run(RecordingPreviewCache(directory / "missing", "ffmpeg").discard("a.ts")), 0)
 
     def test_recording_uploads_expose_queue_progress_and_cancellation(self) -> None:
         self.login()
