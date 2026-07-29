@@ -20,9 +20,7 @@ from typing import Any
 from .errors import ResolverError, RoomOfflineError
 
 USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/138.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 )
 WEB_ENTER_URL = "https://live.douyin.com/webcast/room/web/enter/"
 
@@ -54,7 +52,6 @@ GEAR_RANK = {
     "origion": 70,
     "original": 70,
 }
-
 
 
 @dataclasses.dataclass
@@ -281,10 +278,7 @@ def _modern_candidates(source: str, container: dict[str, Any]) -> list[StreamCan
             sdk_params = _as_dict(line_obj.get("sdk_params"))
             target_origin_bitrate = max(
                 target_origin_bitrate,
-                _to_int(
-                    sdk_params.get("TargetOriginBitRate")
-                    or sdk_params.get("target_origin_bitrate")
-                ),
+                _to_int(sdk_params.get("TargetOriginBitRate") or sdk_params.get("target_origin_bitrate")),
             )
 
     for gear_raw, gear_value in data.items():
@@ -295,9 +289,7 @@ def _modern_candidates(source: str, container: dict[str, Any]) -> list[StreamCan
 
         line_names = [name for name in ("main", "backup") if name in gear_obj]
         line_names.extend(
-            name
-            for name, value in gear_obj.items()
-            if name not in line_names and isinstance(_jsonish(value), dict)
+            name for name, value in gear_obj.items() if name not in line_names and isinstance(_jsonish(value), dict)
         )
 
         for line in line_names:
@@ -368,9 +360,7 @@ def _modern_candidates(source: str, container: dict[str, Any]) -> list[StreamCan
             gear = str(play.get("quality_name") or "default")
             metadata = quality_meta.get(_normal_gear(gear), {})
             sdk_params = _as_dict(play.get("params"))
-            width, height = _parse_resolution(
-                sdk_params.get("resolution") or metadata.get("resolution")
-            )
+            width, height = _parse_resolution(sdk_params.get("resolution") or metadata.get("resolution"))
             candidates.append(
                 StreamCandidate(
                     source=f"{source}.{field_name}",
@@ -379,18 +369,14 @@ def _modern_candidates(source: str, container: dict[str, Any]) -> list[StreamCan
                     protocol=_detect_protocol(url, fallback_protocol),
                     url=url,
                     declared_bitrate=_to_int(
-                        
-                            target_origin_bitrate
-                            if _normal_gear(gear) == "origin" and target_origin_bitrate > 0
-                            else sdk_params.get("vbitrate") or metadata.get("v_bit_rate")
-                        
+                        target_origin_bitrate
+                        if _normal_gear(gear) == "origin" and target_origin_bitrate > 0
+                        else sdk_params.get("vbitrate") or metadata.get("v_bit_rate")
                     ),
                     width=width,
                     height=height,
                     fps=_to_float(sdk_params.get("fps") or metadata.get("fps")),
-                    codec=str(
-                        sdk_params.get("VCodec") or metadata.get("v_codec") or ""
-                    ),
+                    codec=str(sdk_params.get("VCodec") or metadata.get("v_codec") or ""),
                     display_name=str(metadata.get("name") or ""),
                     default=_normal_gear(gear) in defaults,
                     rank_hint=_known_rank(gear),
@@ -432,9 +418,7 @@ def _legacy_candidates(source: str, container: dict[str, Any]) -> list[StreamCan
                     line="main",
                     protocol=_detect_protocol(raw_url, fallback_protocol),
                     url=raw_url.strip(),
-                    declared_bitrate=_to_int(
-                        sdk_params.get("vbitrate") or sdk_params.get("v_bit_rate")
-                    ),
+                    declared_bitrate=_to_int(sdk_params.get("vbitrate") or sdk_params.get("v_bit_rate")),
                     width=width,
                     height=height,
                     fps=_to_float(sdk_params.get("fps")),
@@ -816,4 +800,3 @@ def _format_bitrate(value: int) -> str:
     if not value:
         return "-"
     return f"{value / 1_000_000:.3f}M"
-
