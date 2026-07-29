@@ -22,6 +22,7 @@ from ..cloud import (
     WoPanClient,
 )
 from ..settings import Settings
+from .events import EventLog
 from .schemas import TaskStatus
 from .store import TaskStore
 
@@ -32,6 +33,9 @@ ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 JOB_RETENTION_SECONDS = 300
 MAX_JOBS = 100
 SPEED_WINDOW_SECONDS = 5.0
+# One broken credential fails every file; the run summary covers the rest.
+MAX_FAILURE_EVENTS_PER_RUN = 5
+TRIGGER_LABELS = {"manual": "手动", "scheduled": "定时"}
 # A rapid-upload hit jumps straight to 100%; refusing to divide by a near-zero
 # span keeps that from surfacing as an absurd rate.
 MIN_SPEED_SPAN_SECONDS = 1.0
@@ -154,9 +158,11 @@ class RecordingUploadService:
         clock: Clock | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        events: EventLog | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
+        self.events = events or EventLog(store)
         self._seed_config = CloudArchiveConfig.from_settings(settings)
         self._seed_config.validate()
         self._clock = clock or (lambda: datetime.now().astimezone())
@@ -279,6 +285,9 @@ class RecordingUploadService:
     async def _execute_run(self, trigger: str, config: CloudArchiveConfig) -> None:
         started_at = self._clock()
         self._last_execution = UploadExecution(trigger=trigger, status="running", started_at=started_at)
+        label = TRIGGER_LABELS.get(trigger, trigger)
+        targets = "、".join(name for name, _path in config.targets)
+        await self.events.info("upload", f"开始{label}归档到网盘", f"上传目标：{targets}" if targets else None)
         try:
             summary = await self.run_once(config)
         except asyncio.CancelledError:
@@ -300,6 +309,7 @@ class RecordingUploadService:
                 error=message,
             )
             logger.exception("网盘归档任务执行失败，本地文件保持不变")
+            await self.events.error("upload", f"{label}归档执行失败，本地文件保持不变", message)
             return
         self._last_execution = UploadExecution(
             trigger=trigger,
@@ -308,6 +318,18 @@ class RecordingUploadService:
             finished_at=self._clock(),
             summary=summary,
         )
+        detail = (
+            f"扫描 {summary.scanned_files} 个文件 · 跳过 {summary.skipped_files} 个 · "
+            f"上传 {summary.uploaded_copies} 个副本 · 清理本地 {summary.deleted_files} 个"
+        )
+        if summary.failed_files:
+            await self.events.warning(
+                "upload",
+                f"{label}归档完成，但有 {summary.failed_files} 个文件失败",
+                detail,
+            )
+        else:
+            await self.events.success("upload", f"{label}归档完成", detail)
 
     async def _create_client(self, target: UploadTarget, config: CloudArchiveConfig) -> CloudUploadClient:
         if target.name == "quark":
@@ -500,6 +522,12 @@ class RecordingUploadService:
                     except Exception as exc:
                         failed_files += 1
                         logger.error("录像归档失败，保留本地文件 %s：%s", candidate.path, exc)
+                        if failed_files <= MAX_FAILURE_EVENTS_PER_RUN:
+                            await self.events.error(
+                                "upload",
+                                f"{candidate.path.name} 归档失败，已保留本地文件",
+                                str(exc),
+                            )
                     else:
                         deleted_files += 1
                     uploaded_copies += record.uploaded_copies
@@ -732,7 +760,13 @@ class RecordingUploadService:
                 message = (" ".join(str(exc).split()) or type(exc).__name__)[:500]
                 self._finish_job(job, "failed", message)
                 logger.error("手动上传录像失败，保留本地文件 %s：%s", job.path, message)
+                await self.events.error("upload", f"{job.name} 上传失败，已保留本地文件", message)
             else:
                 self._finish_job(job, "success", None)
+                await self.events.success(
+                    "upload",
+                    f"{job.name} 已上传到网盘",
+                    f"已保存 {job.uploaded_copies} 个副本，本地文件已删除",
+                )
             finally:
                 await self._close_clients(clients)

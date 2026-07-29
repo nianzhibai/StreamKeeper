@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
@@ -30,6 +30,7 @@ from .cloud_login import (
     CloudLoginManager,
     CloudLoginSnapshot,
 )
+from .events import EventLog
 from .recordings import (
     RECORDING_MEDIA_TYPES,
     RecordingPreviewCache,
@@ -48,6 +49,7 @@ from .schemas import (
     CloudUploadExecutionView,
     CloudUploadSummaryView,
     CloudWoPanView,
+    EventCategory,
     InspectRequest,
     InspectResponse,
     LoginRequest,
@@ -57,6 +59,7 @@ from .schemas import (
     RecordingUploadJobView,
     RecordingUploadListView,
     RecordingUploadRequest,
+    RuntimeEventListView,
     SystemInfo,
     TaskConfig,
     TaskCreate,
@@ -70,6 +73,10 @@ from .uploader import RecordingUploadService, UploadJob
 # progress reports into a cadence a browser can actually render.
 UPLOAD_STREAM_HEARTBEAT_SECONDS = 15.0
 UPLOAD_STREAM_MIN_INTERVAL_SECONDS = 0.3
+# The activity-log page judges "is everything fine" over the last day.
+EVENT_SUMMARY_WINDOW_HOURS = 24
+
+CLOUD_PROVIDER_LABELS = {"quark": "夸克网盘", "wopan": "联通云盘"}
 
 _TASK_RESTART_FIELDS = frozenset(
     {
@@ -191,11 +198,13 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
-    scheduler = scheduler or TaskScheduler(store, settings)
+    event_log = EventLog(store)
+    scheduler = scheduler or TaskScheduler(store, settings, events=event_log)
     upload_service = upload_service or RecordingUploadService(
         settings,
         store,
         active_directories_provider=getattr(scheduler, "recording_output_directories", None),
+        events=event_log,
     )
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
@@ -226,6 +235,7 @@ def create_app(
             await store.save_cloud_upload_config(config.to_dict())
             await store.delete_cloud_credentials(provider)
             await upload_service.reconfigure(config)
+        await event_log.success("auth", f"{CLOUD_PROVIDER_LABELS[provider]}扫码登录成功，凭据已保存")
 
     if cloud_login_flow_factory is None:
         cloud_login_manager = CloudLoginManager(
@@ -244,11 +254,17 @@ def create_app(
         settings.prepare()
         await store.initialize()
         await store.sync_web_credentials(settings.web_username, settings.web_password)
+        await event_log.info(
+            "system",
+            f"服务已启动（v{__version__}）",
+            f"录像目录 {settings.recordings_dir} · 最多同时录制 {settings.max_concurrent_recordings} 个直播间",
+        )
         await scheduler.startup()
         await upload_service.startup()
         try:
             yield
         finally:
+            await event_log.info("system", "服务正在停止，已启用的任务会在下次启动时恢复")
             await cloud_login_manager.shutdown()
             await upload_service.shutdown()
             await scheduler.shutdown()
@@ -274,6 +290,7 @@ def create_app(
     app.state.upload_service = upload_service
     app.state.cloud_login_manager = cloud_login_manager
     app.state.recording_preview_cache = recording_preview_cache
+    app.state.event_log = event_log
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:
@@ -294,6 +311,7 @@ def create_app(
             raise HTTPException(status_code=409, detail="当前开发环境未启用登录认证")
 
         client_key = request.client.host if request.client else "unknown"
+        source = f"来源 IP {client_key}"
         if await store.is_login_blacklisted(client_key):
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
 
@@ -312,11 +330,14 @@ def create_app(
                 settings.login_window_seconds,
             )
             if blacklisted:
+                await event_log.error("auth", "登录失败次数达到上限，该 IP 已被禁止登录", source)
                 raise HTTPException(status_code=403, detail="登录失败次数达到上限，当前 IP 已被永久禁止登录")
+            await event_log.warning("auth", "登录失败：用户名或密码错误", source)
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
         if not await store.accept_login_success(client_key):
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
+        await event_log.info("auth", f"{settings.web_username} 登录成功", source)
         ttl_seconds = settings.session_ttl_hours * 3600
         token, session = await store.create_session(settings.web_username, ttl_seconds)
         set_session_cookie(
@@ -379,9 +400,25 @@ def create_app(
     async def recordings_page() -> FileResponse:
         return FileResponse(static_dir / "recordings.html", headers={"Cache-Control": "no-store"})
 
+    @app.get("/logs", include_in_schema=False)
+    async def logs_page() -> FileResponse:
+        return FileResponse(static_dir / "logs.html", headers={"Cache-Control": "no-store"})
+
     @app.get("/settings", include_in_schema=False)
     async def settings_page() -> FileResponse:
         return FileResponse(static_dir / "settings.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/events", response_model=RuntimeEventListView)
+    async def list_events(
+        limit: int = Query(default=200, ge=1, le=500),
+        category: EventCategory | None = None,
+        alerts_only: bool = False,
+    ) -> RuntimeEventListView:
+        events, summary = await asyncio.gather(
+            store.list_events(limit=limit, category=category, alerts_only=alerts_only),
+            store.event_summary(utc_now() - timedelta(hours=EVENT_SUMMARY_WINDOW_HOURS)),
+        )
+        return RuntimeEventListView(events=events, summary=summary)
 
     @app.get("/api/cloud/archive", response_model=CloudArchiveView)
     async def get_cloud_archive() -> CloudArchiveView:
@@ -470,6 +507,12 @@ def create_app(
             if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
                 await store.delete_cloud_credentials("wopan")
             await upload_service.reconfigure(config)
+        enabled = "、".join(CLOUD_PROVIDER_LABELS[name] for name, _path in config.targets)
+        await event_log.info(
+            "upload",
+            "网盘归档设置已更新",
+            f"已启用 {enabled}，每天 {config.upload_hour:02d}:00 自动归档" if enabled else "当前没有启用任何网盘",
+        )
         return await _cloud_archive_response(config, upload_service)
 
     @app.post("/api/cloud/archive/run", response_model=CloudArchiveView, status_code=status.HTTP_202_ACCEPTED)
@@ -507,9 +550,7 @@ def create_app(
     @app.get("/api/recordings/uploads/stream", include_in_schema=False, response_model=None)
     async def stream_recording_uploads() -> StreamingResponse:
         def snapshot() -> str:
-            view = RecordingUploadListView(
-                jobs=[_recording_upload_response(job) for job in upload_service.jobs()]
-            )
+            view = RecordingUploadListView(jobs=[_recording_upload_response(job) for job in upload_service.jobs()])
             return f"data: {view.model_dump_json()}\n\n"
 
         async def events() -> AsyncIterator[str]:

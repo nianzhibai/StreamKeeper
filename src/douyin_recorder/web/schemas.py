@@ -12,6 +12,8 @@ from ..settings import CLOUD_ARCHIVE_ROOT
 Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
 SourcePreference = Literal["auto", "flv", "hls"]
+EventLevel = Literal["info", "success", "warning", "error"]
+EventCategory = Literal["system", "task", "upload", "auth"]
 
 
 class TaskStatus(str, Enum):
@@ -110,6 +112,29 @@ class TaskRecord(TaskConfig):
     recording_elapsed_seconds: float | None = None
     recording_segment_index: int | None = None
     recording_segment_progress: float | None = None
+
+
+class RuntimeEventView(StrictModel):
+    id: int
+    created_at: datetime
+    category: EventCategory
+    level: EventLevel
+    message: str
+    detail: str | None = None
+
+
+class RuntimeEventSummaryView(StrictModel):
+    """Counters over the last day, so the page can answer "一切正常吗" at a glance."""
+
+    total: int
+    errors: int
+    warnings: int
+    latest_at: datetime | None
+
+
+class RuntimeEventListView(StrictModel):
+    events: list[RuntimeEventView]
+    summary: RuntimeEventSummaryView
 
 
 class InspectRequest(StrictModel):

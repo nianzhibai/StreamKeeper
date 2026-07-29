@@ -212,8 +212,8 @@ class WebTests(TestCase):
         recording_page = self.client.get("/recordings")
         self.assertIn('id="recording-player"', recording_page.text)
         self.assertIn('id="recording-download"', recording_page.text)
-        self.assertIn('/static/artplayer.css?v=5.4.1', recording_page.text)
-        self.assertIn('/static/artplayer.js?v=5.4.1', recording_page.text)
+        self.assertIn("/static/artplayer.css?v=5.4.1", recording_page.text)
+        self.assertIn("/static/artplayer.js?v=5.4.1", recording_page.text)
         self.assertNotIn('id="recording-play-toggle"', recording_page.text)
         self.assertNotIn('id="recording-player-seek"', recording_page.text)
         player_script = self.client.get("/static/recordings.js").text
@@ -669,6 +669,46 @@ class WebTests(TestCase):
             json={"username": "admin", "password": "secret-password"},
         )
         self.assertEqual(accepted.status_code, 200)
+
+    def test_activity_log_page_lists_curated_events_with_filters(self) -> None:
+        self.login()
+        page = self.client.get("/logs")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("运行日志", page.text)
+        self.assertIn('id="log-list"', page.text)
+        self.assertIn("运行日志", self.client.get("/static/shell.js").text)
+
+        self.client.post("/api/auth/login", json={"username": "admin", "password": "wrong-password"})
+
+        payload = self.client.get("/api/events").json()
+        events = payload["events"]
+        self.assertEqual(events[0]["message"], "登录失败：用户名或密码错误")
+        self.assertEqual(events[0]["level"], "warning")
+        self.assertEqual(events[0]["detail"], "来源 IP testclient")
+        self.assertEqual(events[0]["category"], "auth")
+        self.assertEqual([event["message"] for event in events[1:]][:1], ["admin 登录成功"])
+        self.assertTrue(events[-1]["message"].startswith("服务已启动"))
+        self.assertEqual(events[-1]["category"], "system")
+        self.assertEqual(payload["summary"]["warnings"], 1)
+        self.assertEqual(payload["summary"]["errors"], 0)
+        self.assertEqual(payload["summary"]["total"], len(events))
+        self.assertEqual(payload["summary"]["latest_at"], events[0]["created_at"])
+
+        auth_only = self.client.get("/api/events?category=auth").json()["events"]
+        self.assertEqual({event["category"] for event in auth_only}, {"auth"})
+        alerts = self.client.get("/api/events?alerts_only=true").json()["events"]
+        self.assertEqual([event["message"] for event in alerts], ["登录失败：用户名或密码错误"])
+        self.assertEqual(len(self.client.get("/api/events?limit=1").json()["events"]), 1)
+        self.assertEqual(self.client.get("/api/events?category=nope").status_code, 422)
+        self.assertEqual(self.client.get("/api/events?limit=501").status_code, 422)
+
+    def test_activity_log_keeps_only_the_newest_entries(self) -> None:
+        store = TaskStore(self.settings.database_path)
+        for index in range(5):
+            asyncio.run(store.append_event("system", "info", f"事件 {index}", retention=3))
+
+        events = asyncio.run(store.list_events(limit=10))
+        self.assertEqual([event.message for event in events], ["事件 4", "事件 3", "事件 2"])
 
     def test_rejects_unknown_fields_and_invalid_url(self) -> None:
         self.login()

@@ -2,9 +2,11 @@ import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, patch
 
 from douyin_recorder.models import LiveInfo, RecordingResult, SelectedSource
 from douyin_recorder.settings import Settings
+from douyin_recorder.web import scheduler as scheduler_module
 from douyin_recorder.web.scheduler import TaskScheduler
 from douyin_recorder.web.schemas import TaskConfig, TaskStatus
 from douyin_recorder.web.store import TaskStore
@@ -210,3 +212,61 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertEqual(enriched.recording_segment_index, 2)
         self.assertAlmostEqual(enriched.recording_segment_progress or 0.0, 50 / 1800, places=4)
         await scheduler.shutdown()
+
+    async def test_recording_lifecycle_is_written_to_the_activity_log(self) -> None:
+        task = await self.store.create(make_config(monitor=False))
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: FakeClient(make_info(True)),
+            recorder_factory=FakeRecorder,
+        )
+
+        await scheduler.start(task.id)
+        await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
+        await scheduler.shutdown()
+        messages = [event.message for event in await self.store.list_events(limit=20)]
+
+        self.assertIn("「测试主播」录制完成，单次任务已结束", messages)
+        self.assertIn("「测试主播」已开播，开始录制", messages)
+        self.assertIn(f"「{task.url}」已启动", messages)
+        # Nothing but the three milestones: a poll loop must not flood the page.
+        self.assertEqual(len(messages), 3)
+
+    async def test_repeated_check_failures_report_once_and_then_recovery(self) -> None:
+        """A room that keeps failing must not fill the page with one entry per retry."""
+        task = await self.store.create(make_config(monitor=True))
+        scheduler = TaskScheduler(self.store, self.settings)
+        record = await self.store.get(task.id)
+        assert record is not None
+
+        failure = RuntimeError("抖音接口返回空数据")
+        with patch.object(scheduler_module.asyncio, "sleep", AsyncMock()):
+            self.assertTrue(await scheduler._record_failure(record, failure, stage="检查开播状态"))
+            self.assertTrue(await scheduler._record_failure(record, failure, stage="检查开播状态"))
+        await scheduler._clear_failure(record)
+
+        events = [(event.level, event.message, event.detail) for event in await self.store.list_events(limit=20)]
+        self.assertEqual(
+            events,
+            [
+                ("success", f"「{task.url}」已恢复正常", None),
+                ("error", f"「{task.url}」检查开播状态失败，将每 10 秒重试", "抖音接口返回空数据"),
+            ],
+        )
+
+    async def test_restart_reports_the_config_change_once(self) -> None:
+        task = await self.store.create(make_config(monitor=True))
+        await self.store.update_runtime(task.id, enabled=True, anchor_name="测试主播")
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: FakeClient(make_info(False)),
+        )
+
+        await scheduler.restart(task.id)
+        await scheduler.shutdown()
+        messages = [event.message for event in await self.store.list_events(limit=20)]
+
+        # Restarting for a config change is one entry, not a stop plus a start.
+        self.assertEqual(messages, ["「测试主播」配置已更新，正在按新配置重新录制"])

@@ -46,6 +46,7 @@
     shield: '<path d="M12 3.4 5.2 6.1v5c0 4.3 2.9 8.2 6.8 9.4 3.9-1.2 6.8-5.1 6.8-9.4v-5z"/><path d="m9.3 11.9 2 2 3.4-3.6"/>',
     key: '<circle cx="8.2" cy="15.8" r="3.6"/><path d="m10.8 13.2 7.4-7.4M15.6 8.4l2 2M18 6l2 2"/>',
     layers: '<path d="m12 3.6 8.4 4.2-8.4 4.2L3.6 7.8z"/><path d="m3.6 12 8.4 4.2 8.4-4.2M3.6 16.2l8.4 4.2 8.4-4.2"/>',
+    logs: '<path d="M4.6 6.6h.01M4.6 12h.01M4.6 17.4h.01"/><path d="M9.2 6.6h10.2M9.2 12h10.2M9.2 17.4h6.6"/>',
   };
 
   var parts = ['<svg id="icon-sprite" aria-hidden="true" focusable="false">'];

@@ -201,6 +201,35 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(service.last_execution.status, "success")
         self.assertEqual(service.last_execution.summary.deleted_files, 1)
 
+    async def test_archive_run_reports_start_and_outcome_to_the_activity_log(self) -> None:
+        make_old_file(self.settings.recordings_dir / "主播" / "ok.ts", b"video", self.now)
+        make_old_file(self.settings.recordings_dir / "主播" / "broken.ts", b"video", self.now)
+        clients = {
+            "quark": FakeUploadClient(),
+            "wopan": FakeUploadClient(fail_fragment="broken.ts"),
+        }
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            clock=lambda: self.now,
+        )
+
+        self.assertTrue(await service.trigger("scheduled"))
+        await service._active_run
+        events = [(event.level, event.message) for event in await self.store.list_events(limit=20)]
+
+        self.assertEqual(
+            events,
+            [
+                ("warning", "定时归档完成，但有 1 个文件失败"),
+                ("error", "broken.ts 归档失败，已保留本地文件"),
+                ("info", "开始定时归档到网盘"),
+            ],
+        )
+        # broken.ts reached quark before wopan rejected it, so three copies landed.
+        self.assertIn("上传 3 个副本", (await self.store.list_events(limit=1))[0].detail)
+
 
 class ManualRecordingUploadTests(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:

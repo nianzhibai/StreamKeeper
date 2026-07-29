@@ -2436,6 +2436,90 @@ select.input {
 }
 
 /* ==========================================================================
+   Activity log
+   ========================================================================== */
+
+.hero-facts dd.is-bad {
+  color: var(--bad);
+}
+
+.log-list {
+  padding: 6px 10px 12px;
+  margin: 0;
+  list-style: none;
+}
+
+.log-row {
+  display: grid;
+  align-items: start;
+  gap: 4px 12px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  padding: 11px 12px;
+  border-radius: var(--r);
+  transition: background var(--dur) var(--ease);
+}
+
+.log-row + .log-row {
+  box-shadow: inset 0 1px 0 var(--line);
+}
+
+.log-row:hover {
+  background: var(--hover);
+  box-shadow: none;
+}
+
+.log-row:hover + .log-row {
+  box-shadow: none;
+}
+
+.log-mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--tone-soft);
+  color: var(--tone);
+}
+
+.log-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 3px;
+}
+
+.log-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.log-top strong {
+  font-size: 13px;
+  font-weight: 570;
+  line-height: 1.5;
+}
+
+.log-body small {
+  color: var(--fg-3);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.log-time {
+  padding-top: 5px;
+  color: var(--fg-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
    Settings
    ========================================================================== */
 
@@ -2890,7 +2974,7 @@ select.input {
     z-index: 40;
     display: grid;
     height: calc(var(--tab-h) + env(safe-area-inset-bottom));
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0;
     margin: 0;
     padding: 6px 6px env(safe-area-inset-bottom);
@@ -2995,6 +3079,11 @@ select.input {
   .file-ops { opacity: 1; }
   .file-ops span { display: none; }
   .file-progress { padding-left: 12px; }
+
+  .log-list { padding: 6px; }
+  .log-row { grid-template-columns: 26px minmax(0, 1fr); }
+  .log-mark { width: 26px; height: 26px; }
+  .log-time { grid-column: 2; padding-top: 0; }
 
   .form-grid,
   .form-grid-3 { grid-template-columns: minmax(0, 1fr); }

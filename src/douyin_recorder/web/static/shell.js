@@ -5,6 +5,7 @@ const NAVIGATION = [
   { page: "tasks", href: "/tasks", label: "录制任务", icon: "record" },
   { page: "recordings", href: "/recordings", label: "本地录像", icon: "video" },
   { page: "archive", href: "/archive", label: "网盘归档", icon: "cloud" },
+  { page: "logs", href: "/logs", label: "运行日志", icon: "logs" },
   { page: "settings", href: "/settings", label: "设置", icon: "settings" },
 ];
 

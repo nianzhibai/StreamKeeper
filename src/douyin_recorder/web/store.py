@@ -14,7 +14,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .schemas import TaskConfig, TaskRecord, TaskStatus
+from .schemas import (
+    EventCategory,
+    EventLevel,
+    RuntimeEventSummaryView,
+    RuntimeEventView,
+    TaskConfig,
+    TaskRecord,
+    TaskStatus,
+)
 
 CONFIG_COLUMNS = {
     "url",
@@ -174,6 +182,21 @@ class TaskStore:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    detail TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runtime_events_created_at ON runtime_events (created_at)"
             )
             connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
 
@@ -644,6 +667,94 @@ class TaskStore:
                     TaskStatus.RECORDING.value,
                 ),
             )
+
+    async def append_event(
+        self,
+        category: EventCategory,
+        level: EventLevel,
+        message: str,
+        detail: str | None = None,
+        *,
+        retention: int,
+    ) -> None:
+        await asyncio.to_thread(self._append_event_sync, category, level, message, detail, retention)
+
+    def _append_event_sync(
+        self,
+        category: str,
+        level: str,
+        message: str,
+        detail: str | None,
+        retention: int,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO runtime_events (created_at, category, level, message, detail)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (utc_now().isoformat(), category, level, message, detail),
+            )
+            # Trimming on write keeps the log bounded without a separate cleanup job.
+            connection.execute(
+                "DELETE FROM runtime_events WHERE id <= (SELECT MAX(id) FROM runtime_events) - ?",
+                (retention,),
+            )
+
+    async def list_events(
+        self,
+        *,
+        limit: int,
+        category: EventCategory | None = None,
+        alerts_only: bool = False,
+    ) -> list[RuntimeEventView]:
+        return await asyncio.to_thread(self._list_events_sync, limit, category, alerts_only)
+
+    def _list_events_sync(
+        self,
+        limit: int,
+        category: str | None,
+        alerts_only: bool,
+    ) -> list[RuntimeEventView]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        if category is not None:
+            conditions.append("category = ?")
+            params.append(category)
+        if alerts_only:
+            conditions.append("level IN ('warning', 'error')")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                # Only the fixed fragments above are interpolated; values stay bound.
+                "SELECT id, created_at, category, level, message, detail FROM runtime_events "
+                f"{where} ORDER BY id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return [RuntimeEventView.model_validate(dict(row)) for row in rows]
+
+    async def event_summary(self, since: datetime) -> RuntimeEventSummaryView:
+        return await asyncio.to_thread(self._event_summary_sync, since)
+
+    def _event_summary_sync(self, since: datetime) -> RuntimeEventSummaryView:
+        cutoff = since.isoformat()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM runtime_events) AS total,
+                    (SELECT COUNT(*) FROM runtime_events WHERE level = 'error' AND created_at > ?) AS errors,
+                    (SELECT COUNT(*) FROM runtime_events WHERE level = 'warning' AND created_at > ?) AS warnings,
+                    (SELECT created_at FROM runtime_events ORDER BY id DESC LIMIT 1) AS latest_at
+                """,
+                (cutoff, cutoff),
+            ).fetchone()
+        return RuntimeEventSummaryView(
+            total=row["total"],
+            errors=row["errors"],
+            warnings=row["warnings"],
+            latest_at=datetime.fromisoformat(row["latest_at"]) if row["latest_at"] else None,
+        )
 
     @staticmethod
     def _session_token_hash(token: str) -> str:
