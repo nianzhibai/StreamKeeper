@@ -200,3 +200,91 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
         family = await self._capture_create_directory_param("family-1")
         self.assertEqual(family["spaceType"], "1")
         self.assertEqual(family["familyId"], "family-1")
+
+    async def test_upload_sanitizes_emoji_remote_path(self) -> None:
+        """Anchor names with emoji must be folded before CreateDirectory and upload2C."""
+
+        directories: dict[str, list[dict[str, object]]] = {"0": []}
+        created_names: list[str] = []
+        leaf_id = "0"
+        upload_body: bytes | None = None
+        client: WoPanClient
+
+        def dispatcher_response(data: object) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "STATUS": "200",
+                    "MSG": "ok",
+                    "RSP": {"RSP_CODE": "0000", "RSP_DESC": "ok", "DATA": client._encrypt(data, "wohome")},
+                },
+            )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal upload_body, leaf_id
+            if request.url.host == "upload.example":
+                upload_body = await request.aread()
+                directories[leaf_id].append(
+                    {
+                        "id": "file-1",
+                        "fid": "fid-1",
+                        "name": "兔兔兔奶糖_2026-08-01_00-00-00_000.ts",
+                        "size": 6,
+                        "type": 1,
+                    }
+                )
+                return httpx.Response(200, json={"code": "0000", "data": {"fid": "fid-1"}, "msg": "ok"})
+
+            self.assertEqual(request.url.host, "panservice.mail.wo.cn")
+            body = json.loads(await request.aread())
+            param = client._decrypt(body["body"]["param"], "wohome")
+            key = body["header"]["key"]
+            if key == "QueryAllFiles":
+                return dispatcher_response({"files": directories.get(str(param["parentDirectoryId"]), [])})
+            if key == "CreateDirectory":
+                created_names.append(str(param["directoryName"]))
+                leaf_id = f"directory-{len(created_names)}"
+                parent = str(param["parentDirectoryId"])
+                directories.setdefault(parent, []).append(
+                    {"id": leaf_id, "fid": "0", "name": param["directoryName"], "size": 0, "type": 0}
+                )
+                directories[leaf_id] = []
+                return dispatcher_response({"id": leaf_id})
+            if key == "GetZoneInfo":
+                return dispatcher_response({"url": "https://upload.example"})
+            return httpx.Response(500, text=f"unexpected key {key}")
+
+        client = WoPanClient(
+            "access-token-1234567890",
+            "refresh-token",
+            transport=httpx.MockTransport(handler),
+            sleep=no_sleep,
+        )
+        try:
+            with TemporaryDirectory() as tmp:
+                local_path = Path(tmp) / "local.ts"
+                local_path.write_bytes(b"abcdef")
+                remote_path = "/DouYinStreamKeeper/兔兔兔奶糖🍬/2026-08-01/兔兔兔奶糖🍬_2026-08-01_00-00-00_000.ts"
+                self.assertTrue(await client.upload_verified(local_path, remote_path))
+                # The dedup check walks the sanitized path and finds the same size.
+                self.assertFalse(await client.upload_verified(local_path, remote_path))
+        finally:
+            await client.aclose()
+
+        self.assertEqual(created_names, ["DouYinStreamKeeper", "兔兔兔奶糖", "2026-08-01"])
+        assert upload_body is not None
+        self.assertIn('filename="兔兔兔奶糖_2026-08-01_00-00-00_000.ts"'.encode(), upload_body)
+
+    def test_sanitize_name_folds_characters_wopan_rejects(self) -> None:
+        sanitize = WoPanClient._sanitize_name
+
+        self.assertEqual(sanitize("兔兔兔奶糖🍬"), "兔兔兔奶糖")
+        self.assertEqual(sanitize("猫猫k-"), "猫猫k-")
+        self.assertEqual(sanitize('a/b\\c:d*e?f"g<h>i|j'), "a_b_c_d_e_f_g_h_i_j")
+        self.assertEqual(sanitize("a\x00b\x1fc"), "a_b_c")
+        self.assertEqual(sanitize("   🍬   "), "未命名")
+        self.assertEqual(sanitize(""), "未命名")
+        self.assertEqual(sanitize("🍬", fallback="recording"), "recording")
+        # CJK and everyday punctuation survive, and the result is idempotent.
+        self.assertEqual(sanitize("兔兔兔奶糖 直播（高清）"), "兔兔兔奶糖 直播（高清）")
+        self.assertEqual(sanitize(sanitize("a🍬b/ c")), sanitize("a🍬b/ c"))

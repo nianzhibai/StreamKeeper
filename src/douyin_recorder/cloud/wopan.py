@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import random
+import re
 import secrets
 import string
 import time
@@ -34,6 +35,12 @@ _USER_AGENT = (
 )
 _VIDEO_FILE_TYPES = frozenset({".flv", ".mkv", ".mp4", ".ts"})
 _Sleep = Callable[[float], Awaitable[None]]
+# Control characters plus the reserved set most cloud drives reject.
+_INVALID_NAME_CHARS = re.compile(r'[\x00-\x1f\x7f\\/:*?"<>|]')
+# Emoji and the rest of the supplementary plane are rejected by the WoPan API
+# with code=1009 名称中含有非法字符, so fold them into "_". CJK and ASCII
+# letters/digits are safe.
+_ASTRAL_CHARS = re.compile(r"[\U00010000-\U0010FFFF]")
 
 
 class WoPanClient:
@@ -239,6 +246,20 @@ class WoPanClient:
     def _named_entry(entries: list[RemoteEntry], name: str) -> RemoteEntry | None:
         return next((entry for entry in entries if entry.name == name), None)
 
+    @staticmethod
+    def _sanitize_name(value: str, fallback: str = "未命名") -> str:
+        """Fold characters the WoPan API rejects into "_".
+
+        Anchor names may carry emoji (e.g. ``兔兔兔奶糖🍬``) that CreateDirectory
+        answers with code=1009 名称中含有非法字符. Everything else, including CJK,
+        is kept so remote names stay recognizable.
+        """
+
+        cleaned = _INVALID_NAME_CHARS.sub("_", value)
+        cleaned = _ASTRAL_CHARS.sub("_", cleaned)
+        cleaned = re.sub(r"_+", "_", cleaned).strip(" ._")
+        return cleaned or fallback
+
     async def _walk_directories(self, parts: list[str], *, create: bool) -> str | None:
         parent_id = self.root_id
         for name in parts:
@@ -279,6 +300,8 @@ class WoPanClient:
 
     async def remote_size(self, remote_path: str) -> int | None:
         directory_parts, filename = split_remote_file(remote_path)
+        directory_parts = [self._sanitize_name(part) for part in directory_parts]
+        filename = self._sanitize_name(filename, fallback="recording")
         parent_id = await self._walk_directories(directory_parts, create=False)
         if parent_id is None:
             return None
@@ -491,6 +514,11 @@ class WoPanClient:
             )
 
         directory_parts, filename = split_remote_file(remote_path)
+        directory_parts = [self._sanitize_name(part) for part in directory_parts]
+        filename = self._sanitize_name(filename, fallback="recording")
+        sanitized_path = "/" + "/".join([*directory_parts, filename])
+        if sanitized_path != remote_path:
+            logger.info("联通云盘不支持远端名称中的部分字符，已替换后上传：%s -> %s", remote_path, sanitized_path)
         parent_id = await self._walk_directories(directory_parts, create=True)
         assert parent_id is not None
         await self._upload(local_path, filename, parent_id, progress)
