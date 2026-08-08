@@ -175,13 +175,13 @@ class ClientTests(IsolatedAsyncioTestCase):
 
     async def test_share_text_extracts_short_url(self) -> None:
         share_text = (
-            "7- #在抖音，记录美好生活#【爱雄泽】正在直播，来和我一起支持Ta吧。"
+            "8- #在抖音，记录美好生活#【痘痘小王（日常号）】正在直播，来和我一起支持Ta吧。"
             "复制下方链接，打开【抖音】，直接观看直播！ "
-            "https://v.douyin.com/eAb3MZKYD48/ 9@7.com :4pm"
+            "https://v.douyin.com/S5jFGCPcYxM/ 5@7.com :7pm"
         )
 
         await self.client.fetch(share_text)
-        self.assertEqual(self.web.targets[-1], "https://v.douyin.com/eAb3MZKYD48/")
+        self.assertEqual(self.web.targets[-1], "https://v.douyin.com/S5jFGCPcYxM/")
 
 
 class UrlValidationTests(TestCase):

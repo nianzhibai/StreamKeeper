@@ -23,6 +23,8 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 )
 WEB_ENTER_URL = "https://live.douyin.com/webcast/room/web/enter/"
+_WEBCAST_REFLOW_PATH = re.compile(r"^/douyin/webcast/reflow/(\d{15,})/?$")
+_RSC_PUSH_PATTERN = re.compile(r"self\.__rsc_f\.push\((\[.*?\])\)</script>", re.DOTALL)
 
 SOURCE_GEARS = {
     "origin",
@@ -630,20 +632,28 @@ class DouyinWebClient:
         web_rid = ""
         room_id = ""
         parsed = urllib.parse.urlsplit(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
         query = urllib.parse.parse_qs(parsed.query)
         if query.get("web_rid"):
             web_rid = query["web_rid"][0]
         if query.get("room_id"):
             room_id = query["room_id"][0]
 
-        if parsed.netloc.endswith("live.douyin.com"):
+        if host == "live.douyin.com":
             segment = parsed.path.strip("/").split("/")[0]
             if segment and segment not in {"hot_live", "category", "search"}:
                 web_rid = segment
-        elif parsed.netloc.endswith("www.douyin.com"):
+        elif host == "www.douyin.com":
             follow = re.fullmatch(r"/follow/live/(\d+)/?", parsed.path)
             if follow:
                 web_rid = follow.group(1)
+        elif host == "webcast.amemv.com":
+            # Current live-share short links can redirect here instead of a
+            # live.douyin.com room page.  The reflow path contains the room ID
+            # even when the response body is a 404 page.
+            reflow = _WEBCAST_REFLOW_PATH.fullmatch(parsed.path)
+            if reflow:
+                room_id = room_id or reflow.group(1)
 
         patterns = (
             ("web", r'(?:\\?"web_rid\\?"\s*:\s*\\?")(\d+)'),
@@ -662,15 +672,15 @@ class DouyinWebClient:
                 room_id = match.group(1)
         return web_rid, room_id
 
-    def resolve_ids(self, target: str) -> tuple[str, str, str]:
+    def _resolve_ids_and_page(self, target: str) -> tuple[str, str, str, str]:
         target = target.strip()
         if re.fullmatch(r"\d+", target):
             if len(target) >= 16:
-                return "", target, "https://live.douyin.com/"
+                return "", target, "https://live.douyin.com/", ""
             page_url = f"https://live.douyin.com/{target}"
             body, final_url = self._request(page_url)
             web_rid, room_id = self._ids_from_url_and_html(final_url, body)
-            return web_rid or target, room_id, final_url
+            return web_rid or target, room_id, final_url, body
 
         if not re.match(r"^https?://", target, flags=re.I):
             match = re.search(r"https?://[^\s]+", target)
@@ -684,7 +694,68 @@ class DouyinWebClient:
             web_rid, room_id = self._ids_from_url_and_html(target, body)
         if not web_rid and not room_id:
             raise ResolverError(f"无法从分享链接解析直播间标识：{final_url}")
+        return web_rid, room_id, final_url, body
+
+    def resolve_ids(self, target: str) -> tuple[str, str, str]:
+        web_rid, room_id, final_url, _ = self._resolve_ids_and_page(target)
         return web_rid, room_id, final_url
+
+    @staticmethod
+    def _reflow_room_from_html(url: str, body: str) -> dict[str, Any] | None:
+        """Extract the room payload embedded in current live-share reflow pages."""
+        parsed = urllib.parse.urlsplit(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if host != "webcast.amemv.com" or not _WEBCAST_REFLOW_PATH.fullmatch(parsed.path):
+            return None
+
+        def find_room(value: Any) -> dict[str, Any] | None:
+            if isinstance(value, dict):
+                data = value.get("data")
+                if isinstance(data, dict) and isinstance(data.get("room"), dict):
+                    return data["room"]
+                for child in value.values():
+                    room = find_room(child)
+                    if room is not None:
+                        return room
+            elif isinstance(value, list):
+                for child in value:
+                    room = find_room(child)
+                    if room is not None:
+                        return room
+            return None
+
+        for match in _RSC_PUSH_PATTERN.finditer(body):
+            try:
+                frame = json.loads(match.group(1))
+                chunk = frame[1] if isinstance(frame, list) and len(frame) > 1 else ""
+                _, payload = chunk.split(":", 1)
+                room = find_room(json.loads(payload))
+            except (AttributeError, IndexError, TypeError, ValueError):
+                continue
+            if room is None:
+                continue
+
+            normalized = dict(room)
+            normalized["id_str"] = str(room.get("idStr") or room.get("id") or "")
+            stream = _as_dict(room.get("streamUrl"))
+            if stream:
+                normalized["stream_url"] = {
+                    "candidate_resolution": stream.get("candidateResolution"),
+                    "default_resolution": stream.get("defaultResolution"),
+                    "resolution_name": stream.get("resolutionName"),
+                    "extra": stream.get("extra"),
+                    "flv_pull_url": stream.get("flvPullUrl"),
+                    "flv_pull_url_params": stream.get("flvPullUrlParams"),
+                    "hls_pull_url_map": stream.get("hlsPullUrlMap"),
+                    "hls_pull_url_params": stream.get("hlsPullUrlParams"),
+                    "rtmp_pull_url": stream.get("rtmpPullUrl"),
+                    "rtmp_pull_url_params": stream.get("rtmpPullUrlParams"),
+                    "hls_pull_url": stream.get("hlsPullUrl"),
+                    "stream_orientation": stream.get("streamOrientation"),
+                }
+                normalized["stream_orientation"] = stream.get("streamOrientation")
+            return normalized
+        return None
 
     def fetch_room(self, web_rid: str, room_id: str = "") -> RoomResult:
         referer = f"https://live.douyin.com/{web_rid}" if web_rid else "https://live.douyin.com/"
@@ -792,7 +863,20 @@ class DouyinWebClient:
                 owner=str(owner_obj.get("nickname") or ""),
             )
 
-        web_rid, room_id, _ = self.resolve_ids(target)
+        web_rid, room_id, final_url, body = self._resolve_ids_and_page(target)
+        reflow_room = self._reflow_room_from_html(final_url, body)
+        if reflow_room is not None:
+            owner_obj = _as_dict(reflow_room.get("owner"))
+            resolved_room_id = str(reflow_room.get("id_str") or room_id)
+            return RoomResult(
+                room=reflow_room,
+                response={"data": {"data": [reflow_room]}},
+                web_rid=web_rid,
+                room_id=resolved_room_id,
+                title=str(reflow_room.get("title") or ""),
+                owner=str(owner_obj.get("nickname") or ""),
+                referer=final_url,
+            )
         return self.fetch_room(web_rid, room_id)
 
 
