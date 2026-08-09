@@ -6,7 +6,7 @@ import json
 import secrets
 import sqlite3
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -17,6 +17,7 @@ from typing import Any
 from .schemas import (
     EventCategory,
     EventLevel,
+    RuntimeEventFacetsView,
     RuntimeEventSummaryView,
     RuntimeEventView,
     TaskConfig,
@@ -197,6 +198,15 @@ class TaskStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runtime_events_created_at ON runtime_events (created_at)"
+            )
+            event_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runtime_events)").fetchall()}
+            if "task_id" not in event_columns:
+                connection.execute("ALTER TABLE runtime_events ADD COLUMN task_id TEXT")
+            # Filtering the log down to one recording is the common drill-down, and
+            # level/category drive the facet counts on every page load.
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_runtime_events_task_id ON runtime_events (task_id)")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runtime_events_level_category ON runtime_events (level, category)"
             )
             connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
 
@@ -676,8 +686,9 @@ class TaskStore:
         detail: str | None = None,
         *,
         retention: int,
+        task_id: str | None = None,
     ) -> None:
-        await asyncio.to_thread(self._append_event_sync, category, level, message, detail, retention)
+        await asyncio.to_thread(self._append_event_sync, category, level, message, detail, retention, task_id)
 
     def _append_event_sync(
         self,
@@ -686,14 +697,15 @@ class TaskStore:
         message: str,
         detail: str | None,
         retention: int,
+        task_id: str | None = None,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO runtime_events (created_at, category, level, message, detail)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO runtime_events (created_at, category, level, message, detail, task_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (utc_now().isoformat(), category, level, message, detail),
+                (utc_now().isoformat(), category, level, message, detail, task_id),
             )
             # Trimming on write keeps the log bounded without a separate cleanup job.
             connection.execute(
@@ -701,37 +713,177 @@ class TaskStore:
                 (retention,),
             )
 
+    @staticmethod
+    def _event_filters(
+        *,
+        categories: Sequence[str] | None,
+        levels: Sequence[str] | None,
+        search: str | None,
+        task_id: str | None,
+        before_id: int | None,
+        after_id: int | None,
+    ) -> tuple[str, list[Any]]:
+        """Builds the shared WHERE clause for listing, counting and exporting.
+
+        Only placeholders derived from the caller's list lengths are interpolated;
+        every value stays bound.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if categories:
+            conditions.append(f"category IN ({', '.join('?' * len(categories))})")
+            params.extend(categories)
+        if levels:
+            conditions.append(f"level IN ({', '.join('?' * len(levels))})")
+            params.extend(levels)
+        if task_id:
+            conditions.append("task_id = ?")
+            params.append(task_id)
+        if search:
+            # LIKE wildcards in the user's text are escaped so a literal % or _
+            # searches for itself instead of matching everything.
+            pattern = f"%{search.replace('!', '!!').replace('%', '!%').replace('_', '!_')}%"
+            conditions.append("(message LIKE ? ESCAPE '!' OR detail LIKE ? ESCAPE '!')")
+            params.extend((pattern, pattern))
+        if before_id is not None:
+            conditions.append("id < ?")
+            params.append(before_id)
+        if after_id is not None:
+            conditions.append("id > ?")
+            params.append(after_id)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        return where, params
+
     async def list_events(
         self,
         *,
         limit: int,
         category: EventCategory | None = None,
         alerts_only: bool = False,
+        categories: Sequence[EventCategory] | None = None,
+        levels: Sequence[EventLevel] | None = None,
+        search: str | None = None,
+        task_id: str | None = None,
+        before_id: int | None = None,
+        after_id: int | None = None,
     ) -> list[RuntimeEventView]:
-        return await asyncio.to_thread(self._list_events_sync, limit, category, alerts_only)
+        """Newest first. `category` and `alerts_only` are the older single-value form."""
+        selected_categories = list(categories) if categories else ([category] if category else [])
+        selected_levels = list(levels) if levels else (["warning", "error"] if alerts_only else [])
+        return await asyncio.to_thread(
+            self._list_events_sync,
+            limit,
+            selected_categories,
+            selected_levels,
+            search,
+            task_id,
+            before_id,
+            after_id,
+        )
 
     def _list_events_sync(
         self,
         limit: int,
-        category: str | None,
-        alerts_only: bool,
+        categories: Sequence[str],
+        levels: Sequence[str],
+        search: str | None,
+        task_id: str | None,
+        before_id: int | None,
+        after_id: int | None,
     ) -> list[RuntimeEventView]:
-        conditions: list[str] = []
-        params: list[Any] = []
-        if category is not None:
-            conditions.append("category = ?")
-            params.append(category)
-        if alerts_only:
-            conditions.append("level IN ('warning', 'error')")
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where, params = self._event_filters(
+            categories=categories,
+            levels=levels,
+            search=search,
+            task_id=task_id,
+            before_id=before_id,
+            after_id=after_id,
+        )
         with self._connect() as connection:
             rows = connection.execute(
-                # Only the fixed fragments above are interpolated; values stay bound.
-                "SELECT id, created_at, category, level, message, detail FROM runtime_events "
+                "SELECT id, created_at, category, level, message, detail, task_id FROM runtime_events "
                 f"{where} ORDER BY id DESC LIMIT ?",
                 (*params, limit),
             ).fetchall()
         return [RuntimeEventView.model_validate(dict(row)) for row in rows]
+
+    async def event_facets(
+        self,
+        *,
+        search: str | None = None,
+        task_id: str | None = None,
+    ) -> RuntimeEventFacetsView:
+        """Per-level and per-category counts for the filter chips.
+
+        Deliberately ignores the level/category selection so a chip's count does
+        not collapse to zero the moment a different chip is picked.
+        """
+        return await asyncio.to_thread(self._event_facets_sync, search, task_id)
+
+    def _event_facets_sync(self, search: str | None, task_id: str | None) -> RuntimeEventFacetsView:
+        where, params = self._event_filters(
+            categories=None,
+            levels=None,
+            search=search,
+            task_id=task_id,
+            before_id=None,
+            after_id=None,
+        )
+        with self._connect() as connection:
+            level_rows = connection.execute(
+                f"SELECT level, COUNT(*) AS count FROM runtime_events {where} GROUP BY level",
+                params,
+            ).fetchall()
+            category_rows = connection.execute(
+                f"SELECT category, COUNT(*) AS count FROM runtime_events {where} GROUP BY category",
+                params,
+            ).fetchall()
+        return RuntimeEventFacetsView(
+            levels={row["level"]: row["count"] for row in level_rows},
+            categories={row["category"]: row["count"] for row in category_rows},
+            matched=sum(row["count"] for row in level_rows),
+        )
+
+    async def clear_events(self) -> int:
+        return await asyncio.to_thread(self._clear_events_sync)
+
+    def _clear_events_sync(self) -> int:
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM runtime_events")
+        return cursor.rowcount if cursor.rowcount > 0 else 0
+
+    def iter_events(
+        self,
+        *,
+        categories: Sequence[str] | None = None,
+        levels: Sequence[str] | None = None,
+        search: str | None = None,
+        task_id: str | None = None,
+        chunk_size: int = 500,
+    ) -> Iterator[RuntimeEventView]:
+        """Oldest first, in chunks, so an export never holds the whole log in memory."""
+        where, params = self._event_filters(
+            categories=categories,
+            levels=levels,
+            search=search,
+            task_id=task_id,
+            before_id=None,
+            after_id=None,
+        )
+        cursor_id = 0
+        joiner = "AND" if where else "WHERE"
+        while True:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT id, created_at, category, level, message, detail, task_id FROM runtime_events "
+                    f"{where} {joiner} id > ? ORDER BY id ASC LIMIT ?",
+                    (*params, cursor_id, chunk_size),
+                ).fetchall()
+            if not rows:
+                return
+            for row in rows:
+                yield RuntimeEventView.model_validate(dict(row))
+            cursor_id = rows[-1]["id"]
 
     async def event_summary(self, since: datetime) -> RuntimeEventSummaryView:
         return await asyncio.to_thread(self._event_summary_sync, since)
@@ -745,7 +897,9 @@ class TaskStore:
                     (SELECT COUNT(*) FROM runtime_events) AS total,
                     (SELECT COUNT(*) FROM runtime_events WHERE level = 'error' AND created_at > ?) AS errors,
                     (SELECT COUNT(*) FROM runtime_events WHERE level = 'warning' AND created_at > ?) AS warnings,
-                    (SELECT created_at FROM runtime_events ORDER BY id DESC LIMIT 1) AS latest_at
+                    (SELECT created_at FROM runtime_events ORDER BY id DESC LIMIT 1) AS latest_at,
+                    (SELECT id FROM runtime_events ORDER BY id DESC LIMIT 1) AS latest_id,
+                    (SELECT created_at FROM runtime_events ORDER BY id ASC LIMIT 1) AS oldest_at
                 """,
                 (cutoff, cutoff),
             ).fetchone()
@@ -754,6 +908,8 @@ class TaskStore:
             errors=row["errors"],
             warnings=row["warnings"],
             latest_at=datetime.fromisoformat(row["latest_at"]) if row["latest_at"] else None,
+            latest_id=row["latest_id"],
+            oldest_at=datetime.fromisoformat(row["oldest_at"]) if row["oldest_at"] else None,
         )
 
     @staticmethod

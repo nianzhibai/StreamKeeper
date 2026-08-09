@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from .schemas import EventCategory, EventLevel
 from .store import TaskStore
 
 logger = logging.getLogger(__name__)
 
-# One week of a busy server still fits, and the trim on write keeps SQLite small.
-EVENT_RETENTION = 1000
+
+def _retention_from_env() -> int:
+    """Rows kept in the log. Larger than it used to be because the page can now
+    page back through history instead of only showing the newest screenful."""
+    try:
+        value = int(os.getenv("DOUYIN_EVENT_RETENTION", "5000"))
+    except ValueError:
+        return 5000
+    return min(max(value, 100), 100_000)
+
+
+EVENT_RETENTION = _retention_from_env()
 MESSAGE_MAX_LENGTH = 200
 DETAIL_MAX_LENGTH = 500
 
@@ -38,6 +49,8 @@ class EventLog:
         level: EventLevel,
         message: str,
         detail: str | None = None,
+        *,
+        task_id: str | None = None,
     ) -> None:
         text = clean_text(message, MESSAGE_MAX_LENGTH)
         if text is None:
@@ -49,18 +62,27 @@ class EventLog:
                 text,
                 clean_text(detail, DETAIL_MAX_LENGTH),
                 retention=self.retention,
+                task_id=task_id,
             )
         except Exception:  # A log entry must never take down the work it describes.
             logger.warning("写入运行事件失败：%s", text, exc_info=True)
 
-    async def info(self, category: EventCategory, message: str, detail: str | None = None) -> None:
-        await self.record(category, "info", message, detail)
+    async def info(
+        self, category: EventCategory, message: str, detail: str | None = None, *, task_id: str | None = None
+    ) -> None:
+        await self.record(category, "info", message, detail, task_id=task_id)
 
-    async def success(self, category: EventCategory, message: str, detail: str | None = None) -> None:
-        await self.record(category, "success", message, detail)
+    async def success(
+        self, category: EventCategory, message: str, detail: str | None = None, *, task_id: str | None = None
+    ) -> None:
+        await self.record(category, "success", message, detail, task_id=task_id)
 
-    async def warning(self, category: EventCategory, message: str, detail: str | None = None) -> None:
-        await self.record(category, "warning", message, detail)
+    async def warning(
+        self, category: EventCategory, message: str, detail: str | None = None, *, task_id: str | None = None
+    ) -> None:
+        await self.record(category, "warning", message, detail, task_id=task_id)
 
-    async def error(self, category: EventCategory, message: str, detail: str | None = None) -> None:
-        await self.record(category, "error", message, detail)
+    async def error(
+        self, category: EventCategory, message: str, detail: str | None = None, *, task_id: str | None = None
+    ) -> None:
+        await self.record(category, "error", message, detail, task_id=task_id)

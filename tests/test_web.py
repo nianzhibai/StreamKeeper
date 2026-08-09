@@ -738,6 +738,122 @@ class WebTests(TestCase):
         events = asyncio.run(store.list_events(limit=10))
         self.assertEqual([event.message for event in events], ["事件 4", "事件 3", "事件 2"])
 
+    def _seed_events(self) -> TaskStore:
+        store = TaskStore(self.settings.database_path)
+        rows = [
+            ("task", "success", "开始录制「钢琴电台」", "画质 原画", "task-a"),
+            ("task", "error", "「陪玩夜场」拉流失败", "连接被远端重置", "task-b"),
+            ("upload", "warning", "跳过 3 个文件", "不足 10 分钟", None),
+            ("upload", "success", "归档完成", "上传 12 份副本", None),
+            ("system", "info", "含通配符的 100%_文本", None, None),
+        ]
+        for category, level, message, detail, task_id in rows:
+            asyncio.run(
+                store.append_event(category, level, message, detail, retention=5000, task_id=task_id)
+            )
+        return store
+
+    def test_activity_log_supports_multi_select_search_and_task_scope(self) -> None:
+        self.login()
+        self._seed_events()
+
+        multi_level = self.client.get("/api/events?levels=warning&levels=error").json()["events"]
+        self.assertEqual({event["level"] for event in multi_level}, {"warning", "error"})
+
+        multi_category = self.client.get("/api/events?categories=task&categories=upload").json()
+        self.assertEqual({event["category"] for event in multi_category["events"]}, {"task", "upload"})
+
+        searched = self.client.get("/api/events?search=归档").json()["events"]
+        self.assertEqual([event["message"] for event in searched], ["归档完成"])
+
+        scoped = self.client.get("/api/events?task_id=task-a").json()["events"]
+        self.assertEqual([event["message"] for event in scoped], ["开始录制「钢琴电台」"])
+        self.assertEqual(scoped[0]["task_id"], "task-a")
+
+    def test_activity_log_escapes_like_wildcards_in_search(self) -> None:
+        self.login()
+        self._seed_events()
+
+        # A bare % must search for a literal percent sign, not match every row.
+        literal = self.client.get("/api/events?search=%25").json()["events"]
+        self.assertEqual([event["message"] for event in literal], ["含通配符的 100%_文本"])
+        underscore = self.client.get("/api/events?search=%25_").json()["events"]
+        self.assertEqual([event["message"] for event in underscore], ["含通配符的 100%_文本"])
+
+    def test_activity_log_pages_through_history_with_cursors(self) -> None:
+        self.login()
+        self._seed_events()
+
+        first = self.client.get("/api/events?limit=2").json()
+        self.assertEqual(len(first["events"]), 2)
+        self.assertTrue(first["has_more"])
+
+        oldest_id = first["events"][-1]["id"]
+        older = self.client.get(f"/api/events?limit=2&before_id={oldest_id}").json()
+        self.assertEqual(len(older["events"]), 2)
+        self.assertTrue(all(event["id"] < oldest_id for event in older["events"]))
+
+        newest_id = first["events"][0]["id"]
+        tail = self.client.get(f"/api/events?after_id={newest_id}").json()
+        self.assertEqual(tail["events"], [])
+
+        asyncio.run(
+            TaskStore(self.settings.database_path).append_event(
+                "system", "info", "新事件", retention=5000
+            )
+        )
+        appended = self.client.get(f"/api/events?after_id={newest_id}").json()["events"]
+        self.assertEqual([event["message"] for event in appended], ["新事件"])
+
+    def test_activity_log_facets_count_independently_of_selection(self) -> None:
+        self.login()
+        self._seed_events()
+
+        facets = self.client.get("/api/events?levels=error").json()["facets"]
+        # Counts must ignore the level selection, otherwise every other chip would
+        # read zero as soon as one is picked.
+        self.assertGreaterEqual(facets["levels"]["warning"], 1)
+        self.assertGreaterEqual(facets["levels"]["success"], 2)
+        self.assertGreaterEqual(facets["categories"]["upload"], 2)
+
+        narrowed = self.client.get("/api/events?search=归档").json()["facets"]
+        self.assertEqual(narrowed["levels"], {"success": 1})
+        self.assertEqual(narrowed["categories"], {"upload": 1})
+        self.assertEqual(narrowed["matched"], 1)
+
+    def test_activity_log_export_streams_filtered_rows(self) -> None:
+        self.login()
+        self._seed_events()
+
+        text = self.client.get("/api/events/export?format=txt&categories=upload")
+        self.assertEqual(text.status_code, 200)
+        self.assertIn("attachment;", text.headers["content-disposition"])
+        lines = [line for line in text.text.splitlines() if line]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("[upload]", lines[0])
+        self.assertIn("跳过 3 个文件", text.text)
+        self.assertNotIn("拉流失败", text.text)
+
+        jsonl = self.client.get("/api/events/export?format=jsonl&levels=error")
+        payloads = [json.loads(line) for line in jsonl.text.splitlines() if line]
+        self.assertEqual([item["message"] for item in payloads], ["「陪玩夜场」拉流失败"])
+        self.assertEqual(payloads[0]["task_id"], "task-b")
+
+        self.assertEqual(self.client.get("/api/events/export?format=csv").status_code, 422)
+
+    def test_activity_log_clear_requires_csrf_and_records_the_wipe(self) -> None:
+        self.login()
+        self._seed_events()
+
+        self.assertEqual(self.client.delete("/api/events").status_code, 403)
+
+        payload = self.client.delete("/api/events", headers=self.csrf_headers).json()
+        self.assertEqual(payload["events"][0]["category"], "system")
+        self.assertIn("运行日志已清空", payload["events"][0]["message"])
+        # The wipe itself is the only surviving entry, so the page never goes blank.
+        self.assertEqual(len(payload["events"]), 1)
+        self.assertEqual(payload["summary"]["total"], 1)
+
     def test_rejects_unknown_fields_and_invalid_url(self) -> None:
         self.login()
         response = self.client.post(

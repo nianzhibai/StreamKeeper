@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import secrets
 import shutil
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -50,6 +51,7 @@ from .schemas import (
     CloudUploadSummaryView,
     CloudWoPanView,
     EventCategory,
+    EventLevel,
     InspectRequest,
     InspectResponse,
     LoginRequest,
@@ -412,14 +414,91 @@ def create_app(
     @app.get("/api/events", response_model=RuntimeEventListView)
     async def list_events(
         limit: int = Query(default=200, ge=1, le=500),
-        category: EventCategory | None = None,
-        alerts_only: bool = False,
+        category: EventCategory | None = Query(default=None, deprecated=True),
+        alerts_only: bool = Query(default=False, deprecated=True),
+        categories: Annotated[list[EventCategory] | None, Query()] = None,
+        levels: Annotated[list[EventLevel] | None, Query()] = None,
+        search: str | None = Query(default=None, max_length=200),
+        task_id: str | None = Query(default=None, max_length=64),
+        before_id: int | None = Query(default=None, ge=1),
+        after_id: int | None = Query(default=None, ge=0),
     ) -> RuntimeEventListView:
-        events, summary = await asyncio.gather(
-            store.list_events(limit=limit, category=category, alerts_only=alerts_only),
+        selected_categories = list(categories) if categories else ([category] if category else [])
+        selected_levels = list(levels) if levels else (["warning", "error"] if alerts_only else [])
+        term = (search or "").strip() or None
+
+        # One extra row tells us whether older entries remain, without a COUNT(*).
+        events, summary, facets = await asyncio.gather(
+            store.list_events(
+                limit=limit + 1,
+                categories=selected_categories,
+                levels=selected_levels,
+                search=term,
+                task_id=task_id,
+                before_id=before_id,
+                after_id=after_id,
+            ),
             store.event_summary(utc_now() - timedelta(hours=EVENT_SUMMARY_WINDOW_HOURS)),
+            store.event_facets(search=term, task_id=task_id),
         )
-        return RuntimeEventListView(events=events, summary=summary)
+        has_more = len(events) > limit
+        return RuntimeEventListView(
+            events=events[:limit],
+            summary=summary,
+            facets=facets,
+            has_more=has_more,
+        )
+
+    @app.delete("/api/events", response_model=RuntimeEventListView)
+    async def clear_events() -> RuntimeEventListView:
+        removed = await store.clear_events()
+        # Recorded after the wipe so the page never comes back completely blank and
+        # the operator keeps an audit trail of who emptied it.
+        await event_log.info("system", f"运行日志已清空，移除 {removed} 条记录")
+        events, summary, facets = await asyncio.gather(
+            store.list_events(limit=200),
+            store.event_summary(utc_now() - timedelta(hours=EVENT_SUMMARY_WINDOW_HOURS)),
+            store.event_facets(),
+        )
+        return RuntimeEventListView(events=events, summary=summary, facets=facets, has_more=False)
+
+    @app.get("/api/events/export")
+    async def export_events(
+        fmt: Annotated[str, Query(pattern="^(txt|jsonl)$", alias="format")] = "txt",
+        categories: Annotated[list[EventCategory] | None, Query()] = None,
+        levels: Annotated[list[EventLevel] | None, Query()] = None,
+        search: str | None = Query(default=None, max_length=200),
+        task_id: str | None = Query(default=None, max_length=64),
+    ) -> StreamingResponse:
+        term = (search or "").strip() or None
+
+        def lines() -> Iterator[str]:
+            rows = store.iter_events(
+                categories=list(categories) if categories else None,
+                levels=list(levels) if levels else None,
+                search=term,
+                task_id=task_id,
+            )
+            for event in rows:
+                if fmt == "jsonl":
+                    yield event.model_dump_json() + "\n"
+                else:
+                    stamp = event.created_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                    detail = f" | {event.detail}" if event.detail else ""
+                    yield f"{stamp} [{event.level.upper():<7}] [{event.category}] {event.message}{detail}\n"
+
+        stamp = utc_now().astimezone().strftime("%Y%m%d-%H%M%S")
+        suffix = "jsonl" if fmt == "jsonl" else "log"
+        # A plain sync generator is fine here: StreamingResponse drives it through a
+        # threadpool, so the chunked SQLite reads never block the event loop.
+        return StreamingResponse(
+            lines(),
+            media_type="application/x-ndjson" if fmt == "jsonl" else "text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="stream-keeper-events-{stamp}.{suffix}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/api/cloud/archive", response_model=CloudArchiveView)
     async def get_cloud_archive() -> CloudArchiveView:

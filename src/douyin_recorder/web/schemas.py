@@ -121,6 +121,9 @@ class RuntimeEventView(StrictModel):
     level: EventLevel
     message: str
     detail: str | None = None
+    # Set for events raised while a specific recording task was in scope, which is
+    # what lets the log be narrowed to one live room.
+    task_id: str | None = None
 
 
 class RuntimeEventSummaryView(StrictModel):
@@ -130,11 +133,24 @@ class RuntimeEventSummaryView(StrictModel):
     errors: int
     warnings: int
     latest_at: datetime | None
+    latest_id: int | None = None
+    oldest_at: datetime | None = None
+
+
+class RuntimeEventFacetsView(StrictModel):
+    """Counts behind the filter chips, keyed by level and by category."""
+
+    levels: dict[str, int] = Field(default_factory=dict)
+    categories: dict[str, int] = Field(default_factory=dict)
+    matched: int = 0
 
 
 class RuntimeEventListView(StrictModel):
     events: list[RuntimeEventView]
     summary: RuntimeEventSummaryView
+    facets: RuntimeEventFacetsView = Field(default_factory=RuntimeEventFacetsView)
+    # True when older entries remain beyond this page, so the UI can offer "load earlier".
+    has_more: bool = False
 
 
 class InspectRequest(StrictModel):

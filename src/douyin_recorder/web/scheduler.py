@@ -168,7 +168,7 @@ class TaskScheduler:
                 if record.monitor
                 else "仅检查一次，录制结束后自动停止"
             )
-            await self.events.info("task", f"「{_task_name(record)}」已启动", detail)
+            await self.events.info("task", f"「{_task_name(record)}」已启动", detail, task_id=record.id)
         return record
 
     async def stop(self, task_id: str, *, disable: bool = True, announce: bool = True) -> TaskRecord | None:
@@ -185,7 +185,7 @@ class TaskScheduler:
         if not disable:
             return await self.store.get(task_id)
         if announce:
-            await self.events.info("task", f"「{_task_name(record)}」已停止")
+            await self.events.info("task", f"「{_task_name(record)}」已停止", task_id=record.id)
         return await self.store.update_runtime(
             task_id,
             status=TaskStatus.STOPPED,
@@ -201,7 +201,11 @@ class TaskScheduler:
         await self.stop(task_id, disable=not should_restart, announce=False)
         if not should_restart:
             return await self.store.get(task_id)
-        await self.events.info("task", f"「{_task_name(record)}」配置已更新，正在按新配置重新录制")
+        await self.events.info(
+            "task",
+            f"「{_task_name(record)}」配置已更新，正在按新配置重新录制",
+            task_id=record.id,
+        )
         return await self.start(task_id, announce=False)
 
     async def _record_failure(self, record: TaskRecord, exc: BaseException, *, stage: str) -> bool:
@@ -209,7 +213,9 @@ class TaskScheduler:
         if record.id not in self._failing:
             self._failing.add(record.id)
             retry = f"，将每 {record.interval_seconds} 秒重试" if record.monitor else "，任务已停止"
-            await self.events.error("task", f"「{_task_name(record)}」{stage}失败{retry}", message)
+            await self.events.error(
+                "task", f"「{_task_name(record)}」{stage}失败{retry}", message, task_id=record.id
+            )
         await self.store.update_runtime(
             record.id,
             status=TaskStatus.ERROR,
@@ -226,7 +232,7 @@ class TaskScheduler:
     async def _clear_failure(self, record: TaskRecord) -> None:
         if record.id in self._failing:
             self._failing.discard(record.id)
-            await self.events.success("task", f"「{_task_name(record)}」已恢复正常")
+            await self.events.success("task", f"「{_task_name(record)}」已恢复正常", task_id=record.id)
 
     async def _run_worker(self, task_id: str) -> None:
         current_worker = asyncio.current_task()
@@ -269,7 +275,7 @@ class TaskScheduler:
                         # The final status is what every watcher polls on, so the log
                         # entry lands first: a shutdown racing the last write would
                         # otherwise cancel the worker before the event is stored.
-                        await self.events.info("task", f"「{name}」当前未开播，单次任务已结束")
+                        await self.events.info("task", f"「{name}」当前未开播，单次任务已结束", task_id=task_id)
                         await self.store.update_runtime(
                             task_id,
                             enabled=False,
@@ -321,6 +327,7 @@ class TaskScheduler:
                                 for part in (info.title, f"清晰度 {latest.quality}", latest.output_format.upper())
                                 if part
                             ),
+                            task_id=task_id,
                         )
                         try:
                             result = await recorder.record(info)
@@ -340,7 +347,7 @@ class TaskScheduler:
                         if result.limit_reached
                         else f"直播已结束，未满 {latest.segment_count} 段，任务自动停止"
                     )
-                    await self.events.success("task", f"「{name}」{status_message}", recorded)
+                    await self.events.success("task", f"「{name}」{status_message}", recorded, task_id=task_id)
                     await self.store.update_runtime(
                         task_id,
                         enabled=False,
@@ -352,7 +359,9 @@ class TaskScheduler:
                     return
 
                 if not record.monitor:
-                    await self.events.success("task", f"「{name}」录制完成，单次任务已结束", recorded)
+                    await self.events.success(
+                        "task", f"「{name}」录制完成，单次任务已结束", recorded, task_id=task_id
+                    )
                     await self.store.update_runtime(
                         task_id,
                         enabled=False,
@@ -374,6 +383,7 @@ class TaskScheduler:
                     "task",
                     f"「{name}」直播结束，本次录制完成",
                     f"{recorded}，{record.interval_seconds} 秒后重新检查是否开播",
+                    task_id=task_id,
                 )
                 await asyncio.sleep(record.interval_seconds)
         except asyncio.CancelledError:
@@ -401,6 +411,7 @@ class TaskScheduler:
                     "task",
                     f"「{_task_name(record)}」调度异常退出，任务已停止",
                     _error_message(exc),
+                    task_id=task_id,
                 )
         finally:
             self._failing.discard(task_id)
