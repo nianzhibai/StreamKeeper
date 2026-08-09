@@ -6,7 +6,7 @@ import json
 import secrets
 import sqlite3
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -79,8 +79,28 @@ class TaskStore:
         finally:
             connection.close()
 
+    async def _run_sync(self, func: Callable[..., Any], /, *args: Any) -> Any:
+        """to_thread, except cancellation waits for the thread instead of
+        abandoning it.
+
+        Workers are cancelled routinely (stop/restart/shutdown, client
+        disconnects). A plain to_thread lets the awaiting task move on while
+        the thread keeps writing: the caller's follow-up writes then race the
+        abandoned one for the final row state, and on Windows the still-open
+        connection holds the database file locked past the caller's cleanup.
+        """
+        inner = asyncio.ensure_future(asyncio.to_thread(func, *args))
+        try:
+            return await asyncio.shield(inner)
+        except asyncio.CancelledError:
+            if not inner.done():
+                await asyncio.wait([inner])
+            if not inner.cancelled():
+                inner.exception()  # Superseded by the cancellation; keep the loop quiet.
+            raise
+
     async def initialize(self) -> None:
-        await asyncio.to_thread(self._initialize_sync)
+        await self._run_sync(self._initialize_sync)
 
     def _initialize_sync(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,7 +245,7 @@ class TaskStore:
     ) -> dict[str, Any]:
         """Seed from environment until a Web save makes SQLite authoritative."""
 
-        return await asyncio.to_thread(
+        return await self._run_sync(
             self._sync_cloud_upload_config_sync,
             source_fingerprint,
             defaults,
@@ -266,7 +286,7 @@ class TaskStore:
         return dict(defaults)
 
     async def get_cloud_upload_config(self) -> dict[str, Any] | None:
-        return await asyncio.to_thread(self._get_cloud_upload_config_sync)
+        return await self._run_sync(self._get_cloud_upload_config_sync)
 
     def _get_cloud_upload_config_sync(self) -> dict[str, Any] | None:
         with self._connect() as connection:
@@ -274,7 +294,7 @@ class TaskStore:
         return self._decode_json_object(row["config_json"]) if row is not None else None
 
     async def save_cloud_upload_config(self, config: dict[str, object]) -> None:
-        await asyncio.to_thread(self._save_cloud_upload_config_sync, config)
+        await self._run_sync(self._save_cloud_upload_config_sync, config)
 
     def _save_cloud_upload_config_sync(self, config: dict[str, object]) -> None:
         config_json = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -307,7 +327,7 @@ class TaskStore:
         """Use refreshed credentials until the source environment values change."""
 
         self._validate_cloud_state(provider, defaults)
-        return await asyncio.to_thread(
+        return await self._run_sync(
             self._resolve_cloud_credentials_sync,
             provider,
             source_fingerprint,
@@ -355,7 +375,7 @@ class TaskStore:
         state: dict[str, str],
     ) -> None:
         self._validate_cloud_state(provider, state)
-        await asyncio.to_thread(
+        await self._run_sync(
             self._save_cloud_credentials_sync,
             provider,
             source_fingerprint,
@@ -384,7 +404,7 @@ class TaskStore:
 
     async def delete_cloud_credentials(self, provider: str) -> bool:
         self._validate_cloud_state(provider, {})
-        return await asyncio.to_thread(self._delete_cloud_credentials_sync, provider)
+        return await self._run_sync(self._delete_cloud_credentials_sync, provider)
 
     def _delete_cloud_credentials_sync(self, provider: str) -> bool:
         with self._connect() as connection:
@@ -405,7 +425,7 @@ class TaskStore:
     async def sync_web_credentials(self, username: str, password: str) -> bool:
         """Persist a slow credential fingerprint and revoke sessions when it changes."""
 
-        return await asyncio.to_thread(self._sync_web_credentials_sync, username, password)
+        return await self._run_sync(self._sync_web_credentials_sync, username, password)
 
     def _sync_web_credentials_sync(self, username: str, password: str) -> bool:
         with self._connect() as connection:
@@ -444,7 +464,7 @@ class TaskStore:
         return True
 
     async def is_login_blacklisted(self, client_key: str) -> bool:
-        return await asyncio.to_thread(self._is_login_blacklisted_sync, client_key)
+        return await self._run_sync(self._is_login_blacklisted_sync, client_key)
 
     def _is_login_blacklisted_sync(self, client_key: str) -> bool:
         with self._connect() as connection:
@@ -460,7 +480,7 @@ class TaskStore:
         max_attempts: int,
         window_seconds: int,
     ) -> bool:
-        return await asyncio.to_thread(
+        return await self._run_sync(
             self._register_login_failure_sync,
             client_key,
             max_attempts,
@@ -512,7 +532,7 @@ class TaskStore:
         return True
 
     async def accept_login_success(self, client_key: str) -> bool:
-        return await asyncio.to_thread(self._accept_login_success_sync, client_key)
+        return await self._run_sync(self._accept_login_success_sync, client_key)
 
     def _accept_login_success_sync(self, client_key: str) -> bool:
         with self._connect() as connection:
@@ -527,7 +547,7 @@ class TaskStore:
         return True
 
     async def list_login_blacklist(self) -> list[str]:
-        return await asyncio.to_thread(self._list_login_blacklist_sync)
+        return await self._run_sync(self._list_login_blacklist_sync)
 
     def _list_login_blacklist_sync(self) -> list[str]:
         with self._connect() as connection:
@@ -537,7 +557,7 @@ class TaskStore:
         return [row["client_key"] for row in rows]
 
     async def unblock_login_client(self, client_key: str) -> bool:
-        return await asyncio.to_thread(self._unblock_login_client_sync, client_key)
+        return await self._run_sync(self._unblock_login_client_sync, client_key)
 
     def _unblock_login_client_sync(self, client_key: str) -> bool:
         with self._connect() as connection:
@@ -565,7 +585,7 @@ class TaskStore:
         return TaskRecord.model_validate(dict(row))
 
     async def create(self, config: TaskConfig) -> TaskRecord:
-        return await asyncio.to_thread(self._create_sync, config)
+        return await self._run_sync(self._create_sync, config)
 
     def _create_sync(self, config: TaskConfig) -> TaskRecord:
         task_id = uuid.uuid4().hex
@@ -600,7 +620,7 @@ class TaskStore:
         return record
 
     async def get(self, task_id: str) -> TaskRecord | None:
-        return await asyncio.to_thread(self._get_sync, task_id)
+        return await self._run_sync(self._get_sync, task_id)
 
     def _get_sync(self, task_id: str) -> TaskRecord | None:
         with self._connect() as connection:
@@ -608,7 +628,7 @@ class TaskStore:
         return self._to_record(row)
 
     async def list(self) -> list[TaskRecord]:
-        return await asyncio.to_thread(self._list_sync)
+        return await self._run_sync(self._list_sync)
 
     def _list_sync(self) -> list[TaskRecord]:
         with self._connect() as connection:
@@ -623,13 +643,13 @@ class TaskStore:
         invalid = set(changes) - CONFIG_COLUMNS
         if invalid:
             raise ValueError(f"Invalid config fields: {', '.join(sorted(invalid))}")
-        return await asyncio.to_thread(self._update_sync, task_id, changes)
+        return await self._run_sync(self._update_sync, task_id, changes)
 
     async def update_runtime(self, task_id: str, **changes: Any) -> TaskRecord | None:
         invalid = set(changes) - RUNTIME_COLUMNS
         if invalid:
             raise ValueError(f"Invalid runtime fields: {', '.join(sorted(invalid))}")
-        return await asyncio.to_thread(self._update_sync, task_id, changes)
+        return await self._run_sync(self._update_sync, task_id, changes)
 
     def _update_sync(self, task_id: str, changes: dict[str, Any]) -> TaskRecord | None:
         if not changes:
@@ -645,7 +665,7 @@ class TaskStore:
         return self._get_sync(task_id)
 
     async def delete(self, task_id: str) -> bool:
-        return await asyncio.to_thread(self._delete_sync, task_id)
+        return await self._run_sync(self._delete_sync, task_id)
 
     def _delete_sync(self, task_id: str) -> bool:
         with self._connect() as connection:
@@ -653,7 +673,7 @@ class TaskStore:
         return cursor.rowcount > 0
 
     async def recover_interrupted(self) -> None:
-        await asyncio.to_thread(self._recover_interrupted_sync)
+        await self._run_sync(self._recover_interrupted_sync)
 
     def _recover_interrupted_sync(self) -> None:
         now = utc_now().isoformat()
@@ -688,7 +708,7 @@ class TaskStore:
         retention: int,
         task_id: str | None = None,
     ) -> None:
-        await asyncio.to_thread(self._append_event_sync, category, level, message, detail, retention, task_id)
+        await self._run_sync(self._append_event_sync, category, level, message, detail, retention, task_id)
 
     def _append_event_sync(
         self,
@@ -770,7 +790,7 @@ class TaskStore:
         """Newest first. `category` and `alerts_only` are the older single-value form."""
         selected_categories = list(categories) if categories else ([category] if category else [])
         selected_levels = list(levels) if levels else (["warning", "error"] if alerts_only else [])
-        return await asyncio.to_thread(
+        return await self._run_sync(
             self._list_events_sync,
             limit,
             selected_categories,
@@ -818,7 +838,7 @@ class TaskStore:
         Deliberately ignores the level/category selection so a chip's count does
         not collapse to zero the moment a different chip is picked.
         """
-        return await asyncio.to_thread(self._event_facets_sync, search, task_id)
+        return await self._run_sync(self._event_facets_sync, search, task_id)
 
     def _event_facets_sync(self, search: str | None, task_id: str | None) -> RuntimeEventFacetsView:
         where, params = self._event_filters(
@@ -845,7 +865,7 @@ class TaskStore:
         )
 
     async def clear_events(self) -> int:
-        return await asyncio.to_thread(self._clear_events_sync)
+        return await self._run_sync(self._clear_events_sync)
 
     def _clear_events_sync(self) -> int:
         with self._connect() as connection:
@@ -886,7 +906,7 @@ class TaskStore:
             cursor_id = rows[-1]["id"]
 
     async def event_summary(self, since: datetime) -> RuntimeEventSummaryView:
-        return await asyncio.to_thread(self._event_summary_sync, since)
+        return await self._run_sync(self._event_summary_sync, since)
 
     def _event_summary_sync(self, since: datetime) -> RuntimeEventSummaryView:
         cutoff = since.isoformat()
@@ -917,7 +937,7 @@ class TaskStore:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     async def create_session(self, username: str, ttl_seconds: int) -> tuple[str, WebSession]:
-        return await asyncio.to_thread(self._create_session_sync, username, ttl_seconds)
+        return await self._run_sync(self._create_session_sync, username, ttl_seconds)
 
     def _create_session_sync(self, username: str, ttl_seconds: int) -> tuple[str, WebSession]:
         token = secrets.token_urlsafe(32)
@@ -946,7 +966,7 @@ class TaskStore:
         return token, session
 
     async def get_session(self, token: str) -> WebSession | None:
-        return await asyncio.to_thread(self._get_session_sync, token)
+        return await self._run_sync(self._get_session_sync, token)
 
     def _get_session_sync(self, token: str) -> WebSession | None:
         token_hash = self._session_token_hash(token)
@@ -974,7 +994,7 @@ class TaskStore:
         ttl_seconds: int,
         renew_before_seconds: int,
     ) -> tuple[WebSession | None, bool]:
-        return await asyncio.to_thread(
+        return await self._run_sync(
             self._renew_session_if_needed_sync,
             token,
             ttl_seconds,
@@ -1030,7 +1050,7 @@ class TaskStore:
         return session, cursor.rowcount > 0
 
     async def delete_session(self, token: str) -> bool:
-        return await asyncio.to_thread(self._delete_session_sync, token)
+        return await self._run_sync(self._delete_session_sync, token)
 
     def _delete_session_sync(self, token: str) -> bool:
         with self._connect() as connection:
