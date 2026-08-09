@@ -22,7 +22,7 @@ class Settings:
     data_dir: Path = Path("data")
     recordings_dir: Path = Path("data/recordings")
     database_path: Path = Path("data/tasks.db")
-    web_host: str = "127.0.0.1"
+    web_host: str = "0.0.0.0"
     web_port: int = 8000
     web_username: str = "admin"
     web_password: str = ""
@@ -60,7 +60,11 @@ class Settings:
             data_dir=data_dir,
             recordings_dir=recordings_dir,
             database_path=database_path,
-            web_host=os.getenv("DOUYIN_WEB_HOST", "127.0.0.1"),
+            # DOUYIN_BIND_ADDRESS is the name documented in .env.example, where it
+            # also drives the compose host port publish. Accept it as a fallback so
+            # a direct `python -m douyin_recorder` run honours the same variable
+            # instead of silently staying on the default.
+            web_host=os.getenv("DOUYIN_WEB_HOST") or os.getenv("DOUYIN_BIND_ADDRESS") or "0.0.0.0",
             web_port=int(os.getenv("DOUYIN_WEB_PORT", "8000")),
             web_username=os.getenv("DOUYIN_WEB_USERNAME", "admin"),
             web_password=os.getenv("DOUYIN_WEB_PASSWORD", ""),

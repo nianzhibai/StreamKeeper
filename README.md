@@ -37,7 +37,7 @@ DOUYIN_WEB_PASSWORD=请替换成足够长的随机密码
 docker compose up -d --build
 ```
 
-浏览器访问 `http://服务器IP:8000/`（默认监听本机 `127.0.0.1:8000`；若需直接外网访问，可在 `.env` 中设置 `DOUYIN_BIND_ADDRESS=0.0.0.0`）。
+浏览器访问 `http://服务器IP:8000/`（默认监听 `0.0.0.0:8000`，即所有网络接口都可访问；只想本机访问可在 `.env` 中设置 `DOUYIN_BIND_ADDRESS=127.0.0.1`）。
 
 常用命令：
 

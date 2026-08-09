@@ -5,8 +5,12 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "${DOUYIN_BIND_ADDRESS:-127.0.0.1}:${DOUYIN_WEB_PORT:-8000}:8000"
+      # Host interface the port is published on. 0.0.0.0 exposes the service on
+      # every interface; set DOUYIN_BIND_ADDRESS=127.0.0.1 to keep it local-only.
+      - "${DOUYIN_BIND_ADDRESS:-0.0.0.0}:${DOUYIN_WEB_PORT:-8000}:8000"
     environment:
+      # Inside the container the app must listen on all interfaces for the
+      # published port to reach it; host-side exposure is decided above.
       DOUYIN_WEB_HOST: 0.0.0.0
       DOUYIN_WEB_PORT: 8000
       DOUYIN_WEB_USERNAME: "${DOUYIN_WEB_USERNAME:-admin}"
