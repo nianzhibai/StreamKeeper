@@ -4,17 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="管理抖音直播间录制任务：自动值守、开播即录、分段保存" />
     <title>录制任务 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body data-page="tasks">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="app" id="app">
-      <main class="main">
+      <main class="main" id="main">
         <header class="page-head">
           <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-record" /></svg>录制
+            </p>
             <h1>录制任务</h1>
             <p>添加直播间后自动值守，开播即开始录制</p>
           </div>
@@ -43,6 +48,7 @@
           <label class="search">
             <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-search" /></svg>
             <input id="task-search" type="search" autocomplete="off" placeholder="搜索任务名或主播" aria-label="搜索任务" />
+            <span class="kbd" aria-hidden="true">/</span>
           </label>
         </section>
 
@@ -56,7 +62,7 @@
           <div class="skeleton skeleton-task"></div>
         </section>
 
-        <section id="task-empty" class="empty hidden">
+        <section id="task-empty" class="card empty hidden">
           <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-record" /></svg></span>
           <strong id="task-empty-title">还没有录制任务</strong>
           <small id="task-empty-detail">粘贴抖音直播间链接或分享文案，创建第一个任务</small>
@@ -70,6 +76,9 @@
     <dialog id="task-dialog" class="modal" aria-labelledby="dialog-title">
       <form id="task-form" method="dialog">
         <header class="modal-head">
+          <span class="modal-glyph tone-live" aria-hidden="true">
+            <svg class="ic ic-sm"><use href="#ic-record" /></svg>
+          </span>
           <div class="modal-heading">
             <h2 id="dialog-title">新建任务</h2>
             <p>支持直接粘贴抖音分享文案</p>
@@ -167,6 +176,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/static/tasks.js?v=20260728"></script>
+    <script type="module" src="/static/tasks.js?v=20260809"></script>
   </body>
 </html>

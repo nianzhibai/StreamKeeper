@@ -4,19 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Stream Keeper 概览：录制状态、值守任务与系统运行情况" />
     <title>概览 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body data-page="dashboard">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="app" id="app">
-      <main class="main">
+      <main class="main" id="main">
         <header class="page-head">
           <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-pulse" /></svg>工作台
+            </p>
             <h1>概览</h1>
-            <p>录制状态与系统运行情况</p>
+            <p>录制状态与系统运行情况一览</p>
           </div>
           <div class="page-tools">
             <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新" title="刷新">
@@ -74,6 +79,9 @@
         <div class="dash-grid">
           <section class="card card-runtime">
             <header class="card-head">
+              <span class="card-glyph tone-live" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-record" /></svg>
+              </span>
               <div class="card-heading">
                 <h2>当前任务</h2>
                 <p>正在录制或等待开播的直播间</p>
@@ -95,6 +103,9 @@
 
           <section class="card">
             <header class="card-head">
+              <span class="card-glyph tone-info" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-cloud" /></svg>
+              </span>
               <div class="card-heading">
                 <h2>网盘归档</h2>
                 <p id="overview-archive-time">读取中</p>
@@ -126,6 +137,9 @@
 
           <section class="card">
             <header class="card-head">
+              <span class="card-glyph" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-server" /></svg>
+              </span>
               <div class="card-heading">
                 <h2>系统</h2>
                 <p>录制环境自检</p>
@@ -142,6 +156,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/dashboard.js?v=20260728"></script>
+    <script type="module" src="/static/dashboard.js?v=20260809"></script>
   </body>
 </html>

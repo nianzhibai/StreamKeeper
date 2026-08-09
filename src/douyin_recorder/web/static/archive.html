@@ -4,17 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="把本地录像同步到夸克网盘或联通云盘，并按需清理磁盘" />
     <title>网盘归档 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body data-page="archive">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="app" id="app">
-      <main class="main">
+      <main class="main" id="main">
         <header class="page-head">
           <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-cloud" /></svg>运维
+            </p>
             <h1>网盘归档</h1>
             <p>把本地录像同步到云端，并按需清理磁盘</p>
           </div>
@@ -34,7 +39,7 @@
           <span data-error-text></span>
         </div>
 
-        <section class="card hero">
+        <section class="card hero" aria-label="归档状态">
           <div class="hero-state">
             <span id="archive-status" class="pill pill-lg tone-idle"><i class="dot"></i>读取中</span>
             <strong id="archive-status-time">—</strong>
@@ -58,6 +63,9 @@
         <div class="archive-grid">
           <section class="card">
             <header class="card-head">
+              <span class="card-glyph tone-info" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-cloud" /></svg>
+              </span>
               <div class="card-heading">
                 <h2>存储目标</h2>
                 <p>启用的网盘会各保存一份副本</p>
@@ -88,6 +96,9 @@
 
           <section class="card">
             <header class="card-head">
+              <span class="card-glyph" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-clock" /></svg>
+              </span>
               <div class="card-heading">
                 <h2>最近执行</h2>
                 <p id="last-run-time">读取中</p>
@@ -108,6 +119,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/archive.js?v=20260728"></script>
+    <script type="module" src="/static/archive.js?v=20260809"></script>
   </body>
 </html>

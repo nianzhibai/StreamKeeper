@@ -1,5 +1,4 @@
-import { icon } from "/static/icons.js?v=20260728";
-import "/static/shell.js?v=20260728";
+import { icon } from "/static/icons.js?v=20260809";
 
 const sessionState = {
   value: null,

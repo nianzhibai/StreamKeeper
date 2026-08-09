@@ -4,28 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="浏览、播放并下载服务器上已保存的抖音直播录像" />
     <title>本地录像 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/artplayer.css?v=5.4.1" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body data-page="recordings">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="app" id="app">
-      <main class="main">
+      <main class="main" id="main">
         <header class="page-head">
           <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-video" /></svg>录像库
+            </p>
             <h1>本地录像</h1>
             <p>浏览、播放并下载服务器上已保存的录像</p>
           </div>
           <div class="page-tools">
+            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新录像列表" title="刷新">
+              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
+            </button>
             <button id="upload-all-button" class="btn btn-soft" type="button">
               <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-upload" /></svg>
               <span id="upload-all-label">全部上传</span>
-            </button>
-            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新录像列表" title="刷新">
-              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
             </button>
           </div>
         </header>
@@ -38,7 +43,7 @@
         <section class="card explorer" aria-label="录像文件管理器">
           <header class="explorer-bar">
             <div class="explorer-place">
-              <button id="recording-up" class="btn btn-icon btn-soft" type="button" disabled aria-label="返回上一级" title="返回上一级">
+              <button id="recording-up" class="btn btn-icon btn-sm btn-soft" type="button" disabled aria-label="返回上一级" title="返回上一级">
                 <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronLeft" /></svg>
               </button>
               <nav id="recording-breadcrumbs" class="crumbs" aria-label="当前位置">
@@ -49,6 +54,7 @@
               <label class="search">
                 <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-search" /></svg>
                 <input id="recording-search" type="search" autocomplete="off" placeholder="搜索当前目录" aria-label="搜索当前目录" />
+                <span class="kbd" aria-hidden="true">/</span>
               </label>
               <label class="select-inline">
                 <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-sort" /></svg>
@@ -131,6 +137,6 @@
     </dialog>
 
     <script src="/static/artplayer.js?v=5.4.1"></script>
-    <script type="module" src="/static/recordings.js?v=20260728"></script>
+    <script type="module" src="/static/recordings.js?v=20260809"></script>
   </body>
 </html>

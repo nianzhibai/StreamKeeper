@@ -14,7 +14,7 @@ import {
   setTextIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260728";
+} from "/static/ui.js?v=20260809";
 
 const refreshButton = document.querySelector("#refresh-button");
 const runButton = document.querySelector("#cloud-run-button");

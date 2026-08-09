@@ -4,17 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="网盘账号授权与归档执行计划" />
     <title>设置 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body data-page="settings">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="app" id="app">
-      <main class="main main-settings">
+      <main class="main main-settings" id="main">
         <header class="page-head">
           <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-settings" /></svg>运维
+            </p>
             <h1>设置</h1>
             <p>网盘账号授权与归档执行计划</p>
           </div>
@@ -58,7 +63,7 @@
                   <input class="input" name="quark_root_id" type="text" maxlength="512" value="0" autocomplete="off" />
                 </label>
                 <label class="field">
-                  <span class="field-label">上传目录</span>
+                  <span class="field-label">上传目录<em>只读</em></span>
                   <input class="input" name="quark_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
                 </label>
               </div>
@@ -114,7 +119,7 @@
                   <input class="input" name="wopan_family_id" type="text" maxlength="512" placeholder="个人云可留空" autocomplete="off" />
                 </label>
                 <label class="field span-2">
-                  <span class="field-label">上传目录</span>
+                  <span class="field-label">上传目录<em>只读</em></span>
                   <input class="input" name="wopan_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
                 </label>
               </div>
@@ -143,8 +148,8 @@
 
           <section class="card">
             <header class="card-head">
-              <span class="provider-logo neutral" aria-hidden="true">
-                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-clock" /></svg>
+              <span class="card-glyph" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-clock" /></svg>
               </span>
               <div class="card-heading">
                 <h2>执行计划</h2>
@@ -183,6 +188,9 @@
 
     <dialog id="cloud-login-dialog" class="modal modal-sm" aria-labelledby="cloud-login-title">
       <header class="modal-head">
+        <span class="modal-glyph tone-info" aria-hidden="true">
+          <svg class="ic ic-sm"><use href="#ic-key" /></svg>
+        </span>
         <div class="modal-heading">
           <h2 id="cloud-login-title">扫码登录</h2>
           <p>登录信息只保存在本机数据库中</p>
@@ -201,6 +209,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/settings.js?v=20260728"></script>
+    <script type="module" src="/static/settings.js?v=20260809"></script>
   </body>
 </html>

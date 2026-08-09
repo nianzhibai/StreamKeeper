@@ -21,7 +21,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260728";
+} from "/static/ui.js?v=20260809";
 
 const state = {
   tasks: [],
@@ -109,6 +109,7 @@ function renderTask(task) {
         ${escapeHtml(formatRelative(task.last_checked_at))}
       </time>
       <div class="task-ops">
+        <a class="btn btn-icon btn-sm btn-ghost" href="/logs?task=${encodeURIComponent(task.id)}" aria-label="查看 ${escapeHtml(title)} 的运行日志" title="查看这个任务的运行日志">${icon("logs", "ic-sm")}</a>
         <button class="btn btn-sm btn-ghost" type="button" data-action="edit" data-id="${escapeHtml(task.id)}">${icon("edit", "ic-xs")}编辑</button>
         ${task.enabled
           ? `<button class="btn btn-sm btn-ghost" type="button" data-action="stop" data-id="${escapeHtml(task.id)}">${icon("stop", "ic-xs")}停止</button>`

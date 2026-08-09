@@ -4,18 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="robots" content="noindex" />
     <title>登录 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260728"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260728" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260728" />
+    <script src="/static/theme.js?v=20260809"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260809" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260809" />
   </head>
   <body class="login-page">
-    <script src="/static/sprite.js?v=20260728"></script>
+    <script src="/static/sprite.js?v=20260809"></script>
+    <script src="/static/shell.js?v=20260809"></script>
     <div class="login-backdrop" aria-hidden="true"></div>
 
     <main class="login-shell">
       <section class="login-card" aria-labelledby="login-title">
-        <a class="brand" href="/login" aria-label="Stream Keeper">
+        <a class="brand" href="/login">
           <span class="brand-mark" aria-hidden="true"><i></i></span>
           <span class="brand-text"><strong>Stream Keeper</strong><small>抖音直播录制</small></span>
         </a>
@@ -40,11 +42,14 @@
       </section>
 
       <footer class="login-foot">
-        <span>连续登录失败会锁定来源 IP</span>
+        <span>
+          <svg class="ic ic-xs" aria-hidden="true"><use href="#ic-shield" /></svg>
+          连续登录失败会锁定来源 IP
+        </span>
         <div id="login-theme"></div>
       </footer>
     </main>
 
-    <script type="module" src="/static/login.js?v=20260728"></script>
+    <script type="module" src="/static/login.js?v=20260809"></script>
   </body>
 </html>

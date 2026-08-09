@@ -15,7 +15,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260728";
+} from "/static/ui.js?v=20260809";
 
 const UPLOAD_STAGES = {
   preparing: "准备中",

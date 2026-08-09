@@ -47,6 +47,14 @@
     key: '<circle cx="8.2" cy="15.8" r="3.6"/><path d="m10.8 13.2 7.4-7.4M15.6 8.4l2 2M18 6l2 2"/>',
     layers: '<path d="m12 3.6 8.4 4.2-8.4 4.2L3.6 7.8z"/><path d="m3.6 12 8.4 4.2 8.4-4.2M3.6 16.2l8.4 4.2 8.4-4.2"/>',
     logs: '<path d="M4.6 6.6h.01M4.6 12h.01M4.6 17.4h.01"/><path d="M9.2 6.6h10.2M9.2 12h10.2M9.2 17.4h6.6"/>',
+    panelLeft: '<rect x="3.4" y="4.4" width="17.2" height="15.2" rx="2.6"/><path d="M9.6 4.4v15.2"/>',
+    server: '<rect x="3.4" y="4.2" width="17.2" height="6.4" rx="2"/><rect x="3.4" y="13.4" width="17.2" height="6.4" rx="2"/><path d="M7.2 7.4h.01M7.2 16.6h.01"/>',
+    cpu: '<rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.2"/><path d="M10.2 10.2h3.6v3.6h-3.6z"/><path d="M9.6 3.2v3.2M14.4 3.2v3.2M9.6 17.6v3.2M14.4 17.6v3.2M3.2 9.6h3.2M3.2 14.4h3.2M17.6 9.6h3.2M17.6 14.4h3.2"/>',
+    check: '<path d="m5.4 12.6 4.2 4.2 9-9.6"/>',
+    filter: '<path d="M4.2 5.6h15.6l-6 7.1v5.5l-3.6 1.8v-7.3z"/>',
+    copy: '<rect x="9" y="9" width="11.4" height="11.4" rx="2.2"/><path d="M15 9V5.8a2.2 2.2 0 0 0-2.2-2.2H5.8a2.2 2.2 0 0 0-2.2 2.2v7a2.2 2.2 0 0 0 2.2 2.2H9"/>',
+    playCircle: '<circle cx="12" cy="12" r="8.4"/><path d="m10.2 8.8 5.4 3.2-5.4 3.2z" class="ic-solid"/>',
+    pauseCircle: '<circle cx="12" cy="12" r="8.4"/><path d="M10.2 9.2v5.6M13.8 9.2v5.6"/>',
   };
 
   var parts = ['<svg id="icon-sprite" aria-hidden="true" focusable="false">'];
@@ -57,4 +65,16 @@
   }
   parts.push("</svg>");
   document.body.insertAdjacentHTML("afterbegin", parts.join(""));
+
+  /*
+   * The markup helper lives here rather than in icons.js so that shell.js — a
+   * classic script that cannot import modules — can build icons too. icons.js
+   * re-exports this for the page modules.
+   */
+  window.streamKeeperIcon = function (name, className) {
+    return (
+      '<svg class="ic' + (className ? " " + className : "") +
+      '" aria-hidden="true" focusable="false"><use href="#ic-' + name + '"/></svg>'
+    );
+  };
 })();

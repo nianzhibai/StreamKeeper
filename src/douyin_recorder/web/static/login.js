@@ -1,5 +1,3 @@
-import { mountThemeSwitch, themeSwitchMarkup } from "/static/shell.js?v=20260728";
-
 const form = document.querySelector("#login-form");
 const username = document.querySelector("#login-username");
 const password = document.querySelector("#login-password");
@@ -7,9 +5,13 @@ const submit = document.querySelector("#login-submit");
 const errorBox = document.querySelector("#login-error");
 const themeSlot = document.querySelector("#login-theme");
 
-if (themeSlot) {
-  themeSlot.innerHTML = themeSwitchMarkup();
-  mountThemeSwitch(themeSlot);
+// shell.js runs as a blocking classic script, so it hands the theme switch over
+// on a global rather than through a module export.
+const shell = window.streamKeeperShell;
+
+if (themeSlot && shell) {
+  themeSlot.innerHTML = shell.themeSwitchMarkup();
+  shell.mountThemeSwitch(themeSlot);
 }
 
 function destination() {
