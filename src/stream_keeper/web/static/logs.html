@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="查看开播、录制、归档与登录等关键运行事件" />
+    <title>运行日志 · Stream Keeper</title>
+    <script src="/static/theme.js?v=20260814"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260814" />
+  </head>
+  <body data-page="logs">
+    <script src="/static/sprite.js?v=20260814"></script>
+    <script src="/static/shell.js?v=20260814"></script>
+    <div class="app" id="app">
+      <main class="main" id="main">
+        <header class="page-head">
+          <div class="page-heading">
+            <p class="page-eyebrow">
+              <svg class="ic" aria-hidden="true"><use href="#ic-logs" /></svg>运维
+            </p>
+            <h1>运行日志</h1>
+            <p>开播、录制、归档与登录的关键事件</p>
+          </div>
+          <div class="page-tools">
+            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新" title="刷新">
+              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
+            </button>
+            <a id="log-export" class="btn btn-soft" href="/api/events/export?format=txt" download>
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-download" /></svg>导出
+            </a>
+            <button id="log-clear" class="btn btn-soft" type="button">
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-trash" /></svg>清空
+            </button>
+          </div>
+        </header>
+
+        <div id="page-error" class="alert alert-bad hidden" role="alert">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+          <span data-error-text></span>
+        </div>
+
+        <section class="card hero" aria-label="运行摘要">
+          <div class="hero-state">
+            <span id="log-status" class="pill pill-lg tone-idle"><i class="dot"></i>读取中</span>
+            <strong id="log-status-time">—</strong>
+          </div>
+          <dl class="hero-facts">
+            <div>
+              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>24 小时异常</dt>
+              <dd id="log-errors">—</dd>
+            </div>
+            <div>
+              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-shield" /></svg>24 小时警告</dt>
+              <dd id="log-warnings">—</dd>
+            </div>
+            <div>
+              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-layers" /></svg>累计记录</dt>
+              <dd id="log-total">—</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="card">
+          <div class="log-filters">
+            <div class="log-filter-top">
+              <label class="search">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-search" /></svg>
+                <input id="log-search" type="search" autocomplete="off" placeholder="搜索事件内容或详情" aria-label="搜索日志" />
+                <span class="kbd" aria-hidden="true">/</span>
+              </label>
+              <div class="log-filter-actions">
+                <label class="switch-field">
+                  <input id="log-auto" type="checkbox" checked />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span>自动刷新</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="chip-row" id="log-level-chips" role="group" aria-label="按级别筛选">
+              <span class="chip-row-label">级别</span>
+              <button class="chip-toggle tone-bad" type="button" data-level="error" aria-pressed="false">
+                <span class="chip-dot" aria-hidden="true"></span>异常<em data-count>0</em>
+              </button>
+              <button class="chip-toggle tone-warn" type="button" data-level="warning" aria-pressed="false">
+                <span class="chip-dot" aria-hidden="true"></span>警告<em data-count>0</em>
+              </button>
+              <button class="chip-toggle tone-ok" type="button" data-level="success" aria-pressed="false">
+                <span class="chip-dot" aria-hidden="true"></span>完成<em data-count>0</em>
+              </button>
+              <button class="chip-toggle tone-info" type="button" data-level="info" aria-pressed="false">
+                <span class="chip-dot" aria-hidden="true"></span>提示<em data-count>0</em>
+              </button>
+            </div>
+
+            <div class="chip-row" id="log-category-chips" role="group" aria-label="按类别筛选">
+              <span class="chip-row-label">类别</span>
+              <button class="chip-toggle" type="button" data-category="task" aria-pressed="false">
+                录制<em data-count>0</em>
+              </button>
+              <button class="chip-toggle" type="button" data-category="upload" aria-pressed="false">
+                归档<em data-count>0</em>
+              </button>
+              <button class="chip-toggle" type="button" data-category="system" aria-pressed="false">
+                系统<em data-count>0</em>
+              </button>
+              <button class="chip-toggle" type="button" data-category="auth" aria-pressed="false">
+                账号<em data-count>0</em>
+              </button>
+            </div>
+
+            <div class="log-filter-foot">
+              <span id="log-summary">正在读取…</span>
+              <span class="log-filter-actions">
+                <span id="log-scope" class="log-scope hidden">
+                  <svg class="ic ic-xs" aria-hidden="true"><use href="#ic-record" /></svg>
+                  <span id="log-scope-label">单个任务</span>
+                  <button id="log-scope-clear" type="button" aria-label="取消任务筛选" title="取消任务筛选">
+                    <svg class="ic ic-xs" aria-hidden="true"><use href="#ic-close" /></svg>
+                  </button>
+                </span>
+                <button id="log-clear-filters" class="btn btn-sm btn-ghost hidden" type="button">清除筛选</button>
+              </span>
+            </div>
+          </div>
+
+          <ol id="log-list" class="log-list" aria-live="polite" aria-label="运行事件">
+            <li class="skeleton skeleton-row"></li>
+            <li class="skeleton skeleton-row"></li>
+            <li class="skeleton skeleton-row"></li>
+          </ol>
+
+          <div id="log-more-wrap" class="log-more hidden">
+            <button id="log-more" class="btn btn-soft btn-sm" type="button">
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg>加载更早的记录
+            </button>
+          </div>
+
+          <div id="log-empty" class="empty empty-sm hidden">
+            <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-logs" /></svg></span>
+            <strong>暂无运行事件</strong>
+            <small>启动录制任务或执行网盘归档后，这里会记录关键节点</small>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/static/logs.js?v=20260814"></script>
+  </body>
+</html>

@@ -11,15 +11,15 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from douyin_recorder.models import LiveInfo
-from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
-from douyin_recorder.web.app import create_app
-from douyin_recorder.web.auth import SESSION_COOKIE_NAME
-from douyin_recorder.web.cloud_login import CloudLoginPoll
-from douyin_recorder.web.recordings import RecordingPreviewCache, build_remux_command
-from douyin_recorder.web.schemas import TaskStatus
-from douyin_recorder.web.store import TaskStore
-from douyin_recorder.web.uploader import UploadJob
+from stream_keeper.models import LiveInfo
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
+from stream_keeper.web.app import create_app
+from stream_keeper.web.auth import SESSION_COOKIE_NAME
+from stream_keeper.web.cloud_login import CloudLoginPoll
+from stream_keeper.web.recordings import RecordingPreviewCache, build_remux_command
+from stream_keeper.web.schemas import TaskStatus
+from stream_keeper.web.store import TaskStore
+from stream_keeper.web.uploader import UploadJob
 
 
 class FakeScheduler:
@@ -579,6 +579,21 @@ class WebTests(TestCase):
         self.assertEqual(response.json()["url"], "https://v.douyin.com/eAb3MZKYD48/")
         self.assertEqual(response.json()["segment_count"], 4)
 
+    def test_create_task_accepts_bilibili_and_kuaishou_rooms(self) -> None:
+        self.login()
+        for url in (
+            "https://live.bilibili.com/123456?from=share",
+            "https://live.kuaishou.com/u/example?share=1",
+        ):
+            with self.subTest(url=url):
+                response = self.client.post(
+                    "/api/tasks",
+                    headers=self.csrf_headers,
+                    json={"url": url, "auto_start": False},
+                )
+                self.assertEqual(response.status_code, 201)
+                self.assertNotIn("?", response.json()["url"])
+
     def test_update_restarts_only_for_effective_recording_config_changes(self) -> None:
         self.login()
         created = self.client.post(
@@ -655,6 +670,7 @@ class WebTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
+        self.assertEqual(payload["platform"], "抖音")
         self.assertTrue(payload["has_flv"])
         self.assertTrue(payload["has_hls"])
         self.assertNotIn("flv_url", payload)
@@ -748,9 +764,7 @@ class WebTests(TestCase):
             ("system", "info", "含通配符的 100%_文本", None, None),
         ]
         for category, level, message, detail, task_id in rows:
-            asyncio.run(
-                store.append_event(category, level, message, detail, retention=5000, task_id=task_id)
-            )
+            asyncio.run(store.append_event(category, level, message, detail, retention=5000, task_id=task_id))
         return store
 
     def test_activity_log_supports_multi_select_search_and_task_scope(self) -> None:
@@ -797,11 +811,7 @@ class WebTests(TestCase):
         tail = self.client.get(f"/api/events?after_id={newest_id}").json()
         self.assertEqual(tail["events"], [])
 
-        asyncio.run(
-            TaskStore(self.settings.database_path).append_event(
-                "system", "info", "新事件", retention=5000
-            )
-        )
+        asyncio.run(TaskStore(self.settings.database_path).append_event("system", "info", "新事件", retention=5000))
         appended = self.client.get(f"/api/events?after_id={newest_id}").json()["events"]
         self.assertEqual([event["message"] for event in appended], ["新事件"])
 

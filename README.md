@@ -1,18 +1,43 @@
-# DouYinStreamKeeper
+# StreamKeeper
 
-面向服务器的抖音直播录制工具。在浏览器里添加直播间、自动值守开播、本地保存录像，并支持把录像归档到夸克网盘或联通云盘。
+面向服务器的多平台直播录制工具，支持抖音、哔哩哔哩和快手。在浏览器里添加直播间、自动值守开播、本地保存录像，并可把录像归档到夸克网盘或联通云盘。
 
 ## 功能
 
 - **任务管理**：新建、编辑、启动、停止和删除录制任务
-- **粘贴即用**：支持直接粘贴抖音分享文案，自动识别直播间链接
-- **多画质录制**：支持原画、蓝光、超清、高清、标清
+- **多平台解析**：自动识别抖音、哔哩哔哩和快手直播间及平台分享短链
+- **粘贴即用**：可以直接粘贴平台分享文案，自动提取并规范化直播间链接
+- **多画质录制**：支持原画、超清、高清、标清、流畅五档
 - **分段保存**：支持 TS / MP4 / MKV / FLV，可按时长分段
 - **本地录像**：按主播和日期浏览、搜索、下载，并使用 ArtPlayer 在线播放
 - **自动值守**：开播后自动开始录制，服务器重启后继续已启用的任务
 - **网盘归档**：支持夸克、联通云盘扫码登录，定时整体归档，也可在录像列表里单独上传并查看实时进度
 - **运行日志**：网页里查看开播、录制、归档、登录等关键事件，一眼判断服务是否正常
 - **账号保护**：独立登录页，登录失败过多会锁定来源 IP
+
+## 项目结构
+
+核心代码使用与平台无关的 `stream_keeper` 包，各平台解析器只负责把直播间转换成统一的直播信息：
+
+```text
+src/
+└── stream_keeper/
+    ├── platforms/
+    │   ├── douyin/
+    │   │   ├── client.py      # 统一平台适配器
+    │   │   ├── transport.py   # 跳转、Cookie 和 API 请求
+    │   │   └── parser.py      # 房间数据与直播流纯解析
+    │   ├── bilibili/          # 哔哩哔哩解析器
+    │   ├── kuaishou/          # 快手解析器
+    │   ├── base.py            # 平台公共约定
+    │   └── router.py          # 链接识别与平台路由
+    ├── cloud/                 # 网盘客户端
+    ├── web/                   # Web API、调度器和静态页面
+    ├── recorder.py            # FFmpeg 录制
+    └── settings.py            # 运行配置
+```
+
+Python 代码从 `stream_keeper` 导入，服务可通过 `python -m stream_keeper` 或 `stream-keeper` 启动。
 
 ## 安装
 
@@ -29,6 +54,14 @@ cp .env.example .env
 ```dotenv
 DOUYIN_WEB_USERNAME=admin
 DOUYIN_WEB_PASSWORD=请替换成足够长的随机密码
+```
+
+平台 Cookie 均为可选项。哔哩哔哩登录 Cookie 可用于获取账号有权限观看的高画质，快手遇到风控或匿名访问限制时建议配置 Cookie：
+
+```dotenv
+DOUYIN_COOKIE=
+BILIBILI_COOKIE=
+KUAISHOU_COOKIE=
 ```
 
 启动：
@@ -50,6 +83,8 @@ docker compose pull && docker compose up -d --build   # 更新代码后重建
 
 ## 使用提示
 
+- 支持 `live.douyin.com` / `v.douyin.com`、`live.bilibili.com` / `b23.tv`、`live.kuaishou.com` / `v.kuaishou.com` 链接
+- `DOUYIN_PROXY` 会同时用于三个直播平台的状态检查与流地址解析
 - 登录后可在「设置」中扫码绑定夸克或联通云盘，再在「网盘归档」中启用自动上传
 - 录像默认保存在 Docker 数据卷中；网盘上传成功后，可按配置清理本地文件
 - 对公网开放时建议自行配置 HTTPS 反向代理

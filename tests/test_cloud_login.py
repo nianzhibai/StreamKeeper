@@ -4,7 +4,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import httpx
 
-from douyin_recorder.web.cloud_login import (
+from stream_keeper.web.cloud_login import (
     CloudLoginManager,
     CloudLoginPoll,
     QuarkQrLoginFlow,

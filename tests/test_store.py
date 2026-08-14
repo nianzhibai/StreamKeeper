@@ -3,8 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
-from douyin_recorder.web.schemas import TaskConfig, TaskStatus
-from douyin_recorder.web.store import TaskStore
+from stream_keeper.web.schemas import TaskConfig, TaskStatus
+from stream_keeper.web.store import TaskStore
 
 
 def task_config(**overrides) -> TaskConfig:
@@ -55,6 +55,15 @@ class StoreTests(IsolatedAsyncioTestCase):
         self.assertEqual([item.id for item in await self.store.list()], [created.id])
         self.assertTrue(await self.store.delete(created.id))
         self.assertIsNone(await self.store.get(created.id))
+
+    async def test_supported_platform_urls_share_the_existing_task_schema(self) -> None:
+        for url in (
+            "https://live.bilibili.com/123456",
+            "https://live.kuaishou.com/u/example",
+        ):
+            with self.subTest(url=url):
+                created = await self.store.create(task_config(url=url))
+                self.assertEqual(created.url, url)
 
     async def test_recover_interrupted_enabled_task(self) -> None:
         created = await self.store.create(task_config())

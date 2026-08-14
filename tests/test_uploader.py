@@ -5,12 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
 
-from douyin_recorder.cloud import CloudUploadError, UploadProgress
-from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
-from douyin_recorder.web.recordings import RecordingPreviewCache
-from douyin_recorder.web.schemas import TaskConfig, TaskStatus
-from douyin_recorder.web.store import TaskStore
-from douyin_recorder.web.uploader import RecordingUploadService, UploadJob, UploadTarget
+from stream_keeper.cloud import CloudUploadError, UploadProgress
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
+from stream_keeper.web.recordings import RecordingPreviewCache
+from stream_keeper.web.schemas import TaskConfig, TaskStatus
+from stream_keeper.web.store import TaskStore
+from stream_keeper.web.uploader import RecordingUploadService, UploadJob, UploadTarget
 
 
 def make_settings(root: Path, **overrides) -> Settings:

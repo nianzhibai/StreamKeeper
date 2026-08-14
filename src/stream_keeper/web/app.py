@@ -1,0 +1,829 @@
+from __future__ import annotations
+
+import asyncio
+import secrets
+import shutil
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import timedelta
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
+
+from .. import __version__
+from ..cloud import CloudArchiveConfig, CloudUploadError
+from ..errors import StreamKeeperError
+from ..settings import Settings
+from .auth import (
+    SESSION_COOKIE_NAME,
+    SecurityHeadersMiddleware,
+    SessionAuthMiddleware,
+    set_session_cookie,
+)
+from .cloud_login import (
+    CloudLoginError,
+    CloudLoginFlowFactory,
+    CloudLoginManager,
+    CloudLoginSnapshot,
+)
+from .events import EventLog
+from .recordings import (
+    RECORDING_MEDIA_TYPES,
+    RecordingPreviewCache,
+    get_recording_file,
+    list_recording_directory,
+    resolve_recording_path,
+)
+from .scheduler import ClientFactory, TaskScheduler
+from .schemas import (
+    AuthSession,
+    CloudArchiveUpdate,
+    CloudArchiveView,
+    CloudLoginView,
+    CloudQuarkView,
+    CloudScheduleView,
+    CloudUploadExecutionView,
+    CloudUploadSummaryView,
+    CloudWoPanView,
+    EventCategory,
+    EventLevel,
+    InspectRequest,
+    InspectResponse,
+    LoginRequest,
+    RecordingDirectoryView,
+    RecordingUploadBatchRequest,
+    RecordingUploadCandidatesView,
+    RecordingUploadJobView,
+    RecordingUploadListView,
+    RecordingUploadRequest,
+    RuntimeEventListView,
+    SystemInfo,
+    TaskConfig,
+    TaskCreate,
+    TaskRecord,
+    TaskUpdate,
+)
+from .store import TaskStore, WebSession, utc_now
+from .uploader import RecordingUploadService, UploadJob
+
+# Keeps idle proxies from dropping the stream, and coalesces the byte-level
+# progress reports into a cadence a browser can actually render.
+UPLOAD_STREAM_HEARTBEAT_SECONDS = 15.0
+UPLOAD_STREAM_MIN_INTERVAL_SECONDS = 0.3
+# The activity-log page judges "is everything fine" over the last day.
+EVENT_SUMMARY_WINDOW_HOURS = 24
+
+CLOUD_PROVIDER_LABELS = {"quark": "夸克网盘", "wopan": "联通云盘"}
+
+_TASK_RESTART_FIELDS = frozenset(
+    {
+        "url",
+        "quality",
+        "output_format",
+        "source",
+        "segment_seconds",
+        "segment_count",
+        "monitor",
+        "interval_seconds",
+    }
+)
+
+
+def _not_found(task_id: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+
+def _auth_session_response(session: WebSession) -> AuthSession:
+    return AuthSession(
+        username=session.username,
+        csrf_token=session.csrf_token,
+        expires_at=session.expires_at,
+    )
+
+
+def _cloud_login_response(snapshot: CloudLoginSnapshot) -> CloudLoginView:
+    return CloudLoginView(
+        session_id=snapshot.session_id,
+        provider=snapshot.provider,
+        state=snapshot.state,
+        message=snapshot.message,
+        qr_image=snapshot.qr_image,
+        expires_at=snapshot.expires_at,
+    )
+
+
+def _recording_upload_response(job: UploadJob) -> RecordingUploadJobView:
+    return RecordingUploadJobView(
+        path=job.path,
+        name=job.name,
+        size=job.size,
+        status=job.status,
+        stage=job.stage,
+        target=job.target,
+        target_index=job.target_index,
+        target_count=job.target_count,
+        uploaded_bytes=job.uploaded_bytes,
+        uploaded_copies=job.uploaded_copies,
+        speed_bytes_per_second=job.speed_bytes_per_second,
+        deleted=job.deleted,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        error=job.error,
+    )
+
+
+async def _cloud_archive_response(
+    config: CloudArchiveConfig,
+    upload_service: RecordingUploadService,
+) -> CloudArchiveView:
+    execution = upload_service.last_execution
+    execution_view = None
+    if execution is not None:
+        summary_view = None
+        if execution.summary is not None:
+            summary_view = CloudUploadSummaryView(
+                scanned_files=execution.summary.scanned_files,
+                skipped_files=execution.summary.skipped_files,
+                uploaded_copies=execution.summary.uploaded_copies,
+                deleted_files=execution.summary.deleted_files,
+                failed_files=execution.summary.failed_files,
+            )
+        execution_view = CloudUploadExecutionView(
+            trigger=execution.trigger,
+            status=execution.status,
+            started_at=execution.started_at,
+            finished_at=execution.finished_at,
+            summary=summary_view,
+            error=execution.error,
+        )
+    return CloudArchiveView(
+        enabled=config.enabled,
+        running=upload_service.running,
+        quark=CloudQuarkView(
+            enabled=config.quark_enabled,
+            credential_configured=bool(config.quark_cookie),
+            root_id=config.quark_root_id,
+            upload_path=config.quark_upload_path,
+        ),
+        wopan=CloudWoPanView(
+            enabled=config.wopan_enabled,
+            access_token_configured=bool(config.wopan_access_token),
+            refresh_token_configured=bool(config.wopan_refresh_token),
+            root_id=config.wopan_root_id,
+            family_id=config.wopan_family_id,
+            upload_path=config.wopan_upload_path,
+        ),
+        schedule=CloudScheduleView(
+            hour=config.upload_hour,
+            min_age_minutes=config.upload_min_age_minutes,
+            timeout_seconds=config.upload_timeout_seconds,
+            next_run_at=await upload_service.next_run_at(),
+        ),
+        last_run=execution_view,
+    )
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    store: TaskStore | None = None,
+    scheduler: TaskScheduler | None = None,
+    upload_service: RecordingUploadService | None = None,
+    inspect_client_factory: ClientFactory | None = None,
+    cloud_login_flow_factory: CloudLoginFlowFactory | None = None,
+    cloud_login_poll_interval: float = 2,
+) -> FastAPI:
+    settings = settings or Settings.from_env()
+    store = store or TaskStore(settings.database_path)
+    event_log = EventLog(store)
+    recording_preview_cache = RecordingPreviewCache(settings.data_dir / "preview-cache", settings.ffmpeg)
+    scheduler = scheduler or TaskScheduler(store, settings, events=event_log)
+    upload_service = upload_service or RecordingUploadService(
+        settings,
+        store,
+        active_directories_provider=getattr(scheduler, "recording_output_directories", None),
+        events=event_log,
+        preview_cache=recording_preview_cache,
+    )
+    inspect_client_factory = inspect_client_factory or settings.create_client
+    static_dir = Path(__file__).resolve().parent / "static"
+    cloud_config_lock = asyncio.Lock()
+
+    async def save_cloud_login_credentials(provider: str, credentials: dict[str, str]) -> None:
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            if provider == "quark":
+                cookie = credentials.get("cookie", "")
+                if not cookie:
+                    raise CloudLoginError("夸克扫码登录没有返回 Cookie")
+                config = replace(current, quark_cookie=cookie)
+            elif provider == "wopan":
+                access_token = credentials.get("access_token", "")
+                refresh_token = credentials.get("refresh_token", "")
+                if len(access_token.encode()) < 16:
+                    raise CloudLoginError("联通云盘扫码登录没有返回有效 Token")
+                config = replace(
+                    current,
+                    wopan_access_token=access_token,
+                    wopan_refresh_token=refresh_token,
+                )
+            else:
+                raise CloudLoginError(f"不支持的扫码登录类型: {provider}")
+            config.validate()
+            await store.save_cloud_upload_config(config.to_dict())
+            await store.delete_cloud_credentials(provider)
+            await upload_service.reconfigure(config)
+        await event_log.success("auth", f"{CLOUD_PROVIDER_LABELS[provider]}扫码登录成功，凭据已保存")
+
+    if cloud_login_flow_factory is None:
+        cloud_login_manager = CloudLoginManager(
+            save_cloud_login_credentials,
+            poll_interval=cloud_login_poll_interval,
+        )
+    else:
+        cloud_login_manager = CloudLoginManager(
+            save_cloud_login_credentials,
+            flow_factory=cloud_login_flow_factory,
+            poll_interval=cloud_login_poll_interval,
+        )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        settings.prepare()
+        await store.initialize()
+        await store.sync_web_credentials(settings.web_username, settings.web_password)
+        await event_log.info(
+            "system",
+            f"服务已启动（v{__version__}）",
+            f"录像目录 {settings.recordings_dir} · 最多同时录制 {settings.max_concurrent_recordings} 个直播间",
+        )
+        await scheduler.startup()
+        await upload_service.startup()
+        try:
+            yield
+        finally:
+            await event_log.info("system", "服务正在停止，已启用的任务会在下次启动时恢复")
+            await cloud_login_manager.shutdown()
+            await upload_service.shutdown()
+            await scheduler.shutdown()
+
+    app = FastAPI(
+        title="StreamKeeper",
+        version=__version__,
+        docs_url="/api/docs",
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+    app.add_middleware(
+        SessionAuthMiddleware,
+        store=store,
+        enabled=bool(settings.web_password),
+        session_ttl_seconds=settings.session_ttl_hours * 3600,
+    )
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.state.settings = settings
+    app.state.store = store
+    app.state.scheduler = scheduler
+    app.state.upload_service = upload_service
+    app.state.cloud_login_manager = cloud_login_manager
+    app.state.recording_preview_cache = recording_preview_cache
+    app.state.event_log = event_log
+
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/login", include_in_schema=False, response_model=None)
+    async def login_page(request: Request) -> Response:
+        if not settings.web_password:
+            return RedirectResponse("/", status_code=303)
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token and await store.get_session(token):
+            return RedirectResponse("/", status_code=303)
+        return FileResponse(static_dir / "login.html", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/auth/login", response_model=AuthSession)
+    async def login(payload: LoginRequest, request: Request, response: Response) -> AuthSession:
+        if not settings.web_password:
+            raise HTTPException(status_code=409, detail="当前开发环境未启用登录认证")
+
+        client_key = request.client.host if request.client else "unknown"
+        source = f"来源 IP {client_key}"
+        if await store.is_login_blacklisted(client_key):
+            raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
+
+        username_matches = secrets.compare_digest(
+            payload.username.encode("utf-8"),
+            settings.web_username.encode("utf-8"),
+        )
+        password_matches = secrets.compare_digest(
+            payload.password.get_secret_value().encode("utf-8"),
+            settings.web_password.encode("utf-8"),
+        )
+        if not (username_matches and password_matches):
+            blacklisted = await store.register_login_failure(
+                client_key,
+                settings.login_max_attempts,
+                settings.login_window_seconds,
+            )
+            if blacklisted:
+                await event_log.error("auth", "登录失败次数达到上限，该 IP 已被禁止登录", source)
+                raise HTTPException(status_code=403, detail="登录失败次数达到上限，当前 IP 已被永久禁止登录")
+            await event_log.warning("auth", "登录失败：用户名或密码错误", source)
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+        if not await store.accept_login_success(client_key):
+            raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
+        await event_log.info("auth", f"{settings.web_username} 登录成功", source)
+        ttl_seconds = settings.session_ttl_hours * 3600
+        token, session = await store.create_session(settings.web_username, ttl_seconds)
+        set_session_cookie(
+            response,
+            token,
+            session,
+            ttl_seconds,
+            secure=request.url.scheme == "https",
+        )
+        return _auth_session_response(session)
+
+    @app.get("/api/auth/blocked-clients", response_model=list[str])
+    async def blocked_clients() -> list[str]:
+        return await store.list_login_blacklist()
+
+    @app.delete("/api/auth/blocked-clients/{client_key:path}", status_code=status.HTTP_204_NO_CONTENT)
+    async def unblock_client(client_key: str) -> Response:
+        if not await store.unblock_login_client(client_key):
+            raise HTTPException(status_code=404, detail=f"IP 不在登录黑名单中: {client_key}")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/auth/session", response_model=AuthSession)
+    async def current_session(request: Request) -> AuthSession:
+        if not settings.web_password:
+            return AuthSession(
+                username=settings.web_username,
+                csrf_token="",
+                expires_at=utc_now() + timedelta(hours=settings.session_ttl_hours),
+            )
+        return _auth_session_response(request.state.auth_session)
+
+    @app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+    async def logout(request: Request, response: Response) -> Response:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token:
+            await store.delete_session(token)
+        response.delete_cookie(
+            SESSION_COOKIE_NAME,
+            path="/",
+            secure=request.url.scheme == "https",
+            httponly=True,
+            samesite="strict",
+        )
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/tasks", include_in_schema=False)
+    async def tasks_page() -> FileResponse:
+        return FileResponse(static_dir / "tasks.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/archive", include_in_schema=False)
+    async def archive_page() -> FileResponse:
+        return FileResponse(static_dir / "archive.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/recordings", include_in_schema=False)
+    async def recordings_page() -> FileResponse:
+        return FileResponse(static_dir / "recordings.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/logs", include_in_schema=False)
+    async def logs_page() -> FileResponse:
+        return FileResponse(static_dir / "logs.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/settings", include_in_schema=False)
+    async def settings_page() -> FileResponse:
+        return FileResponse(static_dir / "settings.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/events", response_model=RuntimeEventListView)
+    async def list_events(
+        limit: Annotated[int, Query(ge=1, le=500)] = 200,
+        category: Annotated[EventCategory | None, Query(deprecated=True)] = None,
+        alerts_only: Annotated[bool, Query(deprecated=True)] = False,
+        categories: Annotated[list[EventCategory] | None, Query()] = None,
+        levels: Annotated[list[EventLevel] | None, Query()] = None,
+        search: Annotated[str | None, Query(max_length=200)] = None,
+        task_id: Annotated[str | None, Query(max_length=64)] = None,
+        before_id: Annotated[int | None, Query(ge=1)] = None,
+        after_id: Annotated[int | None, Query(ge=0)] = None,
+    ) -> RuntimeEventListView:
+        selected_categories = list(categories) if categories else ([category] if category else [])
+        selected_levels = list(levels) if levels else (["warning", "error"] if alerts_only else [])
+        term = (search or "").strip() or None
+
+        # One extra row tells us whether older entries remain, without a COUNT(*).
+        events, summary, facets = await asyncio.gather(
+            store.list_events(
+                limit=limit + 1,
+                categories=selected_categories,
+                levels=selected_levels,
+                search=term,
+                task_id=task_id,
+                before_id=before_id,
+                after_id=after_id,
+            ),
+            store.event_summary(utc_now() - timedelta(hours=EVENT_SUMMARY_WINDOW_HOURS)),
+            store.event_facets(search=term, task_id=task_id),
+        )
+        has_more = len(events) > limit
+        return RuntimeEventListView(
+            events=events[:limit],
+            summary=summary,
+            facets=facets,
+            has_more=has_more,
+        )
+
+    @app.delete("/api/events", response_model=RuntimeEventListView)
+    async def clear_events() -> RuntimeEventListView:
+        removed = await store.clear_events()
+        # Recorded after the wipe so the page never comes back completely blank and
+        # the operator keeps an audit trail of who emptied it.
+        await event_log.info("system", f"运行日志已清空，移除 {removed} 条记录")
+        events, summary, facets = await asyncio.gather(
+            store.list_events(limit=200),
+            store.event_summary(utc_now() - timedelta(hours=EVENT_SUMMARY_WINDOW_HOURS)),
+            store.event_facets(),
+        )
+        return RuntimeEventListView(events=events, summary=summary, facets=facets, has_more=False)
+
+    @app.get("/api/events/export")
+    async def export_events(
+        fmt: Annotated[str, Query(pattern="^(txt|jsonl)$", alias="format")] = "txt",
+        categories: Annotated[list[EventCategory] | None, Query()] = None,
+        levels: Annotated[list[EventLevel] | None, Query()] = None,
+        search: str | None = Query(default=None, max_length=200),
+        task_id: str | None = Query(default=None, max_length=64),
+    ) -> StreamingResponse:
+        term = (search or "").strip() or None
+
+        def lines() -> Iterator[str]:
+            rows = store.iter_events(
+                categories=list(categories) if categories else None,
+                levels=list(levels) if levels else None,
+                search=term,
+                task_id=task_id,
+            )
+            for event in rows:
+                if fmt == "jsonl":
+                    yield event.model_dump_json() + "\n"
+                else:
+                    stamp = event.created_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                    detail = f" | {event.detail}" if event.detail else ""
+                    yield f"{stamp} [{event.level.upper():<7}] [{event.category}] {event.message}{detail}\n"
+
+        stamp = utc_now().astimezone().strftime("%Y%m%d-%H%M%S")
+        suffix = "jsonl" if fmt == "jsonl" else "log"
+        # A plain sync generator is fine here: StreamingResponse drives it through a
+        # threadpool, so the chunked SQLite reads never block the event loop.
+        return StreamingResponse(
+            lines(),
+            media_type="application/x-ndjson" if fmt == "jsonl" else "text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="stream-keeper-events-{stamp}.{suffix}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/api/cloud/archive", response_model=CloudArchiveView)
+    async def get_cloud_archive() -> CloudArchiveView:
+        config = await upload_service.get_config()
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.post(
+        "/api/cloud/login/{provider}",
+        response_model=CloudLoginView,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def start_cloud_login(provider: str) -> CloudLoginView:
+        if provider not in {"quark", "wopan"}:
+            raise HTTPException(status_code=404, detail=f"不支持的网盘类型: {provider}")
+        try:
+            snapshot = await cloud_login_manager.start(provider)
+        except CloudLoginError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _cloud_login_response(snapshot)
+
+    @app.get(
+        "/api/cloud/login/{provider}/{session_id}",
+        response_model=CloudLoginView,
+    )
+    async def get_cloud_login(provider: str, session_id: str) -> CloudLoginView:
+        snapshot = await cloud_login_manager.get(provider, session_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="扫码登录会话不存在或已结束")
+        return _cloud_login_response(snapshot)
+
+    @app.delete(
+        "/api/cloud/login/{provider}/{session_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def cancel_cloud_login(provider: str, session_id: str) -> Response:
+        if not await cloud_login_manager.cancel(provider, session_id):
+            raise HTTPException(status_code=404, detail="扫码登录会话不存在或已结束")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.put("/api/cloud/archive", response_model=CloudArchiveView)
+    async def update_cloud_archive(payload: CloudArchiveUpdate) -> CloudArchiveView:
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            new_cookie = payload.quark.cookie.get_secret_value().strip() if payload.quark.cookie else ""
+            new_access_token = (
+                payload.wopan.access_token.get_secret_value().strip() if payload.wopan.access_token else ""
+            )
+            new_refresh_token = (
+                payload.wopan.refresh_token.get_secret_value().strip() if payload.wopan.refresh_token else ""
+            )
+            if payload.quark.clear_cookie and new_cookie:
+                raise HTTPException(status_code=422, detail="不能同时填写并清除夸克 Cookie")
+            if payload.wopan.clear_tokens and (new_access_token or new_refresh_token):
+                raise HTTPException(status_code=422, detail="不能同时填写并清除联通云盘 token")
+
+            quark_cookie = "" if payload.quark.clear_cookie else (new_cookie or current.quark_cookie)
+            if payload.wopan.clear_tokens:
+                wopan_access_token = ""
+                wopan_refresh_token = ""
+            else:
+                wopan_access_token = new_access_token or current.wopan_access_token
+                wopan_refresh_token = new_refresh_token or current.wopan_refresh_token
+            config = CloudArchiveConfig(
+                quark_enabled=payload.quark.enabled,
+                quark_cookie=quark_cookie,
+                quark_root_id=payload.quark.root_id,
+                quark_upload_path=payload.quark.upload_path,
+                wopan_enabled=payload.wopan.enabled,
+                wopan_access_token=wopan_access_token,
+                wopan_refresh_token=wopan_refresh_token,
+                wopan_root_id=payload.wopan.root_id,
+                wopan_family_id=payload.wopan.family_id,
+                wopan_upload_path=payload.wopan.upload_path,
+                upload_hour=payload.schedule.hour,
+                upload_min_age_minutes=payload.schedule.min_age_minutes,
+                upload_timeout_seconds=payload.schedule.timeout_seconds,
+            )
+            try:
+                config.validate()
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+            await store.save_cloud_upload_config(config.to_dict())
+            if payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie):
+                await store.delete_cloud_credentials("quark")
+            if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
+                await store.delete_cloud_credentials("wopan")
+            await upload_service.reconfigure(config)
+        enabled = "、".join(CLOUD_PROVIDER_LABELS[name] for name, _path in config.targets)
+        await event_log.info(
+            "upload",
+            "网盘归档设置已更新",
+            f"已启用 {enabled}，每天 {config.upload_hour:02d}:00 自动归档" if enabled else "当前没有启用任何网盘",
+        )
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.post("/api/cloud/archive/run", response_model=CloudArchiveView, status_code=status.HTTP_202_ACCEPTED)
+    async def run_cloud_archive() -> CloudArchiveView:
+        try:
+            started = await upload_service.trigger("manual")
+        except CloudUploadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not started:
+            raise HTTPException(status_code=409, detail="网盘归档任务正在运行")
+        config = await upload_service.get_config()
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.get("/api/recordings", response_model=RecordingDirectoryView)
+    async def list_recordings(path: str = "") -> RecordingDirectoryView:
+        return await list_recording_directory(settings.recordings_dir, path)
+
+    @app.get("/api/recordings/uploads", response_model=RecordingUploadListView)
+    async def list_recording_uploads() -> RecordingUploadListView:
+        return RecordingUploadListView(jobs=[_recording_upload_response(job) for job in upload_service.jobs()])
+
+    @app.post(
+        "/api/recordings/uploads",
+        response_model=RecordingUploadJobView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_recording(payload: RecordingUploadRequest) -> RecordingUploadJobView:
+        _, normalized = get_recording_file(settings.recordings_dir, payload.path)
+        try:
+            job = await upload_service.enqueue_file(normalized)
+        except CloudUploadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _recording_upload_response(job)
+
+    @app.get("/api/recordings/uploads/stream", include_in_schema=False, response_model=None)
+    async def stream_recording_uploads() -> StreamingResponse:
+        def snapshot() -> str:
+            view = RecordingUploadListView(jobs=[_recording_upload_response(job) for job in upload_service.jobs()])
+            return f"data: {view.model_dump_json()}\n\n"
+
+        async def events() -> AsyncIterator[str]:
+            updates = upload_service.subscribe()
+            try:
+                while True:
+                    try:
+                        await asyncio.wait_for(updates.wait(), timeout=UPLOAD_STREAM_HEARTBEAT_SECONDS)
+                    except TimeoutError:
+                        yield ": ping\n\n"
+                        continue
+                    updates.clear()
+                    yield snapshot()
+                    await asyncio.sleep(UPLOAD_STREAM_MIN_INTERVAL_SECONDS)
+            finally:
+                upload_service.unsubscribe(updates)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                # Nginx buffers proxied responses by default, which would hold
+                # every event until the upload finished.
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/recordings/uploads/candidates", response_model=RecordingUploadCandidatesView)
+    async def count_recording_upload_candidates(path: str = "") -> RecordingUploadCandidatesView:
+        try:
+            candidates = await upload_service.collect_manual_candidates(path)
+        except CloudUploadError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return RecordingUploadCandidatesView(
+            path=path,
+            count=len(candidates),
+            total_size=sum(candidate.size for candidate in candidates),
+        )
+
+    @app.post(
+        "/api/recordings/uploads/batch",
+        response_model=RecordingUploadListView,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def upload_recording_directory(payload: RecordingUploadBatchRequest) -> RecordingUploadListView:
+        try:
+            jobs = await upload_service.enqueue_directory(payload.path)
+        except CloudUploadError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RecordingUploadListView(jobs=[_recording_upload_response(job) for job in jobs])
+
+    @app.delete("/api/recordings/uploads", status_code=status.HTTP_204_NO_CONTENT)
+    async def cancel_all_recording_uploads() -> Response:
+        if not upload_service.cancel_all():
+            raise HTTPException(status_code=404, detail="当前没有进行中的上传任务")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.delete("/api/recordings/uploads/{recording_path:path}", status_code=status.HTTP_204_NO_CONTENT)
+    async def cancel_recording_upload(recording_path: str) -> Response:
+        _, normalized = resolve_recording_path(settings.recordings_dir, recording_path)
+        if not upload_service.cancel_file(normalized):
+            raise HTTPException(status_code=404, detail="该录像没有进行中的上传任务")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/recordings/file/{recording_path:path}", response_model=None)
+    async def recording_file(recording_path: str, download: bool = False) -> FileResponse:
+        path, _ = get_recording_file(settings.recordings_dir, recording_path)
+        return FileResponse(
+            path,
+            media_type=RECORDING_MEDIA_TYPES[path.suffix.lower()],
+            filename=path.name,
+            content_disposition_type="attachment" if download else "inline",
+        )
+
+    @app.get("/api/recordings/preview/{recording_path:path}", response_model=None)
+    async def recording_preview(recording_path: str) -> FileResponse:
+        path, normalized = get_recording_file(settings.recordings_dir, recording_path)
+        preview_path = await recording_preview_cache.get(path, normalized)
+        return FileResponse(
+            preview_path,
+            media_type="video/mp4",
+            filename=f"{path.stem}.mp4",
+            content_disposition_type="inline",
+            headers={"X-Recording-Preview": "remux-cache"},
+        )
+
+    @app.get("/api/tasks", response_model=list[TaskRecord])
+    async def list_tasks() -> list[TaskRecord]:
+        return scheduler.enrich_records(await store.list())
+
+    @app.post("/api/tasks", response_model=TaskRecord, status_code=status.HTTP_201_CREATED)
+    async def create_task(payload: TaskCreate) -> TaskRecord:
+        config = TaskConfig.model_validate(payload.model_dump(exclude={"auto_start"}))
+        record = await store.create(config)
+        if payload.auto_start:
+            await scheduler.start(record.id)
+        created = await store.get(record.id)
+        assert created is not None
+        return scheduler.enrich_record(created)
+
+    @app.get("/api/tasks/{task_id}", response_model=TaskRecord)
+    async def get_task(task_id: str) -> TaskRecord:
+        record = await store.get(task_id)
+        if record is None:
+            raise _not_found(task_id)
+        return scheduler.enrich_record(record)
+
+    @app.patch("/api/tasks/{task_id}", response_model=TaskRecord)
+    async def update_task(task_id: str, payload: TaskUpdate) -> TaskRecord:
+        current = await store.get(task_id)
+        if current is None:
+            raise _not_found(task_id)
+        changes = payload.model_dump(exclude_unset=True)
+        invalid_nulls = [key for key, value in changes.items() if key != "label" and value is None]
+        if invalid_nulls:
+            raise HTTPException(status_code=422, detail=f"字段不能为 null: {', '.join(invalid_nulls)}")
+        current_config = {name: getattr(current, name) for name in TaskConfig.model_fields}
+        try:
+            validated_config = TaskConfig.model_validate(current_config | changes)
+        except ValidationError as exc:
+            detail = "；".join(error["msg"] for error in exc.errors())
+            raise HTTPException(status_code=422, detail=detail) from exc
+        changes = {name: getattr(validated_config, name) for name in changes}
+        effective_changes = {key: value for key, value in changes.items() if getattr(current, key) != value}
+        if not effective_changes:
+            return current
+        updated = await store.update_config(task_id, effective_changes)
+        if current.enabled and _TASK_RESTART_FIELDS.intersection(effective_changes):
+            await scheduler.restart(task_id)
+        if updated is None:
+            raise _not_found(task_id)
+        result = await store.get(task_id)
+        assert result is not None
+        return scheduler.enrich_record(result)
+
+    @app.post("/api/tasks/{task_id}/start", response_model=TaskRecord)
+    async def start_task(task_id: str) -> TaskRecord:
+        record = await scheduler.start(task_id)
+        if record is None:
+            raise _not_found(task_id)
+        result = await store.get(task_id)
+        assert result is not None
+        return scheduler.enrich_record(result)
+
+    @app.post("/api/tasks/{task_id}/stop", response_model=TaskRecord)
+    async def stop_task(task_id: str) -> TaskRecord:
+        record = await scheduler.stop(task_id)
+        if record is None:
+            raise _not_found(task_id)
+        return scheduler.enrich_record(record)
+
+    @app.delete("/api/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_task(task_id: str) -> Response:
+        if await store.get(task_id) is None:
+            raise _not_found(task_id)
+        await scheduler.stop(task_id)
+        await store.delete(task_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post("/api/inspect", response_model=InspectResponse)
+    async def inspect_room(payload: InspectRequest) -> InspectResponse:
+        client = inspect_client_factory()
+        try:
+            info = await asyncio.wait_for(
+                client.fetch(payload.url, payload.quality),
+                timeout=settings.fetch_timeout_seconds,
+            )
+        except (StreamKeeperError, TimeoutError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return InspectResponse(
+            platform=info.platform,
+            anchor_name=info.anchor_name,
+            is_live=info.is_live,
+            title=info.title,
+            quality=info.quality,
+            live_url=info.live_url,
+            has_flv=bool(info.flv_url),
+            has_hls=bool(info.m3u8_url),
+            stream_orientation=info.stream_orientation,
+        )
+
+    @app.get("/api/system", response_model=SystemInfo)
+    async def system_info() -> SystemInfo:
+        usage = shutil.disk_usage(settings.recordings_dir)
+        return SystemInfo(
+            ffmpeg_available=bool(shutil.which(settings.ffmpeg)),
+            node_available=bool(shutil.which("node")),
+            recordings_dir=str(settings.recordings_dir),
+            free_space_gb=round(usage.free / (1024**3), 2),
+            active_tasks=scheduler.active_task_count,
+            recording_tasks=scheduler.recording_task_count,
+            max_concurrent_recordings=settings.max_concurrent_recordings,
+        )
+
+    return app

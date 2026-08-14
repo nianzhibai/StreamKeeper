@@ -1,7 +1,7 @@
 from unittest import TestCase
 
-from douyin_recorder.ffmpeg import build_ffmpeg_command, choose_source, get_codec
-from douyin_recorder.models import LiveInfo
+from stream_keeper.ffmpeg import build_ffmpeg_command, choose_source, get_codec
+from stream_keeper.models import LiveInfo
 
 
 def live_info(*, flv: str | None, hls: str | None, record: str | None = None) -> LiveInfo:

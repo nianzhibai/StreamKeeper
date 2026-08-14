@@ -1,7 +1,7 @@
 services:
   recorder:
     build: .
-    image: douyin-stream-keeper:local
+    image: stream-keeper:local
     restart: unless-stopped
     init: true
     ports:
@@ -32,6 +32,8 @@ services:
       DOUYIN_PROXY: "${DOUYIN_PROXY:-}"
       DOUYIN_COOKIE: "${DOUYIN_COOKIE:-}"
       DOUYIN_COOKIE_FILE: "${DOUYIN_COOKIE_FILE:-}"
+      BILIBILI_COOKIE: "${BILIBILI_COOKIE:-}"
+      KUAISHOU_COOKIE: "${KUAISHOU_COOKIE:-}"
       TZ: "${TZ:-Asia/Shanghai}"
       WEB_CONCURRENCY: 1
     volumes:

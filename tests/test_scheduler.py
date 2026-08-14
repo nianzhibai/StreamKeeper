@@ -4,12 +4,12 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from douyin_recorder.models import LiveInfo, RecordingResult, SelectedSource
-from douyin_recorder.settings import Settings
-from douyin_recorder.web import scheduler as scheduler_module
-from douyin_recorder.web.scheduler import TaskScheduler
-from douyin_recorder.web.schemas import TaskConfig, TaskStatus
-from douyin_recorder.web.store import TaskStore
+from stream_keeper.models import LiveInfo, RecordingResult, SelectedSource
+from stream_keeper.settings import Settings
+from stream_keeper.web import scheduler as scheduler_module
+from stream_keeper.web.scheduler import TaskScheduler
+from stream_keeper.web.schemas import TaskConfig, TaskStatus
+from stream_keeper.web.store import TaskStore
 
 
 def make_settings(root: Path) -> Settings:

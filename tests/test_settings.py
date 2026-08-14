@@ -1,8 +1,11 @@
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
-from douyin_recorder.settings import CLOUD_ARCHIVE_ROOT, Settings
+from stream_keeper import LiveStreamClient
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 
 
 def make_settings(root: Path, **overrides) -> Settings:
@@ -107,5 +110,37 @@ class SettingsTests(TestCase):
             root = Path(tmp)
             cookie_file = root / "cookie.txt"
             cookie_file.write_text("from=file\n", encoding="utf-8")
-            settings = make_settings(root, cookies="from=env", cookie_file=cookie_file)
-            self.assertEqual(settings.load_cookies(), "from=file")
+            settings = make_settings(
+                root,
+                douyin_cookies="from=env",
+                douyin_cookie_file=cookie_file,
+            )
+            self.assertEqual(settings.load_douyin_cookies(), "from=file")
+
+    def test_platform_cookies_are_loaded_into_unified_client(self) -> None:
+        settings = Settings(
+            douyin_cookies="douyin=1",
+            bilibili_cookies="bilibili=1",
+            kuaishou_cookies="kuaishou=1",
+        )
+
+        client = settings.create_client()
+
+        self.assertIsInstance(client, LiveStreamClient)
+        self.assertEqual(
+            client._cookies,
+            {"douyin": "douyin=1", "bilibili": "bilibili=1", "kuaishou": "kuaishou=1"},
+        )
+
+    def test_platform_cookie_environment_variables(self) -> None:
+        with patch.dict(os.environ, {"BILIBILI_COOKIE": "bili=1", "KUAISHOU_COOKIE": "kwai=1"}, clear=True):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.bilibili_cookies, "bili=1")
+        self.assertEqual(settings.kuaishou_cookies, "kwai=1")
+
+    def test_platform_cookies_reject_newlines(self) -> None:
+        with TemporaryDirectory() as tmp:
+            settings = make_settings(Path(tmp), kuaishou_cookies="did=valid\nInjected: header")
+            with self.assertRaisesRegex(RuntimeError, "KUAISHOU_COOKIE"):
+                settings.prepare()

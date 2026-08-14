@@ -1,7 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 
-from douyin_recorder.models import LiveInfo, RecordingResult, SelectedSource
-from douyin_recorder.service import DouyinRecordingService
+from stream_keeper.models import LiveInfo, RecordingResult, SelectedSource
+from stream_keeper.service import RecordingService
 
 
 def make_info(is_live: bool) -> LiveInfo:
@@ -42,7 +42,7 @@ class ServiceTests(IsolatedAsyncioTestCase):
         client = FakeClient(make_info(False))
         recorder = FakeRecorder()
 
-        result = await DouyinRecordingService(client, recorder).run("https://live.douyin.com/123")
+        result = await RecordingService(client, recorder).run("https://live.douyin.com/123")
 
         self.assertFalse(result.live_info.is_live)
         self.assertIsNone(result.recording)
@@ -53,7 +53,7 @@ class ServiceTests(IsolatedAsyncioTestCase):
         client = FakeClient(info)
         recorder = FakeRecorder()
 
-        result = await DouyinRecordingService(client, recorder).run(
+        result = await RecordingService(client, recorder).run(
             "https://live.douyin.com/123",
             quality="HD",
         )

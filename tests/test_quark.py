@@ -7,7 +7,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import httpx
 
-from douyin_recorder.cloud import QuarkClient
+from stream_keeper.cloud import QuarkClient
 
 
 async def no_sleep(_seconds: float) -> None:

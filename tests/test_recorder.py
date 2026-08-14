@@ -3,9 +3,9 @@ from datetime import datetime
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
 
-from douyin_recorder.errors import FFmpegRecordingError
-from douyin_recorder.models import LiveInfo
-from douyin_recorder.recorder import Recorder, RecorderOptions, create_output_path, redact_stream_urls, sanitize_name
+from stream_keeper.errors import FFmpegRecordingError
+from stream_keeper.models import LiveInfo
+from stream_keeper.recorder import Recorder, RecorderOptions, create_output_path, redact_stream_urls, sanitize_name
 
 
 class OutputPathTests(TestCase):

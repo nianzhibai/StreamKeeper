@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import httpx
 
-from douyin_recorder.cloud import WoPanClient
+from stream_keeper.cloud import WoPanClient
 
 
 async def no_sleep(_seconds: float) -> None:
