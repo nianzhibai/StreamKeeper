@@ -2534,81 +2534,8 @@ select.input {
 }
 
 .file-row:hover .file-ops,
-.file-row.is-uploading .file-ops,
 .file-ops:focus-within {
   opacity: 1;
-}
-
-/* Upload status spans the full row, indented under the file name. */
-.file-progress {
-  grid-column: 1 / -1;
-  margin-top: -6px;
-  padding: 0 2px var(--s3) 55px;
-}
-
-.file-progress:empty {
-  display: none;
-}
-
-.file-note {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  color: var(--text-4);
-  font-size: var(--t-sm);
-}
-
-.file-note.is-bad {
-  color: var(--bad);
-}
-
-.file-row.is-uploading {
-  background: var(--hover);
-}
-
-.upload-queue {
-  display: grid;
-  align-items: center;
-  gap: var(--s2) var(--s6);
-  padding: var(--s4) var(--s7);
-  border-bottom: 1px solid var(--brand-line);
-  background: var(--brand-soft);
-  grid-template-areas:
-    "copy cancel"
-    "track cancel";
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.upload-queue-copy {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--s4);
-  grid-area: copy;
-}
-
-.upload-queue-copy strong {
-  flex: none;
-  font-size: var(--t-base);
-  font-weight: 620;
-}
-
-.upload-queue-copy small {
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upload-queue .progress-track {
-  background: var(--surface);
-  grid-area: track;
-}
-
-.upload-queue button {
-  flex: none;
-  grid-area: cancel;
 }
 
 /* --- Player ----------------------------------------------------------- */
@@ -3842,7 +3769,6 @@ select.input {
   .file-size { display: none; }
   .file-ops { opacity: 1; }
   .file-ops span { display: none; }
-  .file-progress { padding-left: var(--s5); }
 
   .log-list { padding: var(--s2); }
   .log-row { grid-template-columns: 26px minmax(0, 1fr); }

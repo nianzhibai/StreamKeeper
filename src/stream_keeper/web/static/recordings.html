@@ -9,7 +9,7 @@
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/artplayer.css?v=5.4.1" />
-    <link rel="stylesheet" href="/static/style.css?v=20260814" />
+    <link rel="stylesheet" href="/static/style.css?v=20260815" />
   </head>
   <body data-page="recordings">
     <script src="/static/sprite.js?v=20260814"></script>
@@ -27,10 +27,6 @@
           <div class="page-tools">
             <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新录像列表" title="刷新">
               <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
-            </button>
-            <button id="upload-all-button" class="btn btn-soft" type="button">
-              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-upload" /></svg>
-              <span id="upload-all-label">全部上传</span>
             </button>
           </div>
         </header>
@@ -70,15 +66,6 @@
           <div class="explorer-meta">
             <span id="recording-summary">正在读取…</span>
             <span id="recording-location">录像根目录</span>
-          </div>
-
-          <div id="upload-queue" class="upload-queue hidden" aria-live="polite">
-            <div class="upload-queue-copy">
-              <strong id="upload-queue-title">上传队列</strong>
-              <small id="upload-queue-detail">—</small>
-            </div>
-            <span id="upload-queue-track" class="progress-track" data-ratio="0" aria-hidden="true"><i></i></span>
-            <button id="upload-queue-cancel" class="btn btn-sm btn-ghost" type="button">全部取消</button>
           </div>
 
           <div class="table-head file-head" aria-hidden="true">
@@ -137,6 +124,6 @@
     </dialog>
 
     <script src="/static/artplayer.js?v=5.4.1"></script>
-    <script type="module" src="/static/recordings.js?v=20260814"></script>
+    <script type="module" src="/static/recordings.js?v=20260815"></script>
   </body>
 </html>

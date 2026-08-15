@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import shutil
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import timedelta
@@ -37,7 +37,6 @@ from .recordings import (
     RecordingPreviewCache,
     get_recording_file,
     list_recording_directory,
-    resolve_recording_path,
 )
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
@@ -56,11 +55,6 @@ from .schemas import (
     InspectResponse,
     LoginRequest,
     RecordingDirectoryView,
-    RecordingUploadBatchRequest,
-    RecordingUploadCandidatesView,
-    RecordingUploadJobView,
-    RecordingUploadListView,
-    RecordingUploadRequest,
     RuntimeEventListView,
     SystemInfo,
     TaskConfig,
@@ -69,12 +63,8 @@ from .schemas import (
     TaskUpdate,
 )
 from .store import TaskStore, WebSession, utc_now
-from .uploader import RecordingUploadService, UploadJob
+from .uploader import RecordingUploadService
 
-# Keeps idle proxies from dropping the stream, and coalesces the byte-level
-# progress reports into a cadence a browser can actually render.
-UPLOAD_STREAM_HEARTBEAT_SECONDS = 15.0
-UPLOAD_STREAM_MIN_INTERVAL_SECONDS = 0.3
 # The activity-log page judges "is everything fine" over the last day.
 EVENT_SUMMARY_WINDOW_HOURS = 24
 
@@ -114,26 +104,6 @@ def _cloud_login_response(snapshot: CloudLoginSnapshot) -> CloudLoginView:
         message=snapshot.message,
         qr_image=snapshot.qr_image,
         expires_at=snapshot.expires_at,
-    )
-
-
-def _recording_upload_response(job: UploadJob) -> RecordingUploadJobView:
-    return RecordingUploadJobView(
-        path=job.path,
-        name=job.name,
-        size=job.size,
-        status=job.status,
-        stage=job.stage,
-        target=job.target,
-        target_index=job.target_index,
-        target_count=job.target_count,
-        uploaded_bytes=job.uploaded_bytes,
-        uploaded_copies=job.uploaded_copies,
-        speed_bytes_per_second=job.speed_bytes_per_second,
-        deleted=job.deleted,
-        started_at=job.started_at,
-        finished_at=job.finished_at,
-        error=job.error,
     )
 
 
@@ -609,92 +579,6 @@ def create_app(
     @app.get("/api/recordings", response_model=RecordingDirectoryView)
     async def list_recordings(path: str = "") -> RecordingDirectoryView:
         return await list_recording_directory(settings.recordings_dir, path)
-
-    @app.get("/api/recordings/uploads", response_model=RecordingUploadListView)
-    async def list_recording_uploads() -> RecordingUploadListView:
-        return RecordingUploadListView(jobs=[_recording_upload_response(job) for job in upload_service.jobs()])
-
-    @app.post(
-        "/api/recordings/uploads",
-        response_model=RecordingUploadJobView,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def upload_recording(payload: RecordingUploadRequest) -> RecordingUploadJobView:
-        _, normalized = get_recording_file(settings.recordings_dir, payload.path)
-        try:
-            job = await upload_service.enqueue_file(normalized)
-        except CloudUploadError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return _recording_upload_response(job)
-
-    @app.get("/api/recordings/uploads/stream", include_in_schema=False, response_model=None)
-    async def stream_recording_uploads() -> StreamingResponse:
-        def snapshot() -> str:
-            view = RecordingUploadListView(jobs=[_recording_upload_response(job) for job in upload_service.jobs()])
-            return f"data: {view.model_dump_json()}\n\n"
-
-        async def events() -> AsyncIterator[str]:
-            updates = upload_service.subscribe()
-            try:
-                while True:
-                    try:
-                        await asyncio.wait_for(updates.wait(), timeout=UPLOAD_STREAM_HEARTBEAT_SECONDS)
-                    except TimeoutError:
-                        yield ": ping\n\n"
-                        continue
-                    updates.clear()
-                    yield snapshot()
-                    await asyncio.sleep(UPLOAD_STREAM_MIN_INTERVAL_SECONDS)
-            finally:
-                upload_service.unsubscribe(updates)
-
-        return StreamingResponse(
-            events(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-store",
-                # Nginx buffers proxied responses by default, which would hold
-                # every event until the upload finished.
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @app.get("/api/recordings/uploads/candidates", response_model=RecordingUploadCandidatesView)
-    async def count_recording_upload_candidates(path: str = "") -> RecordingUploadCandidatesView:
-        try:
-            candidates = await upload_service.collect_manual_candidates(path)
-        except CloudUploadError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return RecordingUploadCandidatesView(
-            path=path,
-            count=len(candidates),
-            total_size=sum(candidate.size for candidate in candidates),
-        )
-
-    @app.post(
-        "/api/recordings/uploads/batch",
-        response_model=RecordingUploadListView,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def upload_recording_directory(payload: RecordingUploadBatchRequest) -> RecordingUploadListView:
-        try:
-            jobs = await upload_service.enqueue_directory(payload.path)
-        except CloudUploadError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return RecordingUploadListView(jobs=[_recording_upload_response(job) for job in jobs])
-
-    @app.delete("/api/recordings/uploads", status_code=status.HTTP_204_NO_CONTENT)
-    async def cancel_all_recording_uploads() -> Response:
-        if not upload_service.cancel_all():
-            raise HTTPException(status_code=404, detail="当前没有进行中的上传任务")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.delete("/api/recordings/uploads/{recording_path:path}", status_code=status.HTTP_204_NO_CONTENT)
-    async def cancel_recording_upload(recording_path: str) -> Response:
-        _, normalized = resolve_recording_path(settings.recordings_dir, recording_path)
-        if not upload_service.cancel_file(normalized):
-            raise HTTPException(status_code=404, detail="该录像没有进行中的上传任务")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/recordings/file/{recording_path:path}", response_model=None)
     async def recording_file(recording_path: str, download: bool = False) -> FileResponse:

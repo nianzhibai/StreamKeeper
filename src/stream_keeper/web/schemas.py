@@ -201,44 +201,6 @@ class RecordingDirectoryView(StrictModel):
     entries: list[RecordingEntry]
 
 
-class RecordingUploadRequest(StrictModel):
-    path: str = Field(min_length=1, max_length=4096)
-
-
-class RecordingUploadBatchRequest(StrictModel):
-    """An empty path means the whole recording library."""
-
-    path: str = Field(default="", max_length=4096)
-
-
-class RecordingUploadCandidatesView(StrictModel):
-    path: str
-    count: int
-    total_size: int
-
-
-class RecordingUploadJobView(StrictModel):
-    path: str
-    name: str
-    size: int
-    status: Literal["queued", "running", "success", "failed", "cancelled"]
-    stage: Literal["", "preparing", "uploading", "verifying"]
-    target: str
-    target_index: int
-    target_count: int
-    uploaded_bytes: int
-    uploaded_copies: int
-    speed_bytes_per_second: int
-    deleted: bool
-    started_at: datetime | None
-    finished_at: datetime | None
-    error: str | None
-
-
-class RecordingUploadListView(StrictModel):
-    jobs: list[RecordingUploadJobView]
-
-
 class CloudQuarkUpdate(StrictModel):
     enabled: bool = False
     cookie: SecretStr | None = Field(default=None, max_length=32768)

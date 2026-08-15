@@ -6,7 +6,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest import TestCase
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -19,7 +19,6 @@ from stream_keeper.web.cloud_login import CloudLoginPoll
 from stream_keeper.web.recordings import RecordingPreviewCache, build_remux_command
 from stream_keeper.web.schemas import TaskStatus
 from stream_keeper.web.store import TaskStore
-from stream_keeper.web.uploader import UploadJob
 
 
 class FakeScheduler:
@@ -351,139 +350,23 @@ class WebTests(TestCase):
         self.assertEqual(asyncio.run(cache.discard("主播/2026-07-12/live.ts")), 0)
         self.assertEqual(asyncio.run(RecordingPreviewCache(directory / "missing", "ffmpeg").discard("a.ts")), 0)
 
-    def test_recording_uploads_expose_queue_progress_and_cancellation(self) -> None:
+    def test_recordings_delegate_cloud_uploads_to_the_archive_page(self) -> None:
         self.login()
-        player_script = self.client.get("/static/recordings.js").text
-        self.assertIn('data-action="upload"', player_script)
-        self.assertIn('data-action="cancel-upload"', player_script)
-        self.assertIn("/api/recordings/uploads", player_script)
-        self.assertIn("uploadRatio", player_script)
-        self.assertIn("uploadSpeed", player_script)
-        self.assertIn("speed_bytes_per_second", player_script)
-        self.assertIn("progress-track", player_script)
+        recordings = self.client.get("/recordings")
+        self.assertNotIn('id="upload-all-button"', recordings.text)
+        self.assertNotIn('id="upload-queue"', recordings.text)
 
-        recording_dir = self.settings.recordings_dir / "测试主播" / "2026-07-12"
-        recording_dir.mkdir(parents=True)
-        video = recording_dir / "片段.mp4"
-        video.write_bytes(b"0123456789")
-        (recording_dir / "内部信息.txt").write_text("not public", encoding="utf-8")
-        path = "测试主播/2026-07-12/片段.mp4"
+        recordings_script = self.client.get("/static/recordings.js").text
+        self.assertNotIn("/api/recordings/uploads", recordings_script)
+        self.assertNotIn("EventSource", recordings_script)
 
-        empty = self.client.get("/api/recordings/uploads")
-        self.assertEqual(empty.status_code, 200)
-        self.assertEqual(empty.json(), {"jobs": []})
+        archive = self.client.get("/archive")
+        self.assertIn('id="cloud-run-button"', archive.text)
+        archive_script = self.client.get("/static/archive.js").text
+        self.assertIn("/api/cloud/archive/run", archive_script)
 
-        for payload_path, expected in (
-            ("测试主播/2026-07-12/缺失.mp4", 404),
-            ("测试主播/2026-07-12/内部信息.txt", 404),
-            ("../outside.mp4", 400),
-        ):
-            with self.subTest(path=payload_path):
-                rejected = self.client.post(
-                    "/api/recordings/uploads",
-                    json={"path": payload_path},
-                    headers=self.csrf_headers,
-                )
-                self.assertEqual(rejected.status_code, expected)
-
-        # No cloud target is configured in this fixture, so the queue refuses the file.
-        disabled = self.client.post("/api/recordings/uploads", json={"path": path}, headers=self.csrf_headers)
-        self.assertEqual(disabled.status_code, 409)
-        self.assertIn("网盘上传目标", disabled.json()["detail"])
-
-        service = self.app.state.upload_service
-        job = UploadJob(
-            path=path,
-            name=video.name,
-            size=10,
-            created_at=datetime.now(timezone.utc),
-            status="running",
-            stage="uploading",
-            target="quark",
-            target_count=2,
-            uploaded_bytes=4,
-        )
-        service._jobs[path] = job
-
-        running = self.client.get("/api/recordings/uploads").json()["jobs"]
-        self.assertEqual(len(running), 1)
-        self.assertEqual(running[0]["path"], path)
-        self.assertEqual(running[0]["status"], "running")
-        self.assertEqual(running[0]["stage"], "uploading")
-        self.assertEqual(running[0]["target"], "quark")
-        self.assertEqual(running[0]["target_count"], 2)
-        self.assertEqual(running[0]["uploaded_bytes"], 4)
-        self.assertEqual(running[0]["size"], 10)
-        self.assertEqual(running[0]["speed_bytes_per_second"], 0)
-        self.assertFalse(running[0]["deleted"])
-
-        # A running job is only cancellable through its own task, a queued one directly.
-        def cancel_upload():
-            return self.client.delete(f"/api/recordings/uploads/{path}", headers=self.csrf_headers)
-
-        self.assertEqual(cancel_upload().status_code, 404)
-        job.status = "queued"
-        self.assertEqual(cancel_upload().status_code, 204)
-        self.assertEqual(self.client.get("/api/recordings/uploads").json()["jobs"][0]["status"], "cancelled")
-        self.assertEqual(cancel_upload().status_code, 404)
-        self.assertTrue(video.exists())
-
-    def test_batch_recording_upload_previews_scope_before_queueing(self) -> None:
-        self.login()
-        page = self.client.get("/recordings")
-        self.assertIn('id="upload-all-button"', page.text)
-        self.assertIn('id="upload-queue"', page.text)
-        player_script = self.client.get("/static/recordings.js").text
-        self.assertIn("/api/recordings/uploads/batch", player_script)
-        self.assertIn("/api/recordings/uploads/candidates", player_script)
-        self.assertIn("renderUploadQueue", player_script)
-
-        anchor = self.settings.recordings_dir / "测试主播"
-        (anchor / "2026-07-12").mkdir(parents=True)
-        (anchor / "2026-07-12" / "片段.mp4").write_bytes(b"0123456789")
-        (anchor / "2026-07-12" / "空.ts").touch()
-        (anchor / "2026-07-12" / "内部信息.txt").write_text("not public", encoding="utf-8")
-        (self.settings.recordings_dir / "别的主播").mkdir(parents=True)
-        (self.settings.recordings_dir / "别的主播" / "片段.flv").write_bytes(b"01234")
-
-        root = self.client.get("/api/recordings/uploads/candidates")
-        self.assertEqual(root.status_code, 200)
-        self.assertEqual(root.json(), {"path": "", "count": 2, "total_size": 15})
-
-        scoped = self.client.get("/api/recordings/uploads/candidates", params={"path": "测试主播"})
-        self.assertEqual(scoped.json(), {"path": "测试主播", "count": 1, "total_size": 10})
-
-        for path, expected in (("缺失的主播", 404), ("../", 404)):
-            with self.subTest(path=path):
-                missing = self.client.get("/api/recordings/uploads/candidates", params={"path": path})
-                self.assertEqual(missing.status_code, expected)
-
-        # No cloud target is configured in this fixture, so the batch is refused.
-        batch = self.client.post("/api/recordings/uploads/batch", json={"path": ""}, headers=self.csrf_headers)
-        self.assertEqual(batch.status_code, 409)
-        self.assertIn("网盘上传目标", batch.json()["detail"])
-        self.assertEqual(self.client.get("/api/recordings/uploads").json(), {"jobs": []})
-
-        cancel_all = self.client.delete("/api/recordings/uploads", headers=self.csrf_headers)
-        self.assertEqual(cancel_all.status_code, 404)
-
-        service = self.app.state.upload_service
-        service._jobs["测试主播/2026-07-12/片段.mp4"] = UploadJob(
-            path="测试主播/2026-07-12/片段.mp4",
-            name="片段.mp4",
-            size=10,
-            created_at=datetime.now(timezone.utc),
-        )
-        self.assertEqual(self.client.delete("/api/recordings/uploads", headers=self.csrf_headers).status_code, 204)
-        self.assertEqual(self.client.get("/api/recordings/uploads").json()["jobs"][0]["status"], "cancelled")
-
-    def test_upload_progress_page_subscribes_to_the_event_stream(self) -> None:
-        self.login()
-        player_script = self.client.get("/static/recordings.js").text
-        self.assertIn("EventSource", player_script)
-        self.assertIn("/api/recordings/uploads/stream", player_script)
-        self.assertIn("fallBackToPolling", player_script)
-        self.assertIn("/api/recordings/uploads/stream", [route.path for route in self.app.routes])
+        self.assertFalse(any("/api/recordings/uploads" in route.path for route in self.app.routes))
+        self.assertEqual(self.client.get("/api/recordings/uploads").status_code, 404)
 
     def test_active_session_renews_once_inside_half_ttl_window(self) -> None:
         self.login()
@@ -998,132 +881,3 @@ class WebTests(TestCase):
         self.assertTrue(archive["quark"]["credential_configured"])
         self.assertTrue(archive["wopan"]["access_token_configured"])
         self.assertTrue(archive["wopan"]["refresh_token_configured"])
-
-
-class UploadStreamTests(IsolatedAsyncioTestCase):
-    """Starlette's TestClient buffers whole responses, so drive the ASGI app directly."""
-
-    async def asyncSetUp(self) -> None:
-        self.temp_dir = TemporaryDirectory()
-        root = Path(self.temp_dir.name)
-        self.settings = Settings(
-            data_dir=root,
-            recordings_dir=root / "recordings",
-            database_path=root / "tasks.db",
-            web_username="admin",
-            web_password="",  # disables the session middleware for this fixture
-            allow_insecure=True,
-            validate_binaries=False,
-        )
-        self.settings.prepare()
-        self.store = TaskStore(self.settings.database_path)
-        await self.store.initialize()
-        self.app = create_app(
-            self.settings,
-            store=self.store,
-            scheduler=FakeScheduler(self.store),
-            inspect_client_factory=FakeInspectClient,
-            cloud_login_flow_factory=FakeCloudLoginFlow,
-        )
-        self.service = self.app.state.upload_service
-
-    async def asyncTearDown(self) -> None:
-        self.temp_dir.cleanup()
-
-    async def test_stream_pushes_a_snapshot_on_connect_and_on_every_change(self) -> None:
-        disconnected = asyncio.Event()
-        events: asyncio.Queue[dict] = asyncio.Queue()
-        start: dict = {}
-
-        async def receive() -> dict:
-            await disconnected.wait()
-            return {"type": "http.disconnect"}
-
-        async def send(message: dict) -> None:
-            if message["type"] == "http.response.start":
-                start.update(message)
-            elif message["type"] == "http.response.body" and message.get("body"):
-                await events.put(message)
-
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.3"},
-            "http_version": "1.1",
-            "method": "GET",
-            "scheme": "http",
-            "path": "/api/recordings/uploads/stream",
-            "raw_path": b"/api/recordings/uploads/stream",
-            "query_string": b"",
-            "root_path": "",
-            "headers": [(b"host", b"testserver")],
-            "client": ("127.0.0.1", 12345),
-            "server": ("testserver", 80),
-        }
-
-        async def next_snapshot() -> dict:
-            while True:
-                message = await asyncio.wait_for(events.get(), timeout=5)
-                text = message["body"].decode()
-                if text.startswith(": "):  # heartbeat
-                    continue
-                self.assertTrue(text.endswith("\n\n"))
-                return json.loads(text.removeprefix("data: "))
-
-        task = asyncio.create_task(self.app(scope, receive, send))
-        try:
-            opening = await next_snapshot()
-            headers = {name.decode(): value.decode() for name, value in start["headers"]}
-            self.assertEqual(start["status"], 200)
-            self.assertTrue(headers["content-type"].startswith("text/event-stream"))
-            self.assertEqual(headers["cache-control"], "no-store")
-            self.assertEqual(headers["x-accel-buffering"], "no")
-            self.assertEqual(opening, {"jobs": []})
-
-            # A state change must push without the client asking for anything.
-            self.service._jobs["主播/片段.mp4"] = UploadJob(
-                path="主播/片段.mp4",
-                name="片段.mp4",
-                size=10,
-                created_at=datetime.now(timezone.utc),
-                status="running",
-                stage="uploading",
-                target="quark",
-                target_count=1,
-                uploaded_bytes=4,
-            )
-            self.service._notify()
-
-            pushed = await next_snapshot()
-            self.assertEqual(len(pushed["jobs"]), 1)
-            self.assertEqual(pushed["jobs"][0]["path"], "主播/片段.mp4")
-            self.assertEqual(pushed["jobs"][0]["uploaded_bytes"], 4)
-            self.assertEqual(pushed["jobs"][0]["status"], "running")
-        finally:
-            disconnected.set()
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-    async def test_subscribers_are_registered_pre_armed_and_released(self) -> None:
-        self.assertEqual(self.service._subscribers, set())
-        first = self.service.subscribe()
-        second = self.service.subscribe()
-        # Pre-set so a new listener gets a snapshot without waiting for a change.
-        self.assertTrue(first.is_set())
-        self.assertTrue(second.is_set())
-
-        first.clear()
-        second.clear()
-        self.service._notify()
-        self.assertTrue(first.is_set())
-        self.assertTrue(second.is_set())
-
-        self.service.unsubscribe(first)
-        first.clear()
-        second.clear()
-        self.service._notify()
-        self.assertFalse(first.is_set())
-        self.assertTrue(second.is_set())
-
-        self.service.unsubscribe(second)
-        self.service.unsubscribe(second)  # idempotent
-        self.assertEqual(self.service._subscribers, set())
