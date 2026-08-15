@@ -165,6 +165,57 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(second.deleted_files, 1)
         self.assertFalse(recording.exists())
 
+    async def test_uploading_last_recording_prunes_empty_parent_directories(self) -> None:
+        recording = make_old_file(
+            self.settings.recordings_dir / "主播" / "2026-07-11" / "archived.ts",
+            b"video",
+            self.now,
+        )
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            clock=lambda: self.now,
+        )
+
+        summary = await service.run_once()
+
+        self.assertEqual(summary.deleted_files, 1)
+        self.assertFalse(recording.exists())
+        self.assertFalse(recording.parent.exists())
+        self.assertFalse(recording.parent.parent.exists())
+        self.assertTrue(self.settings.recordings_dir.exists())
+
+    async def test_upload_does_not_prune_a_directory_that_became_active(self) -> None:
+        recording = make_old_file(
+            self.settings.recordings_dir / "主播" / "2026-07-11" / "archived.ts",
+            b"video",
+            self.now,
+        )
+        calls = 0
+
+        def active_directories() -> set[Path]:
+            nonlocal calls
+            calls += 1
+            return set() if calls == 1 else {recording.parent.resolve()}
+
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            active_directories_provider=active_directories,
+            clock=lambda: self.now,
+        )
+
+        summary = await service.run_once()
+
+        self.assertEqual(summary.deleted_files, 1)
+        self.assertFalse(recording.exists())
+        self.assertTrue(recording.parent.exists())
+        self.assertTrue(recording.parent.parent.exists())
+
     async def test_manual_trigger_runs_in_background_and_rejects_overlap(self) -> None:
         recording = make_old_file(self.settings.recordings_dir / "主播" / "manual.ts", b"video", self.now)
         started = asyncio.Event()
@@ -331,6 +382,8 @@ class ManualRecordingUploadTests(IsolatedAsyncioTestCase):
         self.assertTrue(job.deleted)
         self.assertIsNone(job.error)
         self.assertFalse(recording.exists())
+        self.assertFalse(recording.parent.exists())
+        self.assertTrue(self.settings.recordings_dir.exists())
         self.assertEqual([item.path for item in service.jobs()], ["主播/manual.ts"])
 
     async def test_manual_uploads_run_one_at_a_time_and_cancel_keeps_files(self) -> None:

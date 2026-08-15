@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import inspect
 import json
@@ -449,6 +450,47 @@ class RecordingUploadService:
             return False
         return stat.st_size == candidate.size and stat.st_mtime_ns == candidate.mtime_ns
 
+    def _delete_archived_recording(self, path: Path, active_directories: set[Path]) -> int:
+        """Delete one verified recording and prune its empty parents.
+
+        The recording root is application-owned and must always remain available
+        for future recordings.  Every directory below it is removed only when
+        the operating system confirms that it is empty, so unrelated files,
+        remaining recordings, and known active recording branches stop the walk
+        without being touched.
+        """
+        root = self.settings.recordings_dir.resolve()
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise CloudUploadError("录像路径不在录像目录内") from exc
+
+        resolved.unlink()
+        removed_directories = 0
+        directory = resolved.parent
+        while directory != root:
+            if any(
+                directory == active or directory in active.parents or active in directory.parents
+                for active in active_directories
+            ):
+                break
+            try:
+                directory.rmdir()
+            except FileNotFoundError:
+                # A concurrent cleanup has already handled this branch.
+                break
+            except OSError as exc:
+                # A non-empty directory is the normal stopping condition.  Do
+                # not turn an otherwise successful archive into a failure when
+                # directory cleanup is unavailable, but keep it observable.
+                if exc.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                    logger.warning("已删除本地录像，但无法清理目录 %s：%s", directory, exc)
+                break
+            removed_directories += 1
+            directory = directory.parent
+        return removed_directories
+
     @staticmethod
     async def _close_clients(clients: dict[str, CloudUploadClient]) -> None:
         unique_clients = {id(client): client for client in clients.values()}.values()
@@ -488,9 +530,16 @@ class RecordingUploadService:
             logger.info("录像已在 %s 上确认：%s", target.name, remote_path)
         if not self._is_unchanged(candidate):
             raise CloudUploadError("文件在上传完成后发生变化")
-        await asyncio.to_thread(candidate.path.unlink)
+        active_directories = await self._active_recording_directories()
+        removed_directories = await asyncio.to_thread(
+            self._delete_archived_recording,
+            candidate.path,
+            active_directories,
+        )
         record.deleted = True
         logger.info("所有目标上传成功，已删除本地录像：%s", candidate.path)
+        if removed_directories:
+            logger.info("已清理 %d 个空的本地录像目录：%s", removed_directories, candidate.path.parent)
         # The browser-playback remux is derived from a file that no longer
         # exists, so it can never be served again. Dropping it here keeps the
         # cache from holding a full-size copy of an archived recording.
