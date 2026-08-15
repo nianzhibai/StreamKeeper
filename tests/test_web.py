@@ -430,6 +430,7 @@ class WebTests(TestCase):
         self.assertTrue(task["enabled"])
         self.assertEqual(task["status"], "waiting")
         self.assertEqual(task["segment_count"], 4)
+        self.assertFalse(task["monitor"])
         self.assertEqual(self.scheduler.started, [task["id"]])
 
         listed = self.client.get("/api/tasks").json()
@@ -460,7 +461,8 @@ class WebTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["url"], "https://v.douyin.com/eAb3MZKYD48/")
-        self.assertEqual(response.json()["segment_count"], 4)
+        self.assertEqual(response.json()["segment_count"], 0)
+        self.assertTrue(response.json()["monitor"])
 
     def test_create_task_accepts_bilibili_and_kuaishou_rooms(self) -> None:
         self.login()
@@ -519,6 +521,7 @@ class WebTests(TestCase):
         )
         self.assertEqual(limited.status_code, 200)
         self.assertEqual(limited.json()["segment_count"], 4)
+        self.assertFalse(limited.json()["monitor"])
         self.assertEqual(self.scheduler.restarted, [task_id, task_id])
 
         invalid = self.client.patch(

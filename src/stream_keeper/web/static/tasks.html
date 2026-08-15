@@ -8,7 +8,7 @@
     <title>录制任务 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260814" />
+    <link rel="stylesheet" href="/static/style.css?v=20260815" />
   </head>
   <body data-page="tasks">
     <script src="/static/sprite.js?v=20260814"></script>
@@ -126,10 +126,10 @@
           </div>
 
           <div class="option-row">
-            <label class="option">
-              <input name="monitor" type="checkbox" checked />
+            <label id="monitor-field" class="option">
+              <input name="monitor" type="checkbox" aria-describedby="monitor-hint" checked />
               <span class="switch" aria-hidden="true"></span>
-              <span class="option-text"><strong>持续值守</strong><small>下播后继续等待下一场</small></span>
+              <span class="option-text"><strong>持续值守</strong><small id="monitor-hint">下播后继续等待下一场</small></span>
             </label>
             <label id="auto-start-field" class="option">
               <input name="auto_start" type="checkbox" checked />
@@ -162,9 +162,9 @@
               </label>
               <label class="field">
                 <span class="field-label">最大段数</span>
-                <span class="suffix"><input class="input" name="segment_count" type="number" min="0" max="10000" step="1" value="4" /><em>段</em></span>
+                <span class="suffix"><input class="input" name="segment_count" type="number" min="0" max="10000" step="1" value="0" /><em>段</em></span>
               </label>
-              <p class="field-hint span-2">分段时长设为 0 表示不切分；最大段数设为 0 表示不限制。</p>
+              <p class="field-hint span-2">分段时长设为 0 表示不切分；最大段数设为 0 表示不限制。设置最大段数后，任务会作为单次录制执行。</p>
             </div>
           </details>
         </div>
@@ -176,6 +176,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/static/tasks.js?v=20260814"></script>
+    <script type="module" src="/static/tasks.js?v=20260815"></script>
   </body>
 </html>

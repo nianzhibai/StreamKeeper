@@ -15,7 +15,7 @@ def task_config(**overrides) -> TaskConfig:
         "output_format": "ts",
         "source": "auto",
         "segment_seconds": 1800,
-        "segment_count": 4,
+        "segment_count": 0,
         "monitor": True,
         "interval_seconds": 60,
     }
@@ -36,7 +36,8 @@ class StoreTests(IsolatedAsyncioTestCase):
         created = await self.store.create(task_config())
         self.assertFalse(created.enabled)
         self.assertEqual(created.status, TaskStatus.STOPPED)
-        self.assertEqual(created.segment_count, 4)
+        self.assertEqual(created.segment_count, 0)
+        self.assertTrue(created.monitor)
 
         updated = await self.store.update_runtime(
             created.id,
@@ -64,6 +65,12 @@ class StoreTests(IsolatedAsyncioTestCase):
             with self.subTest(url=url):
                 created = await self.store.create(task_config(url=url))
                 self.assertEqual(created.url, url)
+
+    async def test_finite_segment_limit_disables_monitoring(self) -> None:
+        created = await self.store.create(task_config(segment_count=4, monitor=True))
+
+        self.assertEqual(created.segment_count, 4)
+        self.assertFalse(created.monitor)
 
     async def test_recover_interrupted_enabled_task(self) -> None:
         created = await self.store.create(task_config())
@@ -141,6 +148,27 @@ class StoreTests(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(migrated)
         self.assertEqual(migrated.segment_count, 0)
+
+    async def test_initialize_normalizes_legacy_limited_monitoring_tasks(self) -> None:
+        created = await self.store.create(task_config())
+        with sqlite3.connect(self.store.database_path) as connection:
+            connection.execute(
+                "UPDATE recording_tasks SET segment_count = 4, monitor = 1 WHERE id = ?",
+                (created.id,),
+            )
+
+        await self.store.initialize()
+        normalized = await self.store.get(created.id)
+        with sqlite3.connect(self.store.database_path) as connection:
+            stored_monitor = connection.execute(
+                "SELECT monitor FROM recording_tasks WHERE id = ?",
+                (created.id,),
+            ).fetchone()[0]
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized.segment_count, 4)
+        self.assertFalse(normalized.monitor)
+        self.assertEqual(stored_monitor, 0)
 
     async def test_rejects_non_allowlisted_update_column(self) -> None:
         created = await self.store.create(task_config())

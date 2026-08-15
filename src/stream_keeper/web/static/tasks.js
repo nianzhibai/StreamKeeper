@@ -44,6 +44,8 @@ const elements = {
   form: document.querySelector("#task-form"),
   submit: document.querySelector("#task-submit"),
   autoStartField: document.querySelector("#auto-start-field"),
+  monitorField: document.querySelector("#monitor-field"),
+  monitorHint: document.querySelector("#monitor-hint"),
   inspectButton: document.querySelector("#inspect-button"),
   inspectResult: document.querySelector("#inspect-result"),
   refresh: document.querySelector("#refresh-button"),
@@ -213,6 +215,7 @@ function showTaskDialog() {
 function resetDialog() {
   elements.form.reset();
   elements.form.elements.segment_count.setCustomValidity("");
+  syncMonitorAvailability();
   elements.inspectResult.className = "inspect hidden";
   elements.inspectResult.innerHTML = "";
   elements.form.querySelectorAll("details").forEach((node) => {
@@ -242,6 +245,7 @@ function openEditDialog(task) {
   form.segment_count.value = String(task.segment_count);
   form.monitor.checked = task.monitor;
   form.interval_seconds.value = String(task.interval_seconds);
+  syncMonitorAvailability();
   elements.dialogTitle.textContent = "编辑任务";
   elements.submit.textContent = "保存更改";
   elements.autoStartField.classList.add("hidden");
@@ -300,6 +304,19 @@ function validateSegmentSettings() {
   elements.form.elements.segment_count.setCustomValidity(
     segmentCount > 0 && segmentSeconds <= 0 ? "设置段数时，分段时长必须大于 0" : "",
   );
+  syncMonitorAvailability();
+}
+
+function syncMonitorAvailability() {
+  const monitor = elements.form.elements.monitor;
+  const segmentCount = Number(elements.form.elements.segment_count.value);
+  const hasSegmentLimit = segmentCount > 0;
+  monitor.disabled = hasSegmentLimit;
+  if (hasSegmentLimit) monitor.checked = false;
+  elements.monitorField.classList.toggle("is-disabled", hasSegmentLimit);
+  elements.monitorHint.textContent = hasSegmentLimit
+    ? "设置最大段数后，任务完成即停止"
+    : "下播后继续等待下一场";
 }
 
 async function submitTask(event) {
@@ -311,6 +328,7 @@ async function submitTask(event) {
   const isEditing = Boolean(editingTaskId);
   const editingTask = isEditing ? state.tasks.find((task) => task.id === editingTaskId) : null;
   const data = new FormData(elements.form);
+  const segmentCount = Number(data.get("segment_count"));
   const payload = {
     url: String(data.get("url") || "").trim(),
     label: String(data.get("label") || "").trim() || null,
@@ -318,8 +336,8 @@ async function submitTask(event) {
     output_format: data.get("output_format"),
     source: data.get("source"),
     segment_seconds: Number(data.get("segment_seconds")),
-    segment_count: Number(data.get("segment_count")),
-    monitor: data.get("monitor") === "on",
+    segment_count: segmentCount,
+    monitor: segmentCount === 0 && data.get("monitor") === "on",
     interval_seconds: Number(data.get("interval_seconds")),
   };
   const restartsRecording = editingTask && (

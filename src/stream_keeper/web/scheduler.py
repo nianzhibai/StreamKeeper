@@ -339,6 +339,9 @@ class TaskScheduler:
                     continue
 
                 recorded = f"本次录制 {_duration_text((_now() - started_at).total_seconds())}"
+                # TaskConfig makes a finite cap a one-shot task.  Keep the
+                # explicit branch for its user-facing completion message and
+                # as a defensive final boundary for persisted legacy rows.
                 if latest.segment_count:
                     status_message = (
                         f"已录制 {latest.segment_count} 段，任务自动停止"
@@ -356,7 +359,7 @@ class TaskScheduler:
                     )
                     return
 
-                if not record.monitor:
+                if not latest.monitor:
                     await self.events.success("task", f"「{name}」录制完成，单次任务已结束", recorded, task_id=task_id)
                     await self.store.update_runtime(
                         task_id,
@@ -371,17 +374,17 @@ class TaskScheduler:
                 await self.store.update_runtime(
                     task_id,
                     status=TaskStatus.WAITING,
-                    status_message=f"直播流结束，{record.interval_seconds} 秒后重新检查",
+                    status_message=f"直播流结束，{latest.interval_seconds} 秒后重新检查",
                     is_live=False,
                     output_path=result.output_path,
                 )
                 await self.events.success(
                     "task",
                     f"「{name}」直播结束，本次录制完成",
-                    f"{recorded}，{record.interval_seconds} 秒后重新检查是否开播",
+                    f"{recorded}，{latest.interval_seconds} 秒后重新检查是否开播",
                     task_id=task_id,
                 )
-                await asyncio.sleep(record.interval_seconds)
+                await asyncio.sleep(latest.interval_seconds)
         except asyncio.CancelledError:
             record = await self.store.get(task_id)
             if record is not None:

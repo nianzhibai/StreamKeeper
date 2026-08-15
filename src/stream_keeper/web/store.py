@@ -117,7 +117,7 @@ class TaskStore:
                     output_format TEXT NOT NULL,
                     source TEXT NOT NULL,
                     segment_seconds INTEGER NOT NULL,
-                    segment_count INTEGER NOT NULL DEFAULT 4,
+                    segment_count INTEGER NOT NULL DEFAULT 0,
                     monitor INTEGER NOT NULL,
                     interval_seconds INTEGER NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 0,
@@ -137,6 +137,13 @@ class TaskStore:
             task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(recording_tasks)").fetchall()}
             if "segment_count" not in task_columns:
                 connection.execute("ALTER TABLE recording_tasks ADD COLUMN segment_count INTEGER NOT NULL DEFAULT 0")
+            # Earlier releases allowed the contradictory "finite cap +
+            # continuous monitoring" combination.  Normalize persisted rows
+            # before the scheduler restores enabled tasks at startup.
+            connection.execute(
+                "UPDATE recording_tasks SET monitor = 0, updated_at = ? WHERE segment_count > 0 AND monitor <> 0",
+                (utc_now().isoformat(),),
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS web_sessions (

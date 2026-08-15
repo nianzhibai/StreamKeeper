@@ -133,7 +133,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.output_path, "/data/recordings/test.ts")
         await scheduler.shutdown()
 
-    async def test_segment_limit_stops_monitoring_task(self) -> None:
+    async def test_segment_limit_creates_one_shot_task(self) -> None:
         task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
         options_seen = []
 
@@ -152,6 +152,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         result = await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
 
         self.assertFalse(result.enabled)
+        self.assertFalse(task.monitor)
         self.assertEqual(result.output_path, "/data/recordings/test_%03d.ts")
         self.assertIn("4 段", result.status_message)
         self.assertEqual(options_seen[0].segment_count, 4)
@@ -192,7 +193,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertIn("恢复", result.status_message)
 
     async def test_enrich_record_exposes_current_segment_progress(self) -> None:
-        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        task = await self.store.create(make_config(monitor=False, segment_seconds=1800, segment_count=4))
         scheduler = TaskScheduler(self.store, self.settings)
         record = await self.store.update_runtime(
             task.id,

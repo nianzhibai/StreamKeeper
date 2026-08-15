@@ -1259,6 +1259,16 @@ select.input {
   background: var(--surface-3);
 }
 
+.option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.option.is-disabled:hover {
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+
 /* The switch itself already carries the brand colour, so a checked card only
    needs a firmer edge — tinting the fill as well made a row of them shout. */
 .option:has(input:checked) {

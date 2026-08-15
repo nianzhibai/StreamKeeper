@@ -47,7 +47,7 @@ class TaskConfig(StrictModel):
     output_format: OutputFormat = "ts"
     source: SourcePreference = "auto"
     segment_seconds: int = Field(default=1800, ge=0, le=86400)
-    segment_count: int = Field(default=4, ge=0, le=10000)
+    segment_count: int = Field(default=0, ge=0, le=10000)
     monitor: bool = True
     interval_seconds: int = Field(default=60, ge=10, le=86400)
 
@@ -63,9 +63,14 @@ class TaskConfig(StrictModel):
         return normalized or None
 
     @model_validator(mode="after")
-    def validate_segment_limit(self) -> TaskConfig:
+    def validate_recording_mode(self) -> TaskConfig:
         if self.segment_count and not self.segment_seconds:
             raise ValueError("设置段数时，分段时长必须大于 0")
+        # A finite segment cap describes one recording run.  It cannot also
+        # mean "wait for the next broadcast", so keep that relationship in
+        # the canonical task model instead of relying on scheduler ordering.
+        if self.segment_count:
+            self.monitor = False
         return self
 
 

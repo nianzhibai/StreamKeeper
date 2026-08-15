@@ -638,8 +638,14 @@ def create_app(
         except ValidationError as exc:
             detail = "；".join(error["msg"] for error in exc.errors())
             raise HTTPException(status_code=422, detail=detail) from exc
-        changes = {name: getattr(validated_config, name) for name in changes}
-        effective_changes = {key: value for key, value in changes.items() if getattr(current, key) != value}
+        # Validation may derive related fields (a finite segment cap turns off
+        # continuous monitoring).  Persist the complete canonical config,
+        # rather than only the fields that happened to be present in PATCH.
+        effective_changes = {
+            name: getattr(validated_config, name)
+            for name in TaskConfig.model_fields
+            if getattr(current, name) != getattr(validated_config, name)
+        }
         if not effective_changes:
             return current
         updated = await store.update_config(task_id, effective_changes)
