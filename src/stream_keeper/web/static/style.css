@@ -2755,18 +2755,32 @@ select.input {
 
 .provider-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto auto;
+  width: 100%;
+  grid-template-columns: 38px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: var(--s5);
   padding: var(--s5) var(--s5);
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
   transition: border-color var(--fast) var(--ease);
 }
 
-.provider-row:hover {
+.provider-target {
+  cursor: pointer;
+}
+
+.provider-target:hover,
+.provider-target.is-enabled {
   border-color: var(--line-2);
+}
+
+.provider-target:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .provider-row + .provider-row {
@@ -2791,6 +2805,48 @@ select.input {
   font-size: var(--t-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.provider-row-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--text-4);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.provider-target:hover .provider-row-action,
+.provider-target:focus-visible .provider-row-action {
+  color: var(--brand);
+}
+
+.provider-config-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  margin-bottom: var(--s6);
+  padding: var(--s5) var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.provider-config-state strong,
+.provider-config-state small {
+  display: block;
+}
+
+.provider-config-state strong {
+  font-size: var(--t-base);
+  font-weight: 620;
+}
+
+.provider-config-state small {
+  margin-top: 2px;
+  color: var(--text-4);
+  font-size: var(--t-sm);
 }
 
 /* Three across while the card shares a row with the provider list, five once the
@@ -3768,8 +3824,9 @@ select.input {
   .hero-facts { grid-template-columns: 1fr; }
   .hero-facts > div { border-left: 0; border-top: 1px solid var(--line); }
   .hero-facts > div:first-child { border-top: 0; }
-  .provider-row { grid-template-columns: 38px minmax(0, 1fr) auto; }
+  .provider-row { grid-template-columns: 38px minmax(0, 1fr) auto auto; }
   .provider-row .chip { display: none; }
+  .provider-row-action > span { display: none; }
   .run-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
   .explorer-meta { align-items: flex-start; flex-direction: column; gap: 0; padding: var(--s4) var(--s6); }

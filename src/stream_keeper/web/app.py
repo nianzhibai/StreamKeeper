@@ -44,10 +44,13 @@ from .schemas import (
     CloudArchiveUpdate,
     CloudArchiveView,
     CloudLoginView,
+    CloudQuarkUpdate,
     CloudQuarkView,
+    CloudScheduleUpdate,
     CloudScheduleView,
     CloudUploadExecutionView,
     CloudUploadSummaryView,
+    CloudWoPanUpdate,
     CloudWoPanView,
     EventCategory,
     EventLevel,
@@ -184,14 +187,33 @@ def create_app(
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
 
+    async def persist_cloud_archive_config(
+        config: CloudArchiveConfig,
+        *,
+        invalidate_credentials: tuple[str, ...] = (),
+    ) -> None:
+        """Persist and activate one validated archive configuration.
+
+        Callers hold ``cloud_config_lock``. Keeping the write, credential-cache
+        invalidation, and uploader reload together prevents a configuration
+        screen from leaving the scheduler on stale credentials.
+        """
+        config.validate()
+        await store.save_cloud_upload_config(config.to_dict())
+        for provider in invalidate_credentials:
+            await store.delete_cloud_credentials(provider)
+        await upload_service.reconfigure(config)
+
     async def save_cloud_login_credentials(provider: str, credentials: dict[str, str]) -> None:
         async with cloud_config_lock:
             current = await upload_service.get_config()
+            invalidate_credentials: tuple[str, ...]
             if provider == "quark":
                 cookie = credentials.get("cookie", "")
                 if not cookie:
                     raise CloudLoginError("夸克扫码登录没有返回 Cookie")
                 config = replace(current, quark_cookie=cookie)
+                invalidate_credentials = ("quark",)
             elif provider == "wopan":
                 access_token = credentials.get("access_token", "")
                 refresh_token = credentials.get("refresh_token", "")
@@ -202,12 +224,13 @@ def create_app(
                     wopan_access_token=access_token,
                     wopan_refresh_token=refresh_token,
                 )
+                invalidate_credentials = ("wopan",)
             else:
                 raise CloudLoginError(f"不支持的扫码登录类型: {provider}")
-            config.validate()
-            await store.save_cloud_upload_config(config.to_dict())
-            await store.delete_cloud_credentials(provider)
-            await upload_service.reconfigure(config)
+            try:
+                await persist_cloud_archive_config(config, invalidate_credentials=invalidate_credentials)
+            except ValueError as exc:
+                raise CloudLoginError(str(exc)) from exc
         await event_log.success("auth", f"{CLOUD_PROVIDER_LABELS[provider]}扫码登录成功，凭据已保存")
 
     if cloud_login_flow_factory is None:
@@ -546,22 +569,117 @@ def create_app(
                 upload_min_age_minutes=payload.schedule.min_age_minutes,
                 upload_timeout_seconds=payload.schedule.timeout_seconds,
             )
+            invalidate_credentials = tuple(
+                provider
+                for provider, should_invalidate in (
+                    (
+                        "quark",
+                        payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie),
+                    ),
+                    ("wopan", payload.wopan.clear_tokens or new_access_token or new_refresh_token),
+                )
+                if should_invalidate
+            )
             try:
-                config.validate()
+                await persist_cloud_archive_config(
+                    config,
+                    invalidate_credentials=invalidate_credentials,
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-            await store.save_cloud_upload_config(config.to_dict())
-            if payload.quark.clear_cookie or (new_cookie and new_cookie != current.quark_cookie):
-                await store.delete_cloud_credentials("quark")
-            if payload.wopan.clear_tokens or new_access_token or new_refresh_token:
-                await store.delete_cloud_credentials("wopan")
-            await upload_service.reconfigure(config)
         enabled = "、".join(CLOUD_PROVIDER_LABELS[name] for name, _path in config.targets)
         await event_log.info(
             "upload",
             "网盘归档设置已更新",
             f"已启用 {enabled}，每天 {config.upload_hour:02d}:00 自动归档" if enabled else "当前没有启用任何网盘",
+        )
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.put("/api/cloud/archive/providers/quark", response_model=CloudArchiveView)
+    async def update_quark_archive_provider(payload: CloudQuarkUpdate) -> CloudArchiveView:
+        """Update only the target owned by the active provider dialog."""
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            new_cookie = payload.cookie.get_secret_value().strip() if payload.cookie else ""
+            if payload.clear_cookie and new_cookie:
+                raise HTTPException(status_code=422, detail="不能同时填写并清除夸克 Cookie")
+            cookie = "" if payload.clear_cookie else (new_cookie or current.quark_cookie)
+            config = replace(
+                current,
+                quark_enabled=payload.enabled,
+                quark_cookie=cookie,
+                quark_root_id=payload.root_id,
+                quark_upload_path=payload.upload_path,
+            )
+            invalidate_credentials = (
+                ("quark",) if payload.clear_cookie or (new_cookie and new_cookie != current.quark_cookie) else ()
+            )
+            try:
+                await persist_cloud_archive_config(config, invalidate_credentials=invalidate_credentials)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        await event_log.info(
+            "upload",
+            "夸克网盘归档设置已更新",
+            "已启用" if config.quark_enabled else "未启用",
+        )
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.put("/api/cloud/archive/providers/wopan", response_model=CloudArchiveView)
+    async def update_wopan_archive_provider(payload: CloudWoPanUpdate) -> CloudArchiveView:
+        """Update only the target owned by the active provider dialog."""
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            new_access_token = payload.access_token.get_secret_value().strip() if payload.access_token else ""
+            new_refresh_token = payload.refresh_token.get_secret_value().strip() if payload.refresh_token else ""
+            if payload.clear_tokens and (new_access_token or new_refresh_token):
+                raise HTTPException(status_code=422, detail="不能同时填写并清除联通云盘 token")
+            if payload.clear_tokens:
+                access_token = ""
+                refresh_token = ""
+            else:
+                access_token = new_access_token or current.wopan_access_token
+                refresh_token = new_refresh_token or current.wopan_refresh_token
+            config = replace(
+                current,
+                wopan_enabled=payload.enabled,
+                wopan_access_token=access_token,
+                wopan_refresh_token=refresh_token,
+                wopan_root_id=payload.root_id,
+                wopan_family_id=payload.family_id,
+                wopan_upload_path=payload.upload_path,
+            )
+            invalidate_credentials = ("wopan",) if payload.clear_tokens or new_access_token or new_refresh_token else ()
+            try:
+                await persist_cloud_archive_config(config, invalidate_credentials=invalidate_credentials)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        await event_log.info(
+            "upload",
+            "联通云盘归档设置已更新",
+            "已启用" if config.wopan_enabled else "未启用",
+        )
+        return await _cloud_archive_response(config, upload_service)
+
+    @app.put("/api/cloud/archive/schedule", response_model=CloudArchiveView)
+    async def update_cloud_archive_schedule(payload: CloudScheduleUpdate) -> CloudArchiveView:
+        """Update the execution plan without rewriting provider credentials."""
+        async with cloud_config_lock:
+            current = await upload_service.get_config()
+            config = replace(
+                current,
+                upload_hour=payload.hour,
+                upload_min_age_minutes=payload.min_age_minutes,
+                upload_timeout_seconds=payload.timeout_seconds,
+            )
+            try:
+                await persist_cloud_archive_config(config)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        await event_log.info(
+            "upload",
+            "网盘归档计划已更新",
+            f"每天 {config.upload_hour:02d}:00 自动归档",
         )
         return await _cloud_archive_response(config, upload_service)
 

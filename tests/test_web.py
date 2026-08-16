@@ -766,51 +766,78 @@ class WebTests(TestCase):
         settings_page = self.client.get("/settings")
         self.assertNotIn('id="cloud-run-button"', overview_page.text)
         self.assertIn('id="cloud-run-button"', archive_page.text)
-        self.assertIn('id="cloud-form"', settings_page.text)
+        self.assertIn('data-provider-configure="quark"', archive_page.text)
+        self.assertIn('data-provider-configure="wopan"', archive_page.text)
+        self.assertIn('id="provider-config-dialog"', archive_page.text)
+        self.assertIn('id="archive-schedule-form"', settings_page.text)
+        self.assertNotIn('name="quark_', settings_page.text)
+        self.assertNotIn('name="wopan_', settings_page.text)
 
         initial = self.client.get("/api/cloud/archive")
         self.assertEqual(initial.status_code, 200)
         self.assertFalse(initial.json()["enabled"])
-        payload = {
-            "quark": {
-                "enabled": True,
-                "cookie": "session=quark-secret-cookie",
-                "clear_cookie": False,
-                "root_id": "0",
-                "upload_path": "/ignored-quark-path",
-            },
-            "wopan": {
-                "enabled": True,
-                "access_token": "wopan-access-token-123456",
-                "refresh_token": "wopan-refresh-secret",
-                "clear_tokens": False,
-                "root_id": "0",
-                "family_id": "",
-                "upload_path": "/ignored-wopan-path",
-            },
-            "schedule": {"hour": 1, "min_age_minutes": 10, "timeout_seconds": 300},
+        quark_payload = {
+            "enabled": True,
+            "cookie": "session=quark-secret-cookie",
+            "clear_cookie": False,
+            "root_id": "0",
+            "upload_path": "/ignored-quark-path",
         }
-        rejected = self.client.put("/api/cloud/archive", json=payload)
+        rejected = self.client.put("/api/cloud/archive/providers/quark", json=quark_payload)
         self.assertEqual(rejected.status_code, 403)
 
-        saved = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        saved = self.client.put(
+            "/api/cloud/archive/providers/quark",
+            headers=self.csrf_headers,
+            json=quark_payload,
+        )
         self.assertEqual(saved.status_code, 200)
         saved_payload = saved.json()
         self.assertTrue(saved_payload["enabled"])
         self.assertTrue(saved_payload["quark"]["credential_configured"])
+        self.assertFalse(saved_payload["wopan"]["access_token_configured"])
+        self.assertEqual(saved_payload["schedule"]["hour"], 1)
+        self.assertEqual(saved_payload["quark"]["upload_path"], CLOUD_ARCHIVE_ROOT)
+        self.assertNotIn("quark-secret-cookie", saved.text)
+
+        schedule = self.client.put(
+            "/api/cloud/archive/schedule",
+            headers=self.csrf_headers,
+            json={"hour": 2, "min_age_minutes": 10, "timeout_seconds": 300},
+        )
+        self.assertEqual(schedule.status_code, 200)
+        self.assertEqual(schedule.json()["schedule"]["hour"], 2)
+
+        wopan_payload = {
+            "enabled": True,
+            "access_token": "wopan-access-token-123456",
+            "refresh_token": "wopan-refresh-secret",
+            "clear_tokens": False,
+            "root_id": "0",
+            "family_id": "",
+            "upload_path": "/ignored-wopan-path",
+        }
+        saved_wopan = self.client.put(
+            "/api/cloud/archive/providers/wopan",
+            headers=self.csrf_headers,
+            json=wopan_payload,
+        )
+        self.assertEqual(saved_wopan.status_code, 200)
+        saved_payload = saved_wopan.json()
+        self.assertTrue(saved_payload["quark"]["credential_configured"])
         self.assertTrue(saved_payload["wopan"]["access_token_configured"])
         self.assertTrue(saved_payload["wopan"]["refresh_token_configured"])
-        self.assertEqual(saved_payload["quark"]["upload_path"], CLOUD_ARCHIVE_ROOT)
         self.assertEqual(saved_payload["wopan"]["upload_path"], CLOUD_ARCHIVE_ROOT)
-        self.assertNotIn("quark-secret-cookie", saved.text)
-        self.assertNotIn("wopan-access-token", saved.text)
-        self.assertNotIn("wopan-refresh-secret", saved.text)
+        self.assertEqual(saved_payload["schedule"]["hour"], 2)
+        self.assertNotIn("wopan-access-token", saved_wopan.text)
+        self.assertNotIn("wopan-refresh-secret", saved_wopan.text)
 
-        payload["quark"]["cookie"] = None
-        payload["wopan"]["access_token"] = None
-        payload["wopan"]["refresh_token"] = None
-        payload["schedule"]["hour"] = 2
-        preserved = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        quark_payload["cookie"] = None
+        preserved = self.client.put(
+            "/api/cloud/archive/providers/quark",
+            headers=self.csrf_headers,
+            json=quark_payload,
+        )
         self.assertEqual(preserved.status_code, 200)
         self.assertTrue(preserved.json()["quark"]["credential_configured"])
         self.assertTrue(preserved.json()["wopan"]["refresh_token_configured"])
@@ -829,27 +856,48 @@ class WebTests(TestCase):
         self.assertEqual(last_status["status"], "success")
         self.assertEqual(last_status["summary"]["scanned_files"], 0)
 
-        payload["quark"]["clear_cookie"] = True
-        invalid_clear = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        quark_payload["cookie"] = "new-cookie"
+        quark_payload["clear_cookie"] = True
+        invalid_clear = self.client.put(
+            "/api/cloud/archive/providers/quark",
+            headers=self.csrf_headers,
+            json=quark_payload,
+        )
         self.assertEqual(invalid_clear.status_code, 422)
 
-        payload["quark"]["enabled"] = False
-        payload["wopan"]["enabled"] = False
-        payload["wopan"]["clear_tokens"] = True
-        cleared = self.client.put("/api/cloud/archive", headers=self.csrf_headers, json=payload)
+        quark_payload["cookie"] = None
+        quark_payload["clear_cookie"] = True
+        quark_payload["enabled"] = False
+        cleared_quark = self.client.put(
+            "/api/cloud/archive/providers/quark",
+            headers=self.csrf_headers,
+            json=quark_payload,
+        )
+        self.assertEqual(cleared_quark.status_code, 200)
+        self.assertFalse(cleared_quark.json()["quark"]["credential_configured"])
+
+        wopan_payload["enabled"] = False
+        wopan_payload["access_token"] = None
+        wopan_payload["refresh_token"] = None
+        wopan_payload["clear_tokens"] = True
+        cleared = self.client.put(
+            "/api/cloud/archive/providers/wopan",
+            headers=self.csrf_headers,
+            json=wopan_payload,
+        )
         self.assertEqual(cleared.status_code, 200)
         self.assertFalse(cleared.json()["enabled"])
-        self.assertFalse(cleared.json()["quark"]["credential_configured"])
         self.assertFalse(cleared.json()["wopan"]["access_token_configured"])
         disabled_run = self.client.post("/api/cloud/archive/run", headers=self.csrf_headers)
         self.assertEqual(disabled_run.status_code, 409)
 
     def test_cloud_qr_login_saves_credentials_without_returning_secrets(self) -> None:
         self.login()
+        archive_page = self.client.get("/archive")
         settings_page = self.client.get("/settings")
-        self.assertIn('data-cloud-login="quark"', settings_page.text)
-        self.assertIn('data-cloud-login="wopan"', settings_page.text)
-        self.assertIn('id="cloud-login-dialog"', settings_page.text)
+        self.assertIn("data-cloud-login", archive_page.text)
+        self.assertIn('id="cloud-login-dialog"', archive_page.text)
+        self.assertNotIn('id="cloud-login-dialog"', settings_page.text)
 
         rejected = self.client.post("/api/cloud/login/quark")
         self.assertEqual(rejected.status_code, 403)
