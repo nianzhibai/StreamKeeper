@@ -235,9 +235,21 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260821', page.text)
+                self.assertIn('/static/style.css?v=20260822', page.text)
                 self.assertIn('/static/sprite.js?v=20260821', page.text)
                 self.assertIn('/static/shell.js?v=20260821', page.text)
+
+    def test_task_url_input_keeps_standard_field_size_on_phones(self) -> None:
+        self.login()
+        task_page = self.client.get("/tasks").text
+        style = self.client.get("/static/style.css").text
+
+        self.assertIn('<span class="input-row">', task_page)
+        self.assertIn('grid-template-columns: minmax(0, 1fr) auto', style)
+        self.assertIn('.input-row .input {\n  min-width: 0;', style)
+        self.assertIn('.input-row { grid-template-columns: minmax(0, 1fr); }', style)
+        self.assertIn('.input-row .btn { width: 100%; }', style)
+        self.assertNotIn('.input-row .input {\n  flex: 1;', style)
 
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
         self.login()

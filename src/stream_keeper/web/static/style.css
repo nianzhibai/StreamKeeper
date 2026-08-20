@@ -1130,12 +1130,13 @@ select.input {
 }
 
 .input-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--s3);
 }
 
 .input-row .input {
-  flex: 1;
+  min-width: 0;
 }
 
 .input-row .btn {
@@ -4039,7 +4040,8 @@ select.input {
   .modal-head,
   .modal-foot { padding: var(--s6); }
   .modal-body { padding: var(--s6) var(--s6) var(--s2); }
-  .input-row { align-items: stretch; flex-direction: column; }
+  .input-row { grid-template-columns: minmax(0, 1fr); }
+  .input-row .btn { width: 100%; }
   .save-bar { align-items: stretch; flex-direction: column; gap: var(--s4); }
   .save-actions .btn { flex: 1; }
 
