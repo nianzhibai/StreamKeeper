@@ -29,6 +29,7 @@ const state = {
   search: "",
   loading: false,
   editingTaskId: null,
+  inspection: null,
   progressTimer: 0,
 };
 
@@ -213,6 +214,7 @@ function showTaskDialog() {
 }
 
 function resetDialog() {
+  state.inspection = null;
   elements.form.reset();
   elements.form.elements.segment_count.setCustomValidity("");
   syncMonitorAvailability();
@@ -266,6 +268,12 @@ function renderInspectResult({ tone, glyph, title, detail }) {
   elements.inspectResult.querySelector("small").textContent = detail;
 }
 
+function invalidateInspection() {
+  state.inspection = null;
+  elements.inspectResult.className = "inspect hidden";
+  elements.inspectResult.innerHTML = "";
+}
+
 async function inspectRoom() {
   const urlInput = document.querySelector("#task-url");
   const url = urlInput.value.trim();
@@ -273,14 +281,18 @@ async function inspectRoom() {
     urlInput.reportValidity();
     return;
   }
+  const quality = elements.form.elements.quality.value;
+  state.inspection = null;
   elements.inspectButton.disabled = true;
   elements.inspectButton.textContent = "检测中";
   renderInspectResult({ tone: "loading", glyph: "clock", title: "正在检测直播间", detail: "识别平台并读取直播状态…" });
   try {
     const result = await api("/api/inspect", {
       method: "POST",
-      body: JSON.stringify({ url, quality: elements.form.elements.quality.value }),
+      body: JSON.stringify({ url, quality }),
     });
+    if (urlInput.value.trim() !== url || elements.form.elements.quality.value !== quality) return;
+    state.inspection = { token: result.inspection_token, url, quality };
     const sources = [result.has_flv && "FLV", result.has_hls && "HLS"].filter(Boolean).join(" / ");
     renderInspectResult({
       tone: "success",
@@ -291,7 +303,9 @@ async function inspectRoom() {
         .join(" · "),
     });
   } catch (error) {
-    renderInspectResult({ tone: "error", glyph: "alert", title: "检测失败", detail: error.message });
+    if (urlInput.value.trim() === url && elements.form.elements.quality.value === quality) {
+      renderInspectResult({ tone: "error", glyph: "alert", title: "检测失败", detail: error.message });
+    }
   } finally {
     elements.inspectButton.disabled = false;
     elements.inspectButton.textContent = "检测";
@@ -359,7 +373,18 @@ async function submitTask(event) {
     });
     if (!proceed) return;
   }
-  if (!isEditing) payload.auto_start = data.get("auto_start") === "on";
+  if (!isEditing) {
+    payload.auto_start = data.get("auto_start") === "on";
+    const inspection = state.inspection;
+    if (
+      payload.auto_start
+      && inspection
+      && inspection.url === payload.url
+      && inspection.quality === payload.quality
+    ) {
+      payload.inspection_token = inspection.token;
+    }
+  }
 
   elements.submit.disabled = true;
   const originalLabel = isEditing ? "保存更改" : "创建任务";
@@ -415,6 +440,8 @@ document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addE
 elements.refresh?.addEventListener("click", () => load());
 elements.inspectButton.addEventListener("click", inspectRoom);
 elements.form.addEventListener("submit", submitTask);
+elements.form.elements.url.addEventListener("input", invalidateInspection);
+elements.form.elements.quality.addEventListener("change", invalidateInspection);
 elements.form.elements.segment_seconds.addEventListener("input", validateSegmentSettings);
 elements.form.elements.segment_count.addEventListener("input", validateSegmentSettings);
 document.querySelector("#task-url").addEventListener("paste", () => {

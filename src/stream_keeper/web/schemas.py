@@ -77,6 +77,7 @@ class TaskConfig(StrictModel):
 
 class TaskCreate(TaskConfig):
     auto_start: bool = True
+    inspection_token: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 class TaskUpdate(StrictModel):
@@ -170,6 +171,7 @@ class InspectRequest(StrictModel):
 
 
 class InspectResponse(StrictModel):
+    inspection_token: str
     platform: str | None
     anchor_name: str | None
     is_live: bool

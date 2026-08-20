@@ -133,6 +133,24 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.output_path, "/data/recordings/test.ts")
         await scheduler.shutdown()
 
+    async def test_start_reuses_fresh_inspection_for_first_worker_iteration(self) -> None:
+        task = await self.store.create(make_config(monitor=False))
+        client = FakeClient(make_info(False))
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: client,
+            recorder_factory=FakeRecorder,
+        )
+
+        await scheduler.start(task.id, initial_info=make_info(True))
+        result = await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
+
+        self.assertEqual(client.calls, 0)
+        self.assertEqual(result.anchor_name, "测试主播")
+        self.assertEqual(result.output_path, "/data/recordings/test.ts")
+        await scheduler.shutdown()
+
     async def test_successful_recording_notifies_completion_handler_after_status_update(self) -> None:
         task = await self.store.create(make_config(monitor=False))
         notifications: list[tuple[str, TaskStatus, bool]] = []

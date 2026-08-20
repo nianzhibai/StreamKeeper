@@ -27,6 +27,7 @@ class FakeScheduler:
         self.started: list[str] = []
         self.stopped: list[str] = []
         self.restarted: list[str] = []
+        self.initial_infos: list[LiveInfo | None] = []
         self.active_task_count = 0
         self.recording_task_count = 0
 
@@ -36,8 +37,9 @@ class FakeScheduler:
     async def shutdown(self) -> None:
         pass
 
-    async def start(self, task_id: str):
+    async def start(self, task_id: str, *, initial_info: LiveInfo | None = None):
         self.started.append(task_id)
+        self.initial_infos.append(initial_info)
         return await self.store.update_runtime(
             task_id,
             enabled=True,
@@ -604,9 +606,48 @@ class WebTests(TestCase):
         self.assertEqual(payload["platform"], "抖音")
         self.assertTrue(payload["has_flv"])
         self.assertTrue(payload["has_hls"])
+        self.assertGreaterEqual(len(payload["inspection_token"]), 16)
         self.assertNotIn("flv_url", payload)
         self.assertNotIn("m3u8_url", payload)
         self.assertNotIn("secret", response.text)
+
+    def test_fresh_inspection_is_handed_to_immediate_task_start_once(self) -> None:
+        self.login()
+        url = "https://live.douyin.com/123456789"
+        inspection = self.client.post(
+            "/api/inspect",
+            headers=self.csrf_headers,
+            json={"url": url, "quality": "OD"},
+        )
+        token = inspection.json()["inspection_token"]
+
+        created = self.client.post(
+            "/api/tasks",
+            headers=self.csrf_headers,
+            json={"url": url, "quality": "OD", "auto_start": True, "inspection_token": token},
+        )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(self.scheduler.started, [created.json()["id"]])
+        initial_info = self.scheduler.initial_infos[0]
+        self.assertIsNotNone(initial_info)
+        self.assertEqual(initial_info.anchor_name, "测试主播")
+        self.assertIn("token=secret", initial_info.flv_url or "")
+        self.assertNotIn("secret", created.text)
+
+        reused = self.client.post(
+            "/api/tasks",
+            headers=self.csrf_headers,
+            json={"url": url, "quality": "OD", "auto_start": True, "inspection_token": token},
+        )
+        self.assertEqual(reused.status_code, 201)
+        self.assertIsNone(self.scheduler.initial_infos[-1])
+
+        tasks_script = self.client.get("/static/tasks.js").text
+        self.assertIn("payload.inspection_token = inspection.token", tasks_script)
+        self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
+        self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
+        self.assertIn('/static/tasks.js?v=20260822', self.client.get("/tasks").text)
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
         self.login()

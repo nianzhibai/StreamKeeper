@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..models import RecordingResult
+from ..models import LiveInfo, RecordingResult
 from ..platforms import LiveStreamClient
 from ..recorder import Recorder, RecorderOptions
 from ..settings import Settings
@@ -152,7 +152,13 @@ class TaskScheduler:
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
 
-    async def start(self, task_id: str, *, announce: bool = True) -> TaskRecord | None:
+    async def start(
+        self,
+        task_id: str,
+        *,
+        announce: bool = True,
+        initial_info: LiveInfo | None = None,
+    ) -> TaskRecord | None:
         async with self._lock:
             record = await self.store.get(task_id)
             if record is None:
@@ -169,7 +175,7 @@ class TaskScheduler:
                 status_message="任务已启动，等待检查",
             )
             self._workers[task_id] = asyncio.create_task(
-                self._run_worker(task_id),
+                self._run_worker(task_id, initial_info=initial_info),
                 name=f"stream-recording-{task_id}",
             )
         if announce and record is not None:
@@ -263,7 +269,7 @@ class TaskScheduler:
             self._failing.discard(record.id)
             await self.events.success("task", f"「{_task_name(record)}」已恢复正常", task_id=record.id)
 
-    async def _run_worker(self, task_id: str) -> None:
+    async def _run_worker(self, task_id: str, *, initial_info: LiveInfo | None = None) -> None:
         current_worker = asyncio.current_task()
         try:
             client = self._client_factory()
@@ -279,10 +285,15 @@ class TaskScheduler:
                     last_checked_at=_now(),
                 )
                 try:
-                    info = await asyncio.wait_for(
-                        client.fetch(record.url, record.quality),
-                        timeout=self.settings.fetch_timeout_seconds,
-                    )
+                    if initial_info is not None:
+                        info = initial_info
+                        initial_info = None
+                        logger.info("任务 %s 复用刚完成的直播间检测结果", task_id)
+                    else:
+                        info = await asyncio.wait_for(
+                            client.fetch(record.url, record.quality),
+                            timeout=self.settings.fetch_timeout_seconds,
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:

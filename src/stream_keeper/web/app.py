@@ -39,6 +39,7 @@ from .cloud_login import (
     CloudLoginSnapshot,
 )
 from .events import EventLog
+from .inspections import InspectionHandoffStore
 from .recordings import (
     RECORDING_MEDIA_TYPES,
     RecordingPreviewCache,
@@ -207,6 +208,7 @@ def create_app(
     inspect_client_factory: ClientFactory | None = None,
     cloud_login_flow_factory: CloudLoginFlowFactory | None = None,
     cloud_login_poll_interval: float = 2,
+    inspection_handoffs: InspectionHandoffStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
@@ -225,6 +227,8 @@ def create_app(
     if callable(add_recording_completed_handler) and callable(recording_completed_handler):
         add_recording_completed_handler(recording_completed_handler)
     inspect_client_factory = inspect_client_factory or settings.create_client
+    if inspection_handoffs is None:
+        inspection_handoffs = InspectionHandoffStore()
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
 
@@ -316,6 +320,7 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.upload_service = upload_service
     app.state.cloud_login_manager = cloud_login_manager
+    app.state.inspection_handoffs = inspection_handoffs
     app.state.recording_preview_cache = recording_preview_cache
     app.state.event_log = event_log
 
@@ -810,10 +815,18 @@ def create_app(
 
     @app.post("/api/tasks", response_model=TaskRecord, status_code=status.HTTP_201_CREATED)
     async def create_task(payload: TaskCreate) -> TaskRecord:
-        config = TaskConfig.model_validate(payload.model_dump(exclude={"auto_start"}))
+        config = TaskConfig.model_validate(payload.model_dump(exclude={"auto_start", "inspection_token"}))
         record = await store.create(config)
         if payload.auto_start:
-            await scheduler.start(record.id)
+            initial_info = inspection_handoffs.consume(
+                payload.inspection_token,
+                url=config.url,
+                quality=config.quality,
+            )
+            if initial_info is None:
+                await scheduler.start(record.id)
+            else:
+                await scheduler.start(record.id, initial_info=initial_info)
         created = await store.get(record.id)
         assert created is not None
         return scheduler.enrich_record(created)
@@ -894,6 +907,7 @@ def create_app(
         except (StreamKeeperError, TimeoutError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return InspectResponse(
+            inspection_token=inspection_handoffs.issue(payload.url, payload.quality, info),
             platform=info.platform,
             anchor_name=info.anchor_name,
             is_live=info.is_live,
