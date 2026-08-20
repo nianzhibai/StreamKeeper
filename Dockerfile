@@ -2,10 +2,10 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DOUYIN_DATA_DIR=/data \
-    DOUYIN_WEB_HOST=0.0.0.0 \
-    DOUYIN_WEB_PORT=8000 \
-    WEB_CONCURRENCY=1
+    STREAM_KEEPER_DATA_DIR=/data \
+    STREAM_KEEPER_WEB_HOST=0.0.0.0 \
+    STREAM_KEEPER_WEB_PORT=8000 \
+    STREAM_KEEPER_WEB_WORKERS=1
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
+from ..settings import ENV_PREFIX
 from .schemas import EventCategory, EventLevel
 from .store import TaskStore
 
@@ -13,7 +14,7 @@ def _retention_from_env() -> int:
     """Rows kept in the log. Larger than it used to be because the page can now
     page back through history instead of only showing the newest screenful."""
     try:
-        value = int(os.getenv("DOUYIN_EVENT_RETENTION", "5000"))
+        value = int(os.getenv(f"{ENV_PREFIX}EVENT_RETENTION", "5000"))
     except ValueError:
         return 5000
     return min(max(value, 100), 100_000)

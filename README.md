@@ -44,25 +44,27 @@ Python 代码从 `stream_keeper` 导入，服务可通过 `python -m stream_keep
 服务器需要 Docker 和 Docker Compose。
 
 ```bash
-git clone https://github.com/nianzhibai/DouYinStreamKeeper.git
-cd DouYinStreamKeeper
+git clone https://github.com/nianzhibai/StreamKeeper.git
+cd StreamKeeper
 cp .env.example .env
 ```
 
 编辑 `.env`，至少设置登录密码：
 
 ```dotenv
-DOUYIN_WEB_USERNAME=admin
-DOUYIN_WEB_PASSWORD=请替换成足够长的随机密码
+STREAM_KEEPER_WEB_USERNAME=admin
+STREAM_KEEPER_WEB_PASSWORD=请替换成足够长的随机密码
 ```
 
 平台 Cookie 均为可选项。哔哩哔哩登录 Cookie 可用于获取账号有权限观看的高画质，快手遇到风控或匿名访问限制时建议配置 Cookie：
 
 ```dotenv
-DOUYIN_COOKIE=
-BILIBILI_COOKIE=
-KUAISHOU_COOKIE=
+STREAM_KEEPER_DOUYIN_COOKIE=
+STREAM_KEEPER_BILIBILI_COOKIE=
+STREAM_KEEPER_KUAISHOU_COOKIE=
 ```
+
+> 从旧版本升级时，请以 `.env.example` 为准迁移配置。当前版本仅读取 `STREAM_KEEPER_*` 命名空间；旧的 `DOUYIN_*`、`BILIBILI_COOKIE`、`KUAISHOU_COOKIE`、`WEB_CONCURRENCY` 和 `FFMPEG` 变量不再生效。`TZ` 仍使用标准名称。
 
 启动：
 
@@ -70,7 +72,7 @@ KUAISHOU_COOKIE=
 docker compose up -d --build
 ```
 
-浏览器访问 `http://服务器IP:8000/`（默认监听 `0.0.0.0:8000`，即所有网络接口都可访问；只想本机访问可在 `.env` 中设置 `DOUYIN_BIND_ADDRESS=127.0.0.1`）。
+浏览器访问 `http://服务器IP:8000/`（默认监听 `0.0.0.0:8000`，即所有网络接口都可访问；只想本机访问可在 `.env` 中设置 `STREAM_KEEPER_BIND_ADDRESS=127.0.0.1`）。
 
 常用命令：
 
@@ -84,7 +86,7 @@ docker compose pull && docker compose up -d --build   # 更新代码后重建
 ## 使用提示
 
 - 支持 `live.douyin.com` / `v.douyin.com`、`live.bilibili.com` / `b23.tv`、`live.kuaishou.com` / `v.kuaishou.com` 链接
-- `DOUYIN_PROXY` 会同时用于三个直播平台的状态检查与流地址解析
+- `STREAM_KEEPER_PROXY` 会同时用于三个直播平台的状态检查与流地址解析
 - 登录后可在「设置」中扫码绑定夸克或联通云盘，再在「网盘归档」中启用自动上传
 - 录像默认保存在 Docker 数据卷中；网盘上传成功后，可按配置清理本地文件
 - 对公网开放时建议自行配置 HTTPS 反向代理
