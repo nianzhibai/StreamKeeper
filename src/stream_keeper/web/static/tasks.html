@@ -161,10 +161,10 @@
                 <span class="suffix"><input class="input" name="segment_seconds" type="number" min="0" max="86400" step="1" value="1800" /><em>秒</em></span>
               </label>
               <label class="field">
-                <span class="field-label">最大段数</span>
+                <span class="field-label">录制段数</span>
                 <span class="suffix"><input class="input" name="segment_count" type="number" min="0" max="10000" step="1" value="0" /><em>段</em></span>
               </label>
-              <p class="field-hint span-2">分段时长设为 0 表示不切分；最大段数设为 0 表示不限制。设置最大段数后，任务会作为单次录制执行。</p>
+              <p class="field-hint span-2">默认使用“设置”中的录制参数，在此修改时仅覆盖当前任务。分段时长设为 0 表示不切分；录制段数设为 0 表示不限制，设置录制段数后任务会作为单次录制执行。</p>
             </div>
           </details>
         </div>
@@ -176,6 +176,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/static/tasks.js?v=20260822"></script>
+    <script type="module" src="/static/tasks.js?v=20260823"></script>
   </body>
 </html>

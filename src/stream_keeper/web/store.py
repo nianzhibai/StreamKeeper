@@ -18,6 +18,7 @@ from ..cloud.config import CLOUD_PROVIDER_ORDER
 from .schemas import (
     EventCategory,
     EventLevel,
+    RecordingDefaults,
     RuntimeEventFacetsView,
     RuntimeEventSummaryView,
     RuntimeEventView,
@@ -147,6 +148,32 @@ class TaskStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS recording_defaults (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    output_format TEXT NOT NULL CHECK (output_format IN ('ts', 'mp4', 'mkv', 'flv')),
+                    segment_seconds INTEGER NOT NULL CHECK (segment_seconds BETWEEN 0 AND 86400),
+                    segment_count INTEGER NOT NULL CHECK (segment_count BETWEEN 0 AND 10000),
+                    updated_at TEXT NOT NULL,
+                    CHECK (segment_count = 0 OR segment_seconds > 0)
+                )
+                """
+            )
+            recording_defaults = RecordingDefaults()
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO recording_defaults (
+                    id, output_format, segment_seconds, segment_count, updated_at
+                ) VALUES (1, ?, ?, ?, ?)
+                """,
+                (
+                    recording_defaults.output_format,
+                    recording_defaults.segment_seconds,
+                    recording_defaults.segment_count,
+                    utc_now().isoformat(),
+                ),
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS web_sessions (
                     token_hash TEXT PRIMARY KEY,
                     username TEXT NOT NULL,
@@ -245,6 +272,39 @@ class TaskStore:
         except (TypeError, json.JSONDecodeError):
             return None
         return decoded if isinstance(decoded, dict) else None
+
+    async def get_recording_defaults(self) -> RecordingDefaults:
+        return await self._run_sync(self._get_recording_defaults_sync)
+
+    def _get_recording_defaults_sync(self) -> RecordingDefaults:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT output_format, segment_seconds, segment_count FROM recording_defaults WHERE id = 1"
+            ).fetchone()
+        return RecordingDefaults.model_validate(dict(row)) if row is not None else RecordingDefaults()
+
+    async def save_recording_defaults(self, defaults: RecordingDefaults) -> None:
+        await self._run_sync(self._save_recording_defaults_sync, defaults)
+
+    def _save_recording_defaults_sync(self, defaults: RecordingDefaults) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO recording_defaults (id, output_format, segment_seconds, segment_count, updated_at)
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    output_format = excluded.output_format,
+                    segment_seconds = excluded.segment_seconds,
+                    segment_count = excluded.segment_count,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    defaults.output_format,
+                    defaults.segment_seconds,
+                    defaults.segment_count,
+                    utc_now().isoformat(),
+                ),
+            )
 
     async def sync_cloud_upload_config(
         self,

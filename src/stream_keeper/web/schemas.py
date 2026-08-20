@@ -41,6 +41,18 @@ class AuthSession(StrictModel):
     expires_at: datetime
 
 
+class RecordingDefaults(StrictModel):
+    output_format: OutputFormat = "ts"
+    segment_seconds: int = Field(default=1800, ge=0, le=86400)
+    segment_count: int = Field(default=0, ge=0, le=10000)
+
+    @model_validator(mode="after")
+    def validate_segmentation(self) -> RecordingDefaults:
+        if self.segment_count and not self.segment_seconds:
+            raise ValueError("设置录制段数时，分段时长必须大于 0")
+        return self
+
+
 class TaskConfig(StrictModel):
     url: str = Field(min_length=10, max_length=1000)
     label: str | None = Field(default=None, max_length=80)

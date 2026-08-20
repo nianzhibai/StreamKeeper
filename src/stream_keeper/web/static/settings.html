@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="配置网盘归档的上传模式与执行计划" />
+    <meta name="description" content="配置录制默认值与网盘归档计划" />
     <title>设置 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
@@ -21,7 +21,7 @@
               <svg class="ic" aria-hidden="true"><use href="#ic-settings" /></svg>运维
             </p>
             <h1>设置</h1>
-            <p>配置网盘归档的上传模式与执行计划</p>
+            <p>配置新任务的录制默认值与网盘归档计划</p>
           </div>
           <div class="page-tools">
             <a class="btn btn-soft" href="/archive">管理存储目标</a>
@@ -34,6 +34,40 @@
         </div>
 
         <form id="archive-schedule-form" class="settings">
+          <section class="card">
+            <header class="card-head">
+              <span class="card-glyph" aria-hidden="true">
+                <svg class="ic ic-sm"><use href="#ic-record" /></svg>
+              </span>
+              <div class="card-heading">
+                <h2>录制默认值</h2>
+                <p>统一设置新建直播任务的文件格式与分段规则</p>
+              </div>
+            </header>
+            <div class="card-body">
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">保存格式</span>
+                  <select class="input" name="recording_output_format">
+                    <option value="ts">TS</option>
+                    <option value="mp4">MP4</option>
+                    <option value="mkv">MKV</option>
+                    <option value="flv">FLV</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">分段时长</span>
+                  <span class="suffix"><input class="input" name="recording_segment_seconds" type="number" min="0" max="86400" step="1" value="1800" required /><em>秒</em></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">录制段数</span>
+                  <span class="suffix"><input class="input" name="recording_segment_count" type="number" min="0" max="10000" step="1" value="0" required /><em>段</em></span>
+                </label>
+                <p class="field-hint span-2">分段时长为 0 表示不切分；录制段数为 0 表示不限制。新建任务会带入这些值，在任务中单独修改时以任务配置为准；修改默认值不会影响已有任务。</p>
+              </div>
+            </div>
+          </section>
+
           <section class="card">
             <header class="card-head">
               <span class="card-glyph" aria-hidden="true">
@@ -73,14 +107,14 @@
           <div class="save-bar">
             <span class="save-hint" data-save-hint>所有更改已保存</span>
             <div class="save-actions">
-              <button class="btn btn-soft" type="button" data-reset-form>放弃更改</button>
-              <button id="schedule-save-button" class="btn btn-primary" type="submit">保存计划</button>
+              <button class="btn btn-soft" type="button" data-reset-form disabled>放弃更改</button>
+              <button id="schedule-save-button" class="btn btn-primary" type="submit" disabled>保存设置</button>
             </div>
           </div>
         </form>
       </main>
     </div>
 
-    <script type="module" src="/static/settings.js?v=20260821"></script>
+    <script type="module" src="/static/settings.js?v=20260823"></script>
   </body>
 </html>

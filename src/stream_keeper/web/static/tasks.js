@@ -30,6 +30,11 @@ const state = {
   loading: false,
   editingTaskId: null,
   inspection: null,
+  recordingDefaults: {
+    output_format: "ts",
+    segment_seconds: 1800,
+    segment_count: 0,
+  },
   progressTimer: 0,
 };
 
@@ -193,7 +198,12 @@ async function load({ quiet = false } = {}) {
   state.loading = true;
   if (!quiet) setBusy(elements.refresh, true);
   try {
-    state.tasks = syncProgressClock(await api("/api/tasks"));
+    const [tasks, recordingDefaults] = await Promise.all([
+      api("/api/tasks"),
+      api("/api/settings/recording-defaults"),
+    ]);
+    state.tasks = syncProgressClock(tasks);
+    state.recordingDefaults = recordingDefaults;
     render();
     clearPageError();
     setHealth(true);
@@ -228,6 +238,11 @@ function resetDialog() {
 function openCreateDialog() {
   state.editingTaskId = null;
   resetDialog();
+  const form = elements.form.elements;
+  form.output_format.value = state.recordingDefaults.output_format;
+  form.segment_seconds.value = String(state.recordingDefaults.segment_seconds);
+  form.segment_count.value = String(state.recordingDefaults.segment_count);
+  validateSegmentSettings();
   elements.dialogTitle.textContent = "新建任务";
   elements.submit.textContent = "创建任务";
   elements.autoStartField.classList.remove("hidden");
@@ -329,7 +344,7 @@ function syncMonitorAvailability() {
   if (hasSegmentLimit) monitor.checked = false;
   elements.monitorField.classList.toggle("is-disabled", hasSegmentLimit);
   elements.monitorHint.textContent = hasSegmentLimit
-    ? "设置最大段数后，任务完成即停止"
+    ? "设置录制段数后，任务完成即停止"
     : "下播后继续等待下一场";
 }
 

@@ -253,6 +253,27 @@ class WebTests(TestCase):
         self.assertIn('.input-row .btn { width: 100%; }', style)
         self.assertNotIn('.input-row .input {\n  flex: 1;', style)
 
+    def test_recording_defaults_are_available_in_settings_and_new_task_dialog(self) -> None:
+        self.login()
+        settings_page = self.client.get("/settings").text
+        task_page = self.client.get("/tasks").text
+        settings_script = self.client.get("/static/settings.js").text
+        tasks_script = self.client.get("/static/tasks.js").text
+
+        self.assertIn("录制默认值", settings_page)
+        self.assertIn('name="recording_output_format"', settings_page)
+        self.assertIn('name="recording_segment_seconds"', settings_page)
+        self.assertIn('name="recording_segment_count"', settings_page)
+        self.assertIn("/static/settings.js?v=20260823", settings_page)
+        self.assertIn("/api/settings/recording-defaults", settings_script)
+        self.assertIn("form.elements.recording_output_format.value", settings_script)
+
+        self.assertIn("仅覆盖当前任务", task_page)
+        self.assertIn("/static/tasks.js?v=20260823", task_page)
+        self.assertIn("form.output_format.value = state.recordingDefaults.output_format", tasks_script)
+        self.assertIn("form.segment_seconds.value = String(state.recordingDefaults.segment_seconds)", tasks_script)
+        self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", tasks_script)
+
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
         self.login()
         recording_page = self.client.get("/recordings")
@@ -491,6 +512,66 @@ class WebTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.client.get("/api/tasks").json(), [])
 
+    def test_recording_defaults_apply_to_new_tasks_and_explicit_task_values_win(self) -> None:
+        self.login()
+        initial = self.client.get("/api/settings/recording-defaults")
+        self.assertEqual(
+            initial.json(),
+            {"output_format": "ts", "segment_seconds": 1800, "segment_count": 0},
+        )
+
+        invalid = self.client.put(
+            "/api/settings/recording-defaults",
+            headers=self.csrf_headers,
+            json={"output_format": "mp4", "segment_seconds": 0, "segment_count": 4},
+        )
+        self.assertEqual(invalid.status_code, 422)
+
+        saved = self.client.put(
+            "/api/settings/recording-defaults",
+            headers=self.csrf_headers,
+            json={"output_format": "mp4", "segment_seconds": 600, "segment_count": 4},
+        )
+        self.assertEqual(saved.status_code, 200)
+
+        inherited = self.client.post(
+            "/api/tasks",
+            headers=self.csrf_headers,
+            json={"url": "https://live.douyin.com/123456789", "auto_start": False},
+        )
+        self.assertEqual(inherited.status_code, 201)
+        self.assertEqual(inherited.json()["output_format"], "mp4")
+        self.assertEqual(inherited.json()["segment_seconds"], 600)
+        self.assertEqual(inherited.json()["segment_count"], 4)
+        self.assertFalse(inherited.json()["monitor"])
+
+        explicit = self.client.post(
+            "/api/tasks",
+            headers=self.csrf_headers,
+            json={
+                "url": "https://live.bilibili.com/123456",
+                "output_format": "mkv",
+                "segment_seconds": 0,
+                "segment_count": 0,
+                "auto_start": False,
+            },
+        )
+        self.assertEqual(explicit.status_code, 201)
+        self.assertEqual(explicit.json()["output_format"], "mkv")
+        self.assertEqual(explicit.json()["segment_seconds"], 0)
+        self.assertEqual(explicit.json()["segment_count"], 0)
+        self.assertTrue(explicit.json()["monitor"])
+
+        self.client.put(
+            "/api/settings/recording-defaults",
+            headers=self.csrf_headers,
+            json={"output_format": "flv", "segment_seconds": 0, "segment_count": 0},
+        )
+        unchanged = self.client.get(f"/api/tasks/{inherited.json()['id']}").json()
+        self.assertEqual(unchanged["output_format"], "mp4")
+        self.assertEqual(unchanged["segment_seconds"], 600)
+        self.assertEqual(unchanged["segment_count"], 4)
+
     def test_create_task_accepts_share_text_and_stores_clean_url(self) -> None:
         self.login()
         response = self.client.post(
@@ -647,7 +728,7 @@ class WebTests(TestCase):
         self.assertIn("payload.inspection_token = inspection.token", tasks_script)
         self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
         self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
-        self.assertIn('/static/tasks.js?v=20260822', self.client.get("/tasks").text)
+        self.assertIn("/static/tasks.js?v=20260823", self.client.get("/tasks").text)
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
         self.login()
@@ -862,6 +943,9 @@ class WebTests(TestCase):
         self.assertIn('data-provider-configure="guangya"', archive_page.text)
         self.assertIn('id="provider-config-dialog"', archive_page.text)
         self.assertIn('id="archive-schedule-form"', settings_page.text)
+        self.assertIn('name="recording_output_format"', settings_page.text)
+        self.assertIn('name="recording_segment_seconds"', settings_page.text)
+        self.assertIn('name="recording_segment_count"', settings_page.text)
         self.assertIn('name="upload_mode"', settings_page.text)
         self.assertIn('value="recording_completed"', settings_page.text)
         self.assertNotIn('name="quark_', settings_page.text)

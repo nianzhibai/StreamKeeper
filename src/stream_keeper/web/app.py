@@ -67,6 +67,7 @@ from .schemas import (
     InspectRequest,
     InspectResponse,
     LoginRequest,
+    RecordingDefaults,
     RecordingDirectoryView,
     RuntimeEventListView,
     SystemInfo,
@@ -80,6 +81,8 @@ from .uploader import RecordingUploadService
 
 # The activity-log page judges "is everything fine" over the last day.
 EVENT_SUMMARY_WINDOW_HOURS = 24
+
+_RECORDING_DEFAULT_FIELDS = ("output_format", "segment_seconds", "segment_count")
 
 _TASK_RESTART_FIELDS = frozenset(
     {
@@ -529,6 +532,22 @@ def create_app(
             },
         )
 
+    @app.get("/api/settings/recording-defaults", response_model=RecordingDefaults)
+    async def get_recording_defaults() -> RecordingDefaults:
+        return await store.get_recording_defaults()
+
+    @app.put("/api/settings/recording-defaults", response_model=RecordingDefaults)
+    async def update_recording_defaults(payload: RecordingDefaults) -> RecordingDefaults:
+        await store.save_recording_defaults(payload)
+        segment_description = "不分段" if payload.segment_seconds == 0 else f"每 {payload.segment_seconds} 秒分段"
+        count_description = "不限段数" if payload.segment_count == 0 else f"录制 {payload.segment_count} 段"
+        await event_log.info(
+            "system",
+            "录制默认设置已更新",
+            f"{payload.output_format.upper()} · {segment_description} · {count_description}",
+        )
+        return payload
+
     @app.get("/api/cloud/archive", response_model=CloudArchiveView)
     async def get_cloud_archive() -> CloudArchiveView:
         config = await upload_service.get_config()
@@ -815,7 +834,16 @@ def create_app(
 
     @app.post("/api/tasks", response_model=TaskRecord, status_code=status.HTTP_201_CREATED)
     async def create_task(payload: TaskCreate) -> TaskRecord:
-        config = TaskConfig.model_validate(payload.model_dump(exclude={"auto_start", "inspection_token"}))
+        config_values = payload.model_dump(exclude={"auto_start", "inspection_token"})
+        recording_defaults = await store.get_recording_defaults()
+        for field in _RECORDING_DEFAULT_FIELDS:
+            if field not in payload.model_fields_set:
+                config_values[field] = getattr(recording_defaults, field)
+        try:
+            config = TaskConfig.model_validate(config_values)
+        except ValidationError as exc:
+            detail = "；".join(error["msg"] for error in exc.errors())
+            raise HTTPException(status_code=422, detail=detail) from exc
         record = await store.create(config)
         if payload.auto_start:
             initial_info = inspection_handoffs.consume(

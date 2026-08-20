@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
-from stream_keeper.web.schemas import TaskConfig, TaskStatus
+from stream_keeper.web.schemas import RecordingDefaults, TaskConfig, TaskStatus
 from stream_keeper.web.store import TaskStore
 
 
@@ -31,6 +31,16 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    async def test_recording_defaults_are_initialized_and_persisted(self) -> None:
+        initial = await self.store.get_recording_defaults()
+        self.assertEqual(initial, RecordingDefaults())
+
+        configured = RecordingDefaults(output_format="mkv", segment_seconds=600, segment_count=4)
+        await self.store.save_recording_defaults(configured)
+        await self.store.initialize()
+
+        self.assertEqual(await self.store.get_recording_defaults(), configured)
 
     async def test_create_update_list_and_delete(self) -> None:
         created = await self.store.create(task_config())
