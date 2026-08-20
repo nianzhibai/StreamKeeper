@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from ..platforms import LiveStreamClient
-from ..settings import CLOUD_ARCHIVE_ROOT
+from ..settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD
 
 Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
@@ -39,6 +39,35 @@ class AuthSession(StrictModel):
     username: str
     csrf_token: str
     expires_at: datetime
+
+
+class AuthStatus(StrictModel):
+    authentication_enabled: bool
+    setup_required: bool
+    suggested_username: str | None = None
+
+
+class AuthSetupRequest(StrictModel):
+    username: str = Field(min_length=1, max_length=128)
+    password: SecretStr = Field(min_length=10, max_length=1024)
+    password_confirmation: SecretStr = Field(min_length=10, max_length=1024)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("用户名不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_passwords(self) -> AuthSetupRequest:
+        password = self.password.get_secret_value()
+        if password == WEB_SETUP_PASSWORD:
+            raise ValueError("请设置不同于默认占位值的密码")
+        if password != self.password_confirmation.get_secret_value():
+            raise ValueError("两次输入的密码不一致")
+        return self
 
 
 class RecordingDefaults(StrictModel):

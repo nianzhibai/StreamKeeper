@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import secrets
 import shutil
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
@@ -49,6 +48,8 @@ from .recordings import (
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
     AuthSession,
+    AuthSetupRequest,
+    AuthStatus,
     CloudArchiveUpdate,
     CloudArchiveView,
     CloudLoginView,
@@ -234,6 +235,7 @@ def create_app(
         inspection_handoffs = InspectionHandoffStore()
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
+    authentication_enabled = bool(settings.web_password)
 
     async def persist_cloud_archive_config(
         config: CloudArchiveConfig,
@@ -287,7 +289,14 @@ def create_app(
     async def lifespan(_app: FastAPI):
         settings.prepare()
         await store.initialize()
-        await store.sync_web_credentials(settings.web_username, settings.web_password)
+        if authentication_enabled:
+            if settings.web_setup_mode:
+                # Older releases persisted the documented placeholder as if it
+                # were a real password. Remove only that exact legacy row; once
+                # setup stores real credentials, subsequent restarts preserve it.
+                await store.discard_web_credentials_if_match(settings.web_username, settings.web_password)
+            else:
+                await store.sync_web_credentials(settings.web_username, settings.web_password)
         await event_log.info(
             "system",
             f"服务已启动（v{__version__}）",
@@ -313,7 +322,7 @@ def create_app(
     app.add_middleware(
         SessionAuthMiddleware,
         store=store,
-        enabled=bool(settings.web_password),
+        enabled=authentication_enabled,
         session_ttl_seconds=settings.session_ttl_hours * 3600,
     )
     app.add_middleware(SecurityHeadersMiddleware)
@@ -331,34 +340,75 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    async def issue_authenticated_session(
+        username: str,
+        request: Request,
+        response: Response,
+    ) -> AuthSession:
+        ttl_seconds = settings.session_ttl_hours * 3600
+        token, session = await store.create_session(username, ttl_seconds)
+        set_session_cookie(
+            response,
+            token,
+            session,
+            ttl_seconds,
+            secure=request.url.scheme == "https",
+        )
+        return _auth_session_response(session)
+
     @app.get("/login", include_in_schema=False, response_model=None)
     async def login_page(request: Request) -> Response:
-        if not settings.web_password:
+        if not authentication_enabled:
             return RedirectResponse("/", status_code=303)
         token = request.cookies.get(SESSION_COOKIE_NAME)
         if token and await store.get_session(token):
             return RedirectResponse("/", status_code=303)
         return FileResponse(static_dir / "login.html", headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/auth/status", response_model=AuthStatus)
+    async def auth_status() -> AuthStatus:
+        setup_required = (
+            authentication_enabled
+            and settings.web_setup_mode
+            and not await store.web_credentials_configured()
+        )
+        return AuthStatus(
+            authentication_enabled=authentication_enabled,
+            setup_required=setup_required,
+            suggested_username=settings.web_username if setup_required else None,
+        )
+
+    @app.post("/api/auth/setup", response_model=AuthSession, status_code=status.HTTP_201_CREATED)
+    async def setup_auth(payload: AuthSetupRequest, request: Request, response: Response) -> AuthSession:
+        if not authentication_enabled or not settings.web_setup_mode:
+            raise HTTPException(status_code=409, detail="当前实例不允许通过网页初始化管理员账号")
+        created = await store.initialize_web_credentials(
+            payload.username,
+            payload.password.get_secret_value(),
+        )
+        if not created:
+            raise HTTPException(status_code=409, detail="管理员账号已完成初始化，请直接登录")
+        source = f"来源 IP {request.client.host if request.client else 'unknown'}"
+        await event_log.success("auth", f"管理员账号 {payload.username} 已完成初始化", source)
+        return await issue_authenticated_session(payload.username, request, response)
+
     @app.post("/api/auth/login", response_model=AuthSession)
     async def login(payload: LoginRequest, request: Request, response: Response) -> AuthSession:
-        if not settings.web_password:
+        if not authentication_enabled:
             raise HTTPException(status_code=409, detail="当前开发环境未启用登录认证")
+        if not await store.web_credentials_configured():
+            raise HTTPException(status_code=409, detail="请先在登录页面完成管理员账号初始化")
 
         client_key = request.client.host if request.client else "unknown"
         source = f"来源 IP {client_key}"
         if await store.is_login_blacklisted(client_key):
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
 
-        username_matches = secrets.compare_digest(
-            payload.username.encode("utf-8"),
-            settings.web_username.encode("utf-8"),
+        credentials_match = await store.verify_web_credentials(
+            payload.username,
+            payload.password.get_secret_value(),
         )
-        password_matches = secrets.compare_digest(
-            payload.password.get_secret_value().encode("utf-8"),
-            settings.web_password.encode("utf-8"),
-        )
-        if not (username_matches and password_matches):
+        if not credentials_match:
             blacklisted = await store.register_login_failure(
                 client_key,
                 settings.login_max_attempts,
@@ -372,17 +422,8 @@ def create_app(
 
         if not await store.accept_login_success(client_key):
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
-        await event_log.info("auth", f"{settings.web_username} 登录成功", source)
-        ttl_seconds = settings.session_ttl_hours * 3600
-        token, session = await store.create_session(settings.web_username, ttl_seconds)
-        set_session_cookie(
-            response,
-            token,
-            session,
-            ttl_seconds,
-            secure=request.url.scheme == "https",
-        )
-        return _auth_session_response(session)
+        await event_log.info("auth", f"{payload.username} 登录成功", source)
+        return await issue_authenticated_session(payload.username, request, response)
 
     @app.get("/api/auth/blocked-clients", response_model=list[str])
     async def blocked_clients() -> list[str]:
@@ -396,7 +437,7 @@ def create_app(
 
     @app.get("/api/auth/session", response_model=AuthSession)
     async def current_session(request: Request) -> AuthSession:
-        if not settings.web_password:
+        if not authentication_enabled:
             return AuthSession(
                 username=settings.web_username,
                 csrf_token="",

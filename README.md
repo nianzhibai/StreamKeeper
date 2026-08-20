@@ -49,12 +49,14 @@ cd StreamKeeper
 cp .env.example .env
 ```
 
-编辑 `.env`，至少设置登录密码：
+`.env` 中默认保留初始化占位值：
 
 ```dotenv
 STREAM_KEEPER_WEB_USERNAME=admin
-STREAM_KEEPER_WEB_PASSWORD=请替换成足够长的随机密码
+STREAM_KEEPER_WEB_PASSWORD=replace-with-a-long-random-password
 ```
+
+使用这组默认值启动时，首次打开登录页会要求设置管理员用户名和密码，完成后自动登录；凭据以慢哈希保存在当前服务器。也可以在启动前直接把以上两项改为自定义凭据。对外开放服务前应先完成初始化，密码建议使用 20 位以上随机字符串。
 
 平台 Cookie 均为可选项。哔哩哔哩登录 Cookie 可用于获取账号有权限观看的高画质，快手遇到风控或匿名访问限制时建议配置 Cookie：
 

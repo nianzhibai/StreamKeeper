@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from stream_keeper import LiveStreamClient
 from stream_keeper.cloud import CloudArchiveConfig
-from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, Settings
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, WEB_SETUP_PASSWORD, Settings
 from stream_keeper.web.events import _retention_from_env
 
 
@@ -31,6 +31,10 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.quark_upload_path, CLOUD_ARCHIVE_ROOT)
         self.assertEqual(settings.wopan_upload_path, CLOUD_ARCHIVE_ROOT)
         self.assertEqual(settings.upload_mode, "scheduled")
+
+    def test_documented_placeholder_enables_web_setup_mode(self) -> None:
+        self.assertTrue(Settings(web_password=WEB_SETUP_PASSWORD).web_setup_mode)
+        self.assertFalse(Settings(web_password="custom-secure-password").web_setup_mode)
 
     def test_legacy_archive_config_defaults_to_scheduled_mode(self) -> None:
         config = CloudArchiveConfig.from_dict({"providers": {}})
@@ -237,6 +241,7 @@ class SettingsTests(TestCase):
         }
         self.assertTrue(env_keys)
         self.assertTrue(all(key == "TZ" or key.startswith(ENV_PREFIX) for key in env_keys))
+        self.assertIn(f"STREAM_KEEPER_WEB_PASSWORD={WEB_SETUP_PASSWORD}", env_lines)
 
         compose = (project_root / "docker-compose.yml").read_text(encoding="utf-8")
         dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
@@ -246,6 +251,8 @@ class SettingsTests(TestCase):
         self.assertIn("STREAM_KEEPER_DATA_DIR=/data", dockerfile)
         self.assertIn("nianzhibai/StreamKeeper.git", readme)
         self.assertIn("STREAM_KEEPER_WEB_USERNAME=admin", readme)
+        self.assertIn(f"STREAM_KEEPER_WEB_PASSWORD={WEB_SETUP_PASSWORD}", readme)
+        self.assertIn("首次打开登录页会要求设置管理员用户名和密码", readme)
         self.assertIn("STREAM_KEEPER_DOUYIN_COOKIE=", readme)
         self.assertNotIn("nianzhibai/DouYinStreamKeeper.git", readme)
         self.assertNotIn("\nDOUYIN_WEB_USERNAME=", readme)

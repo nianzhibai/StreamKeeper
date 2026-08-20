@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from stream_keeper.models import LiveInfo
-from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD, Settings
 from stream_keeper.web.app import create_app
 from stream_keeper.web.auth import SESSION_COOKIE_NAME
 from stream_keeper.web.cloud_login import CloudLoginPoll
@@ -109,6 +109,154 @@ class FakeCloudLoginFlow:
 
     async def aclose(self) -> None:
         pass
+
+
+class WebSetupTests(TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.settings = Settings(
+            data_dir=root,
+            recordings_dir=root / "recordings",
+            database_path=root / "tasks.db",
+            web_username="admin",
+            web_password=WEB_SETUP_PASSWORD,
+            validate_binaries=False,
+        )
+        self.store = TaskStore(self.settings.database_path)
+        # Simulate an upgrade from the release that persisted the documented
+        # placeholder as a real account. Startup must turn it back into setup.
+        asyncio.run(self.store.initialize())
+        asyncio.run(self.store.sync_web_credentials("admin", WEB_SETUP_PASSWORD))
+        self.scheduler = FakeScheduler(self.store)
+        app = create_app(
+            self.settings,
+            store=self.store,
+            scheduler=self.scheduler,
+            inspect_client_factory=FakeInspectClient,
+            cloud_login_flow_factory=FakeCloudLoginFlow,
+            cloud_login_poll_interval=0.01,
+        )
+        self.client_context = TestClient(app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self) -> None:
+        self.client_context.__exit__(None, None, None)
+        self.temp_dir.cleanup()
+
+    def test_default_environment_credentials_trigger_one_time_web_setup(self) -> None:
+        status_response = self.client.get("/api/auth/status")
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(
+            status_response.json(),
+            {
+                "authentication_enabled": True,
+                "setup_required": True,
+                "suggested_username": "admin",
+            },
+        )
+        self.assertEqual(self.client.get("/", follow_redirects=False).status_code, 303)
+        initial_login_page = self.client.get("/login")
+        self.assertEqual(initial_login_page.status_code, 200)
+        self.assertIn('id="setup-confirm-field"', initial_login_page.text)
+        self.assertIn("/static/login.js?v=20260824", initial_login_page.text)
+
+        login_before_setup = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": WEB_SETUP_PASSWORD},
+        )
+        self.assertEqual(login_before_setup.status_code, 409)
+
+        mismatch = self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "chosen-admin",
+                "password": "chosen-secure-password",
+                "password_confirmation": "different-secure-password",
+            },
+        )
+        self.assertEqual(mismatch.status_code, 422)
+        placeholder = self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "chosen-admin",
+                "password": WEB_SETUP_PASSWORD,
+                "password_confirmation": WEB_SETUP_PASSWORD,
+            },
+        )
+        self.assertEqual(placeholder.status_code, 422)
+
+        setup = self.client.post(
+            "/api/auth/setup",
+            json={
+                "username": "  chosen-admin  ",
+                "password": "chosen-secure-password",
+                "password_confirmation": "chosen-secure-password",
+            },
+        )
+        self.assertEqual(setup.status_code, 201)
+        self.assertEqual(setup.json()["username"], "chosen-admin")
+        self.assertTrue(self.client.cookies.get(SESSION_COOKIE_NAME))
+        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/auth/status").json(),
+            {
+                "authentication_enabled": True,
+                "setup_required": False,
+                "suggested_username": None,
+            },
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/auth/setup",
+                json={
+                    "username": "other-admin",
+                    "password": "other-secure-password",
+                    "password_confirmation": "other-secure-password",
+                },
+            ).status_code,
+            409,
+        )
+        self.assertNotIn(b"chosen-secure-password", self.store.database_path.read_bytes())
+
+        csrf_headers = {"X-CSRF-Token": setup.json()["csrf_token"]}
+        self.assertEqual(self.client.post("/api/auth/logout", headers=csrf_headers).status_code, 204)
+        rejected_placeholder = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": WEB_SETUP_PASSWORD},
+        )
+        self.assertEqual(rejected_placeholder.status_code, 401)
+        accepted = self.client.post(
+            "/api/auth/login",
+            json={"username": "chosen-admin", "password": "chosen-secure-password"},
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(self.client.get("/api/auth/blocked-clients").json(), [])
+
+        login_page = self.client.get("/login", follow_redirects=False)
+        self.assertEqual(login_page.status_code, 303)
+        login_script = self.client.get("/static/login.js").text
+        self.assertIn('fetch("/api/auth/status"', login_script)
+        self.assertIn('setupRequired ? "/api/auth/setup" : "/api/auth/login"', login_script)
+        self.assertIn("password_confirmation", login_script)
+
+        restarted_store = TaskStore(self.settings.database_path)
+        restarted_scheduler = FakeScheduler(restarted_store)
+        restarted_app = create_app(
+            self.settings,
+            store=restarted_store,
+            scheduler=restarted_scheduler,
+            inspect_client_factory=FakeInspectClient,
+            cloud_login_flow_factory=FakeCloudLoginFlow,
+            cloud_login_poll_interval=0.01,
+        )
+        with TestClient(restarted_app) as restarted_client:
+            self.assertFalse(restarted_client.get("/api/auth/status").json()["setup_required"])
+            restarted_login = restarted_client.post(
+                "/api/auth/login",
+                json={"username": "chosen-admin", "password": "chosen-secure-password"},
+            )
+            self.assertEqual(restarted_login.status_code, 200)
 
 
 class WebTests(TestCase):

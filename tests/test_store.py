@@ -1,8 +1,10 @@
+import asyncio
 import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
+from stream_keeper.settings import WEB_SETUP_PASSWORD
 from stream_keeper.web.schemas import RecordingDefaults, TaskConfig, TaskStatus
 from stream_keeper.web.store import TaskStore
 
@@ -252,6 +254,32 @@ class StoreTests(IsolatedAsyncioTestCase):
         await self.store.initialize()
         self.assertFalse(await self.store.sync_web_credentials("admin", "second-long-password"))
         self.assertIsNotNone(await self.store.get_session(replacement_token))
+
+    async def test_first_web_credentials_are_initialized_once_and_verified_from_digest(self) -> None:
+        self.assertFalse(await self.store.web_credentials_configured())
+        self.assertFalse(await self.store.verify_web_credentials("operator", "new-secure-password"))
+
+        results = await asyncio.gather(
+            self.store.initialize_web_credentials("operator-a", "first-secure-password"),
+            self.store.initialize_web_credentials("operator-b", "second-secure-password"),
+        )
+
+        self.assertEqual(sorted(results), [False, True])
+        winner = "operator-a" if results[0] else "operator-b"
+        winner_password = "first-secure-password" if results[0] else "second-secure-password"
+        self.assertTrue(await self.store.web_credentials_configured())
+        self.assertTrue(await self.store.verify_web_credentials(winner, winner_password))
+        self.assertFalse(await self.store.verify_web_credentials(winner, "incorrect-password"))
+        self.assertNotIn(winner_password.encode(), self.store.database_path.read_bytes())
+
+    async def test_placeholder_credentials_are_discarded_without_overwriting_real_setup(self) -> None:
+        await self.store.sync_web_credentials("admin", WEB_SETUP_PASSWORD)
+        self.assertTrue(await self.store.discard_web_credentials_if_match("admin", WEB_SETUP_PASSWORD))
+        self.assertFalse(await self.store.web_credentials_configured())
+
+        await self.store.initialize_web_credentials("chosen-admin", "chosen-secure-password")
+        self.assertFalse(await self.store.discard_web_credentials_if_match("admin", WEB_SETUP_PASSWORD))
+        self.assertTrue(await self.store.verify_web_credentials("chosen-admin", "chosen-secure-password"))
 
     async def test_refreshed_cloud_credentials_survive_until_environment_changes(self) -> None:
         defaults = {"access_token": "old-access", "refresh_token": "old-refresh"}

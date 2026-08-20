@@ -13,7 +13,14 @@ from .store import TaskStore, WebSession, utc_now
 SESSION_COOKIE_NAME = "douyin_session"
 CSRF_HEADER_NAME = b"x-csrf-token"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-PUBLIC_PATHS = {"/health", "/login", "/api/auth/login", "/favicon.ico"}
+PUBLIC_PATHS = {
+    "/health",
+    "/login",
+    "/api/auth/login",
+    "/api/auth/setup",
+    "/api/auth/status",
+    "/favicon.ico",
+}
 
 
 def set_session_cookie(

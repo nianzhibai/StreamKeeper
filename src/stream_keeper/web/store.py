@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cloud.config import CLOUD_PROVIDER_ORDER
+from ..settings import WEB_SETUP_PASSWORD
 from .schemas import (
     EventCategory,
     EventLevel,
@@ -490,8 +491,92 @@ class TaskStore:
             dklen=_AUTH_KDF_LENGTH,
         )
 
+    @classmethod
+    def _stored_credentials_match(cls, row: sqlite3.Row | None, username: str, password: str) -> bool:
+        # Perform the expensive digest even when no account exists so login
+        # timing does not expose whether first-run setup has completed.
+        salt = row["password_salt"] if row is not None else bytes(16)
+        expected_digest = row["password_digest"] if row is not None else bytes(_AUTH_KDF_LENGTH)
+        stored_username = row["username"] if row is not None else ""
+        username_matches = secrets.compare_digest(
+            stored_username.encode("utf-8"),
+            username.encode("utf-8"),
+        )
+        password_matches = secrets.compare_digest(
+            expected_digest,
+            cls._credential_digest(password, salt),
+        )
+        return row is not None and username_matches and password_matches
+
+    async def web_credentials_configured(self) -> bool:
+        return await self._run_sync(self._web_credentials_configured_sync)
+
+    def _web_credentials_configured_sync(self) -> bool:
+        with self._connect() as connection:
+            row = connection.execute("SELECT 1 FROM web_auth_state WHERE id = 1").fetchone()
+        return row is not None
+
+    async def verify_web_credentials(self, username: str, password: str) -> bool:
+        return await self._run_sync(self._verify_web_credentials_sync, username, password)
+
+    def _verify_web_credentials_sync(self, username: str, password: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+            ).fetchone()
+        return self._stored_credentials_match(row, username, password)
+
+    async def initialize_web_credentials(self, username: str, password: str) -> bool:
+        """Create the first Web account exactly once and clear pre-setup login state."""
+
+        normalized_username = username.strip()
+        if not normalized_username:
+            raise ValueError("用户名不能为空")
+        if len(password) < 10:
+            raise ValueError("密码至少需要 10 个字符")
+        if password == WEB_SETUP_PASSWORD:
+            raise ValueError("不能使用默认占位密码")
+        return await self._run_sync(self._initialize_web_credentials_sync, normalized_username, password)
+
+    def _initialize_web_credentials_sync(self, username: str, password: str) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM web_auth_state WHERE id = 1").fetchone() is not None:
+                return False
+            salt = secrets.token_bytes(16)
+            connection.execute(
+                """
+                INSERT INTO web_auth_state (id, username, password_salt, password_digest, updated_at)
+                VALUES (1, ?, ?, ?, ?)
+                """,
+                (username, salt, self._credential_digest(password, salt), utc_now().isoformat()),
+            )
+            connection.execute("DELETE FROM web_sessions")
+            connection.execute("DELETE FROM web_login_failures")
+            connection.execute("DELETE FROM web_login_blacklist")
+        return True
+
+    async def discard_web_credentials_if_match(self, username: str, password: str) -> bool:
+        """Remove a legacy placeholder account without touching real persisted credentials."""
+
+        return await self._run_sync(self._discard_web_credentials_if_match_sync, username, password)
+
+    def _discard_web_credentials_if_match_sync(self, username: str, password: str) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+            ).fetchone()
+            if not self._stored_credentials_match(row, username, password):
+                return False
+            connection.execute("DELETE FROM web_auth_state WHERE id = 1")
+            connection.execute("DELETE FROM web_sessions")
+            connection.execute("DELETE FROM web_login_failures")
+            connection.execute("DELETE FROM web_login_blacklist")
+        return True
+
     async def sync_web_credentials(self, username: str, password: str) -> bool:
-        """Persist a slow credential fingerprint and revoke sessions when it changes."""
+        """Persist environment-managed credentials and revoke sessions when they change."""
 
         return await self._run_sync(self._sync_web_credentials_sync, username, password)
 
@@ -500,18 +585,7 @@ class TaskStore:
             row = connection.execute(
                 "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
             ).fetchone()
-            credentials_match = False
-            if row is not None:
-                username_matches = secrets.compare_digest(
-                    row["username"].encode("utf-8"),
-                    username.encode("utf-8"),
-                )
-                password_matches = secrets.compare_digest(
-                    row["password_digest"],
-                    self._credential_digest(password, row["password_salt"]),
-                )
-                credentials_match = username_matches and password_matches
-            if credentials_match:
+            if self._stored_credentials_match(row, username, password):
                 return False
 
             salt = secrets.token_bytes(16)

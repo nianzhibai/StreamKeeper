@@ -24,7 +24,7 @@
 
         <div class="login-heading">
           <h1 id="login-title">登录</h1>
-          <p>管理录制任务、本地录像与网盘归档</p>
+          <p id="login-description">管理录制任务、本地录像与网盘归档</p>
         </div>
 
         <form id="login-form" class="login-form">
@@ -36,20 +36,24 @@
             <span class="field-label">密码</span>
             <input id="login-password" class="input" name="password" type="password" required maxlength="1024" autocomplete="current-password" />
           </label>
+          <label id="setup-confirm-field" class="field hidden">
+            <span class="field-label">确认密码</span>
+            <input id="setup-password-confirmation" class="input" name="password_confirmation" type="password" minlength="10" maxlength="1024" autocomplete="new-password" disabled />
+          </label>
           <p id="login-error" class="alert alert-bad hidden" role="alert" aria-live="polite"></p>
-          <button id="login-submit" class="btn btn-primary btn-block" type="submit">登录</button>
+          <button id="login-submit" class="btn btn-primary btn-block" type="submit" disabled>登录</button>
         </form>
       </section>
 
       <footer class="login-foot">
-        <span>
+        <span id="login-security-note">
           <svg class="ic ic-xs" aria-hidden="true"><use href="#ic-shield" /></svg>
-          连续登录失败会锁定来源 IP
+          <span id="login-security-text">连续登录失败会锁定来源 IP</span>
         </span>
         <div id="login-theme"></div>
       </footer>
     </main>
 
-    <script type="module" src="/static/login.js?v=20260814"></script>
+    <script type="module" src="/static/login.js?v=20260824"></script>
   </body>
 </html>
