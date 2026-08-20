@@ -564,6 +564,15 @@ img, svg {
   white-space: nowrap;
 }
 
+.nav-label-compact,
+.mobile-more-toggle {
+  display: none;
+}
+
+.mobile-more-toggle {
+  cursor: pointer;
+}
+
 .nav-link:hover {
   background: var(--hover);
   color: var(--text-2);
@@ -3300,6 +3309,150 @@ select.input {
    9. Overlays
    ========================================================================== */
 
+/* Phone-only secondary navigation. It is a separate overlay instead of a
+   repurposed desktop sidebar, so adding future maintenance pages never squeezes
+   the four primary touch targets. */
+.mobile-more {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: none;
+  max-height: min(76dvh, 560px);
+  margin: 0;
+  padding: 0 0 env(safe-area-inset-bottom);
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  border: 1px solid var(--line-2);
+  border-bottom: 0;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  background: var(--surface);
+  background-image: var(--sheen);
+  box-shadow: 0 -18px 60px -24px rgba(0, 0, 0, 0.72);
+  color: var(--text);
+}
+
+.mobile-more[open] {
+  animation: mobile-sheet-in 240ms var(--ease-out) both;
+}
+
+@keyframes mobile-sheet-in {
+  from { opacity: 0; transform: translateY(28px); }
+}
+
+.mobile-more::backdrop {
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+}
+
+.mobile-more-handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: var(--s3) auto 0;
+  border-radius: var(--r-full);
+  background: var(--line-3);
+}
+
+.mobile-more-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  padding: var(--s5) var(--s6) var(--s4);
+}
+
+.mobile-more-head > div {
+  min-width: 0;
+}
+
+.mobile-more-head small {
+  display: block;
+  color: var(--text-4);
+  font-size: var(--t-micro);
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.mobile-more-head h2 {
+  margin-top: 1px;
+  font-size: var(--t-xl);
+  font-weight: 660;
+  letter-spacing: -0.025em;
+}
+
+.mobile-more-nav {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5) var(--s6);
+}
+
+.mobile-more-link {
+  display: grid;
+  min-height: 66px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.mobile-more-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.mobile-more-link.is-active {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--text);
+}
+
+.mobile-more-glyph {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.mobile-more-link.is-active .mobile-more-glyph {
+  border-color: var(--brand-line);
+  color: var(--brand);
+}
+
+.mobile-more-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.mobile-more-copy strong {
+  font-size: var(--t-md);
+  font-weight: 620;
+}
+
+.mobile-more-copy small {
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: var(--t-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-more-link > .ic {
+  color: var(--text-4);
+}
+
 .modal {
   width: min(660px, calc(100% - 28px));
   max-height: min(860px, calc(100dvh - 40px));
@@ -3822,6 +3975,15 @@ select.input {
 }
 
 @media (max-width: 640px) {
+  .nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .nav-link[data-nav="archive"],
+  .nav-link[data-nav="logs"],
+  .nav-link[data-nav="settings"] { display: none; }
+  .mobile-more-toggle,
+  :root[data-sidebar="rail"] .mobile-more-toggle { display: flex; }
+  .nav-label-full { display: none; }
+  .nav-label-compact { display: inline; }
+
   .main { padding-right: var(--s5); padding-left: var(--s5); }
   .page-head { align-items: flex-start; flex-direction: column; gap: var(--s5); }
   .page-tools { width: 100%; }

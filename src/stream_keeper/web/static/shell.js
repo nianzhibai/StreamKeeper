@@ -18,17 +18,59 @@
     {
       title: "录制",
       items: [
-        { page: "dashboard", href: "/", label: "概览", icon: "dashboard" },
-        { page: "tasks", href: "/tasks", label: "录制任务", icon: "record" },
-        { page: "recordings", href: "/recordings", label: "本地录像", icon: "video" },
+        {
+          page: "dashboard",
+          href: "/",
+          label: "概览",
+          mobileLabel: "概览",
+          icon: "dashboard",
+          mobile: "primary",
+        },
+        {
+          page: "tasks",
+          href: "/tasks",
+          label: "录制任务",
+          mobileLabel: "任务",
+          icon: "record",
+          mobile: "primary",
+        },
+        {
+          page: "recordings",
+          href: "/recordings",
+          label: "本地录像",
+          mobileLabel: "录像",
+          icon: "video",
+          mobile: "primary",
+        },
       ],
     },
     {
       title: "运维",
       items: [
-        { page: "archive", href: "/archive", label: "网盘归档", icon: "cloud" },
-        { page: "logs", href: "/logs", label: "运行日志", icon: "logs" },
-        { page: "settings", href: "/settings", label: "设置", icon: "settings" },
+        {
+          page: "archive",
+          href: "/archive",
+          label: "网盘归档",
+          icon: "cloud",
+          mobile: "more",
+          description: "管理存储目标与自动上传",
+        },
+        {
+          page: "logs",
+          href: "/logs",
+          label: "运行日志",
+          icon: "logs",
+          mobile: "more",
+          description: "查看录制、上传和登录事件",
+        },
+        {
+          page: "settings",
+          href: "/settings",
+          label: "设置",
+          icon: "settings",
+          mobile: "more",
+          description: "调整上传模式与执行计划",
+        },
       ],
     },
   ];
@@ -62,11 +104,51 @@
           '<a class="nav-link' + (active ? " is-active" : "") + '" href="' + item.href +
           '" data-nav="' + item.page + '" data-nav-label="' + item.label + '"' +
           (active ? ' aria-current="page"' : "") + ">" +
-          icon(item.icon) + '<span class="nav-label">' + item.label + "</span></a>"
+          icon(item.icon) + '<span class="nav-label"><span class="nav-label-full">' + item.label +
+          '</span><span class="nav-label-compact">' + (item.mobileLabel || item.label) +
+          "</span></span></a>"
         );
       }).join("");
       return '<p class="nav-title">' + group.title + "</p>" + links;
     }).join("");
+  }
+
+  function mobileMoreItems() {
+    return NAVIGATION.reduce(function (items, group) {
+      return items.concat(group.items.filter(function (item) { return item.mobile === "more"; }));
+    }, []);
+  }
+
+  function mobileMoreToggleMarkup(current) {
+    var currentItem = mobileMoreItems().find(function (item) { return item.page === current; });
+    var label = currentItem ? "更多，当前页面：" + currentItem.label : "更多功能";
+    return (
+      '<button class="nav-link mobile-more-toggle' + (currentItem ? " is-active" : "") +
+      '" type="button" data-mobile-more-toggle aria-label="' + label +
+      '" aria-haspopup="dialog" aria-controls="mobile-more-dialog" aria-expanded="false">' +
+      icon("more") + '<span class="nav-label">更多</span></button>'
+    );
+  }
+
+  function mobileMoreDialogMarkup(current) {
+    var links = mobileMoreItems().map(function (item) {
+      var active = item.page === current;
+      return (
+        '<a class="mobile-more-link' + (active ? " is-active" : "") + '" href="' + item.href + '"' +
+        (active ? ' aria-current="page"' : "") + ">" +
+        '<span class="mobile-more-glyph" aria-hidden="true">' + icon(item.icon) + "</span>" +
+        '<span class="mobile-more-copy"><strong>' + item.label + "</strong><small>" + item.description +
+        "</small></span>" + icon("chevronRight", "ic-sm") + "</a>"
+      );
+    }).join("");
+    return (
+      '<dialog id="mobile-more-dialog" class="mobile-more" aria-modal="true" aria-labelledby="mobile-more-title">' +
+      '<span class="mobile-more-handle" aria-hidden="true"></span>' +
+      '<header class="mobile-more-head"><div><small>导航</small><h2 id="mobile-more-title">更多功能</h2></div>' +
+      '<button class="btn btn-icon btn-soft" type="button" data-mobile-more-close aria-label="关闭更多功能">' +
+      icon("close", "ic-sm") + "</button></header>" +
+      '<nav class="mobile-more-nav" aria-label="更多导航">' + links + "</nav></dialog>"
+    );
   }
 
   function themeSwitchMarkup() {
@@ -90,7 +172,8 @@
       '<div class="sidebar-head">' + brandMarkup("/") +
       '<button class="rail-toggle" type="button" data-sidebar-toggle aria-label="收起侧边栏" title="收起侧边栏">' +
       icon("panelLeft", "ic-sm") + "</button></div>" +
-      '<nav class="nav" aria-label="主要导航">' + navigationMarkup(current) + "</nav>" +
+      '<nav class="nav" aria-label="主要导航">' + navigationMarkup(current) + mobileMoreToggleMarkup(current) +
+      "</nav>" +
       '<div class="sidebar-foot">' +
       '<div id="server-health" class="health" title="服务连接状态"><i></i><span>正在连接</span></div>' +
       '<div class="sidebar-tools">' + themeSwitchMarkup() +
@@ -147,6 +230,66 @@
     toggle.setAttribute("aria-expanded", String(!rail));
   }
 
+  function mountMobileMore(root) {
+    var toggle = root.querySelector("[data-mobile-more-toggle]");
+    var dialog = root.querySelector("#mobile-more-dialog");
+    if (!toggle || !dialog || toggle.dataset.mounted === "true") return;
+    toggle.dataset.mounted = "true";
+    var mobile = window.matchMedia("(max-width: 640px)");
+
+    function syncOpenState(open) {
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+
+    function close() {
+      if (!dialog.open) return;
+      if (typeof dialog.close === "function") dialog.close();
+      else {
+        dialog.removeAttribute("open");
+        syncOpenState(false);
+      }
+    }
+
+    toggle.addEventListener("click", function () {
+      if (!mobile.matches || dialog.open) return;
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      syncOpenState(true);
+      window.requestAnimationFrame(function () {
+        var target = dialog.querySelector('[aria-current="page"]') || dialog.querySelector(".mobile-more-link");
+        if (target) target.focus({ preventScroll: true });
+      });
+    });
+
+    dialog.querySelector("[data-mobile-more-close]").addEventListener("click", close);
+    dialog.addEventListener("close", function () { syncOpenState(false); });
+    dialog.addEventListener("click", function (event) {
+      if (event.target !== dialog) return;
+      var bounds = dialog.getBoundingClientRect();
+      var outside = event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom;
+      if (outside) close();
+    });
+
+    var touchStart = null;
+    dialog.addEventListener("touchstart", function (event) {
+      if (event.touches.length !== 1) return;
+      touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }, { passive: true });
+    dialog.addEventListener("touchend", function (event) {
+      if (!touchStart || event.changedTouches.length !== 1) return;
+      var deltaX = Math.abs(event.changedTouches[0].clientX - touchStart.x);
+      var deltaY = event.changedTouches[0].clientY - touchStart.y;
+      touchStart = null;
+      if (deltaY > 72 && deltaY > deltaX * 1.4) close();
+    }, { passive: true });
+    dialog.addEventListener("touchcancel", function () { touchStart = null; }, { passive: true });
+
+    mobile.addEventListener("change", function (event) {
+      if (!event.matches) close();
+    });
+  }
+
   function mountSidebarToggle(sidebar) {
     var theme = window.streamKeeperTheme;
     syncRailLabels(theme && theme.sidebar() === "rail", sidebar);
@@ -180,11 +323,13 @@
       // #app — which has not been parsed yet at this point in the document.
       document.body.insertAdjacentHTML(
         "afterbegin",
-        '<a class="skip-link" href="#main">跳到主要内容</a>' + sidebarMarkup(document.body.dataset.page),
+        '<a class="skip-link" href="#main">跳到主要内容</a>' + sidebarMarkup(document.body.dataset.page) +
+        mobileMoreDialogMarkup(document.body.dataset.page),
       );
       var sidebar = document.querySelector(".sidebar");
       mountThemeSwitch(sidebar);
       mountSidebarToggle(sidebar);
+      mountMobileMore(document);
     }
 
     if (!document.querySelector("#toast-region")) {

@@ -208,6 +208,37 @@ class WebTests(TestCase):
         self.assertIsNone(self.client.cookies.get(SESSION_COOKIE_NAME))
         self.assertEqual(self.client.get("/api/auth/session").status_code, 401)
 
+    def test_phone_navigation_groups_secondary_pages_under_more_sheet(self) -> None:
+        self.login()
+        shell = self.client.get("/static/shell.js").text
+        style = self.client.get("/static/style.css").text
+        sprite = self.client.get("/static/sprite.js").text
+
+        self.assertEqual(shell.count('mobile: "primary"'), 3)
+        self.assertEqual(shell.count('mobile: "more"'), 3)
+        self.assertIn('data-mobile-more-toggle', shell)
+        self.assertIn('id="mobile-more-dialog"', shell)
+        self.assertIn('dialog.showModal()', shell)
+        self.assertIn('dialog.addEventListener("touchend"', shell)
+        self.assertIn('window.matchMedia("(max-width: 640px)")', shell)
+        self.assertIn('mobileLabel: "任务"', shell)
+        self.assertIn('mobileLabel: "录像"', shell)
+        self.assertIn('aria-current="page"', shell)
+
+        self.assertIn('@media (max-width: 640px)', style)
+        self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr))', style)
+        self.assertIn('.nav-link[data-nav="archive"]', style)
+        self.assertIn('.mobile-more[open]', style)
+        self.assertIn('env(safe-area-inset-bottom)', style)
+        self.assertIn('more:', sprite)
+
+        for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
+            with self.subTest(path=path):
+                page = self.client.get(path)
+                self.assertIn('/static/style.css?v=20260821', page.text)
+                self.assertIn('/static/sprite.js?v=20260821', page.text)
+                self.assertIn('/static/shell.js?v=20260821', page.text)
+
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
         self.login()
         recording_page = self.client.get("/recordings")
