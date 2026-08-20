@@ -7,13 +7,16 @@ import inspect
 import json
 import logging
 import posixpath
+import re
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..cloud import CloudArchiveConfig, CloudUploadClient, CloudUploadError, create_cloud_client
-from ..settings import Settings
+from ..models import RecordingResult
+from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, UPLOAD_MODE_SCHEDULED, Settings
 from .events import EventLog
 from .recordings import RecordingPreviewCache
 from .schemas import TaskStatus
@@ -24,7 +27,12 @@ logger = logging.getLogger(__name__)
 VIDEO_EXTENSIONS = frozenset({".flv", ".mkv", ".mp4", ".ts"})
 # One broken credential fails every file; the run summary covers the rest.
 MAX_FAILURE_EVENTS_PER_RUN = 5
-TRIGGER_LABELS = {"manual": "手动", "scheduled": "定时"}
+TRIGGER_LABELS = {
+    "manual": "手动",
+    "scheduled": "定时",
+    "recording_completed": "录制完成后自动",
+}
+_SEGMENT_PLACEHOLDER = re.compile(r"%(?:0(?P<width>[1-9]\d*))?d")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +74,13 @@ class UploadExecution:
     finished_at: datetime | None = None
     summary: UploadRunSummary | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UploadRequest:
+    trigger: str
+    config: CloudArchiveConfig
+    recording_outputs: tuple[str, ...] | None = None
 
 
 UploadClientFactory = Callable[
@@ -111,7 +126,9 @@ class RecordingUploadService:
         self._upload_lock = asyncio.Lock()
         self._runner: asyncio.Task[None] | None = None
         self._active_run: asyncio.Task[None] | None = None
+        self._requests: deque[UploadRequest] = deque()
         self._last_execution: UploadExecution | None = None
+        self._shutting_down = False
 
     @staticmethod
     def _fingerprint(value: dict[str, object]) -> str:
@@ -148,8 +165,8 @@ class RecordingUploadService:
         if runner is not None:
             runner.cancel()
             await asyncio.gather(runner, return_exceptions=True)
-        if config.enabled:
-            self._runner = asyncio.create_task(self._run_forever(), name="recording-cloud-upload")
+        if config.enabled and config.upload_mode == UPLOAD_MODE_SCHEDULED:
+            self._runner = asyncio.create_task(self._run_forever(), name="recording-cloud-upload-scheduler")
 
     @property
     def running(self) -> bool:
@@ -168,20 +185,29 @@ class RecordingUploadService:
 
     async def next_run_at(self) -> datetime | None:
         config = await self.get_config()
-        if not config.enabled:
+        if not config.enabled or config.upload_mode != UPLOAD_MODE_SCHEDULED:
             return None
         now = self._clock()
         return now + timedelta(seconds=self.seconds_until_next_run(now, config.upload_hour))
 
     async def startup(self) -> None:
+        self._shutting_down = False
         config = await self.initialize_config()
-        if config.enabled and (self._runner is None or self._runner.done()):
-            self._runner = asyncio.create_task(self._run_forever(), name="recording-cloud-upload")
+        if (
+            config.enabled
+            and config.upload_mode == UPLOAD_MODE_SCHEDULED
+            and (self._runner is None or self._runner.done())
+        ):
+            self._runner = asyncio.create_task(self._run_forever(), name="recording-cloud-upload-scheduler")
 
     async def shutdown(self) -> None:
-        tasks = [task for task in (self._runner, self._active_run) if task is not None]
+        self._shutting_down = True
+        async with self._trigger_lock:
+            self._requests.clear()
+            active_run = self._active_run
+            self._active_run = None
+        tasks = [task for task in (self._runner, active_run) if task is not None]
         self._runner = None
-        self._active_run = None
         for task in tasks:
             task.cancel()
         if tasks:
@@ -190,32 +216,88 @@ class RecordingUploadService:
     async def _run_forever(self) -> None:
         while True:
             config = await self.get_config()
+            if not config.enabled or config.upload_mode != UPLOAD_MODE_SCHEDULED:
+                return
             delay = self.seconds_until_next_run(self._clock(), config.upload_hour)
             logger.info("下一次网盘归档将在 %.0f 秒后执行", delay)
             await self._sleep(delay)
             await self.trigger("scheduled")
+
+    def _start_request_worker_locked(self) -> None:
+        if self._shutting_down or self.running or not self._requests:
+            return
+        self._active_run = asyncio.create_task(
+            self._run_requests(),
+            name="recording-cloud-upload-worker",
+        )
 
     async def trigger(self, trigger: str = "manual") -> bool:
         config = await self.get_config()
         if not config.enabled:
             raise CloudUploadError("请先启用至少一个网盘上传目标")
         async with self._trigger_lock:
-            if self.running:
+            if self.running or self._requests or self._shutting_down:
                 return False
-            self._active_run = asyncio.create_task(
-                self._execute_run(trigger, config),
-                name=f"recording-cloud-upload-{trigger}",
-            )
+            self._requests.append(UploadRequest(trigger=trigger, config=config))
+            self._start_request_worker_locked()
             return True
 
-    async def _execute_run(self, trigger: str, config: CloudArchiveConfig) -> None:
+    async def recording_completed(self, result: RecordingResult) -> bool:
+        """Queue exactly one completed recording batch for automatic upload.
+
+        Completion notifications are retained while another archive request is
+        running, so simultaneous live endings cannot silently lose an upload.
+        """
+        config = await self.get_config()
+        if not config.enabled or config.upload_mode != UPLOAD_MODE_RECORDING_COMPLETED:
+            return False
+        request = UploadRequest(
+            trigger="recording_completed",
+            config=config,
+            recording_outputs=(result.output_path,),
+        )
+        async with self._trigger_lock:
+            if self._shutting_down:
+                return False
+            if request in self._requests:
+                return True
+            self._requests.append(request)
+            self._start_request_worker_locked()
+        return True
+
+    async def _run_requests(self) -> None:
+        current_task = asyncio.current_task()
+        try:
+            while True:
+                async with self._trigger_lock:
+                    if self._shutting_down or not self._requests:
+                        return
+                    request = self._requests.popleft()
+                await self._execute_run(
+                    request.trigger,
+                    request.config,
+                    recording_outputs=request.recording_outputs,
+                )
+        finally:
+            async with self._trigger_lock:
+                if self._active_run is current_task:
+                    self._active_run = None
+                    self._start_request_worker_locked()
+
+    async def _execute_run(
+        self,
+        trigger: str,
+        config: CloudArchiveConfig,
+        *,
+        recording_outputs: tuple[str, ...] | None = None,
+    ) -> None:
         started_at = self._clock()
         self._last_execution = UploadExecution(trigger=trigger, status="running", started_at=started_at)
         label = TRIGGER_LABELS.get(trigger, trigger)
         targets = "、".join(name for name, _path in config.targets)
         await self.events.info("upload", f"开始{label}归档到网盘", f"上传目标：{targets}" if targets else None)
         try:
-            summary = await self.run_once(config)
+            summary = await self.run_once(config, recording_outputs=recording_outputs)
         except asyncio.CancelledError:
             self._last_execution = UploadExecution(
                 trigger=trigger,
@@ -302,6 +384,94 @@ class RecordingUploadService:
             if record.status == TaskStatus.RECORDING and record.output_path:
                 directories.add(Path(record.output_path).expanduser().resolve().parent)
         return directories
+
+    @staticmethod
+    def _segment_filename_pattern(template_name: str) -> re.Pattern[str] | None:
+        matches = list(_SEGMENT_PLACEHOLDER.finditer(template_name))
+        if not matches:
+            return None
+        parts: list[str] = []
+        offset = 0
+        for match in matches:
+            parts.append(re.escape(template_name[offset : match.start()]))
+            width = int(match.group("width") or 0)
+            parts.append(rf"[0-9]{{{width},}}" if width else r"[0-9]+")
+            offset = match.end()
+        parts.append(re.escape(template_name[offset:]))
+        return re.compile("".join(parts))
+
+    def _expand_recording_output(self, output_path: str) -> list[Path]:
+        """Resolve a recorder output path or FFmpeg segment template safely."""
+        root = self.settings.recordings_dir.resolve()
+        template = Path(output_path).expanduser()
+        if not template.is_absolute():
+            template = template.resolve()
+        parent = template.parent.resolve()
+        try:
+            parent.relative_to(root)
+        except ValueError as exc:
+            raise CloudUploadError("录制完成路径不在录像目录内") from exc
+
+        pattern = self._segment_filename_pattern(template.name)
+        if pattern is None:
+            return [parent / template.name]
+        try:
+            return sorted(path for path in parent.iterdir() if pattern.fullmatch(path.name))
+        except OSError as exc:
+            raise CloudUploadError("无法读取录制完成目录") from exc
+
+    def _collect_completed_candidates(
+        self,
+        recording_outputs: tuple[str, ...],
+    ) -> tuple[list[UploadCandidate], int, int]:
+        """Collect only files produced by completed recorder invocations.
+
+        A successful recorder exit is the stability boundary, so these explicit
+        files do not wait for the age window used by whole-library scans.
+        """
+        root = self.settings.recordings_dir.resolve()
+        candidates: list[UploadCandidate] = []
+        seen: set[Path] = set()
+        scanned_files = 0
+        skipped_files = 0
+        for output_path in recording_outputs:
+            try:
+                paths = self._expand_recording_output(output_path)
+            except (CloudUploadError, OSError, ValueError) as exc:
+                skipped_files += 1
+                logger.warning("跳过不可用的录制完成路径 %s：%s", output_path, exc)
+                continue
+            if not paths:
+                skipped_files += 1
+                logger.warning("录制完成路径没有匹配到录像文件：%s", output_path)
+                continue
+            for path in paths:
+                try:
+                    if path.is_symlink() or not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
+                        skipped_files += 1
+                        continue
+                    resolved = path.resolve()
+                    resolved.relative_to(root)
+                    if resolved in seen:
+                        continue
+                    seen.add(resolved)
+                    stat = resolved.stat()
+                    scanned_files += 1
+                    if stat.st_size <= 0:
+                        skipped_files += 1
+                        continue
+                    candidates.append(
+                        UploadCandidate(
+                            path=resolved,
+                            relative_path=resolved.relative_to(root),
+                            size=stat.st_size,
+                            mtime_ns=stat.st_mtime_ns,
+                        )
+                    )
+                except (FileNotFoundError, OSError, ValueError):
+                    skipped_files += 1
+                    logger.warning("扫描录制完成文件时跳过不可用路径：%s", path)
+        return sorted(candidates, key=lambda candidate: candidate.path), scanned_files, skipped_files
 
     def _collect_candidates(
         self,
@@ -453,19 +623,30 @@ class RecordingUploadService:
                     logger.info("已清理 %d 个播放缓存文件：%s", discarded, candidate.relative_path.as_posix())
         return ArchiveCandidateResult(uploaded_copies=uploaded_copies)
 
-    async def run_once(self, config: CloudArchiveConfig | None = None) -> UploadRunSummary:
+    async def run_once(
+        self,
+        config: CloudArchiveConfig | None = None,
+        *,
+        recording_outputs: tuple[str, ...] | None = None,
+    ) -> UploadRunSummary:
         config = config or await self.get_config()
         targets = tuple(UploadTarget(name, path.rstrip("/") or "/") for name, path in config.targets)
         if not targets:
             return UploadRunSummary()
 
         async with self._upload_lock:
-            active_directories = await self._active_recording_directories()
-            candidates, scanned_files, skipped_files = await asyncio.to_thread(
-                self._collect_candidates,
-                active_directories,
-                config.upload_min_age_minutes,
-            )
+            if recording_outputs is None:
+                active_directories = await self._active_recording_directories()
+                candidates, scanned_files, skipped_files = await asyncio.to_thread(
+                    self._collect_candidates,
+                    active_directories,
+                    config.upload_min_age_minutes,
+                )
+            else:
+                candidates, scanned_files, skipped_files = await asyncio.to_thread(
+                    self._collect_completed_candidates,
+                    recording_outputs,
+                )
             uploaded_copies = 0
             deleted_files = 0
             failed_files = 0

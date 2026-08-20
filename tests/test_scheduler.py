@@ -133,6 +133,33 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertEqual(result.output_path, "/data/recordings/test.ts")
         await scheduler.shutdown()
 
+    async def test_successful_recording_notifies_completion_handler_after_status_update(self) -> None:
+        task = await self.store.create(make_config(monitor=False))
+        notifications: list[tuple[str, TaskStatus, bool]] = []
+
+        async def recording_completed(result: RecordingResult) -> None:
+            current = await self.store.get(task.id)
+            assert current is not None
+            notifications.append((result.output_path, current.status, current.enabled))
+
+        scheduler = TaskScheduler(
+            self.store,
+            self.settings,
+            client_factory=lambda: FakeClient(make_info(True)),
+            recorder_factory=FakeRecorder,
+            recording_completed_handler=recording_completed,
+        )
+
+        await scheduler.start(task.id)
+        await wait_for_status(self.store, task.id, TaskStatus.STOPPED)
+        for _ in range(100):
+            if notifications:
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(notifications, [("/data/recordings/test.ts", TaskStatus.STOPPED, False)])
+        await scheduler.shutdown()
+
     async def test_segment_limit_creates_one_shot_task(self) -> None:
         task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
         options_seen = []

@@ -12,6 +12,8 @@ const saveButton = document.querySelector("#schedule-save-button");
 const saveBar = document.querySelector(".save-bar");
 const saveHint = document.querySelector("[data-save-hint]");
 const resetButton = document.querySelector("[data-reset-form]");
+const scheduledField = document.querySelector("[data-scheduled-field]");
+const modeHint = document.querySelector("[data-mode-hint]");
 
 let cloud = null;
 let pristine = "";
@@ -28,12 +30,23 @@ function updateDirtyState() {
   saveHint.textContent = dirty ? "有未保存的更改" : "所有更改已保存";
 }
 
+function syncModeFields() {
+  const scheduled = form.elements.upload_mode.value === "scheduled";
+  form.elements.upload_hour.disabled = !scheduled;
+  scheduledField.setAttribute("aria-disabled", String(!scheduled));
+  modeHint.textContent = scheduled
+    ? "定时扫描时，只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。"
+    : "录制进程正常结束后，该次生成的所有视频分段会立即上传；文件稳定时间仍用于手动归档。";
+}
+
 function populate(value) {
   cloud = value;
   form.reset();
+  form.elements.upload_mode.value = cloud.schedule.mode || "scheduled";
   form.elements.upload_hour.value = String(cloud.schedule.hour);
   form.elements.upload_min_age_minutes.value = String(cloud.schedule.min_age_minutes);
   form.elements.upload_timeout_seconds.value = String(cloud.schedule.timeout_seconds);
+  syncModeFields();
   pristine = formSignature();
   updateDirtyState();
 }
@@ -55,6 +68,7 @@ async function submit(event) {
   if (!form.reportValidity()) return;
   const fields = form.elements;
   const payload = {
+    mode: fields.upload_mode.value,
     hour: Number(fields.upload_hour.value),
     min_age_minutes: Number(fields.upload_min_age_minutes.value),
     timeout_seconds: Number(fields.upload_timeout_seconds.value),
@@ -74,7 +88,10 @@ async function submit(event) {
 
 form.addEventListener("submit", submit);
 form.addEventListener("input", updateDirtyState);
-form.addEventListener("change", updateDirtyState);
+form.addEventListener("change", () => {
+  syncModeFields();
+  updateDirtyState();
+});
 resetButton.addEventListener("click", () => {
   if (cloud) populate(cloud);
 });

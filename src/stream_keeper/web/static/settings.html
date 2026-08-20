@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="配置网盘归档的执行计划" />
+    <meta name="description" content="配置网盘归档的上传模式与执行计划" />
     <title>设置 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
@@ -21,7 +21,7 @@
               <svg class="ic" aria-hidden="true"><use href="#ic-settings" /></svg>运维
             </p>
             <h1>设置</h1>
-            <p>配置网盘归档的执行计划</p>
+            <p>配置网盘归档的上传模式与执行计划</p>
           </div>
           <div class="page-tools">
             <a class="btn btn-soft" href="/archive">管理存储目标</a>
@@ -40,13 +40,20 @@
                 <svg class="ic ic-sm"><use href="#ic-clock" /></svg>
               </span>
               <div class="card-heading">
-                <h2>归档执行计划</h2>
-                <p>使用服务器本地时区；存储目标请在网盘归档页面配置</p>
+                <h2>上传模式</h2>
+                <p>选择定时上传或在每场直播录制完成后即时上传</p>
               </div>
             </header>
             <div class="card-body">
-              <div class="form-grid form-grid-3">
+              <div class="form-grid">
                 <label class="field">
+                  <span class="field-label">上传模式</span>
+                  <select class="input" name="upload_mode">
+                    <option value="scheduled">定时上传</option>
+                    <option value="recording_completed">即时上传（录制完成后）</option>
+                  </select>
+                </label>
+                <label class="field" data-scheduled-field>
                   <span class="field-label">每日开始时间</span>
                   <span class="suffix"><input class="input" name="upload_hour" type="number" min="0" max="23" step="1" value="1" /><em>时</em></span>
                 </label>
@@ -58,7 +65,7 @@
                   <span class="field-label">网络超时</span>
                   <span class="suffix"><input class="input" name="upload_timeout_seconds" type="number" min="30" max="86400" step="1" value="300" /><em>秒</em></span>
                 </label>
-                <p class="field-hint span-3">只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。</p>
+                <p class="field-hint span-2" data-mode-hint>定时扫描时，只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。</p>
               </div>
             </div>
           </section>
@@ -74,6 +81,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/settings.js?v=20260816"></script>
+    <script type="module" src="/static/settings.js?v=20260821"></script>
   </body>
 </html>

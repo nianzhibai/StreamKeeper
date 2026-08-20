@@ -136,10 +136,19 @@ function renderLastRun(lastRun) {
   const detail = document.querySelector("#last-run-detail");
   if (!lastRun) {
     setTextIfChanged(time, "暂无执行记录");
-    setTextIfChanged(detail, "启用网盘后会在计划时间自动执行");
+    setTextIfChanged(
+      detail,
+      cloud?.schedule?.mode === "recording_completed"
+        ? "启用网盘后会在每场录制完成时自动执行"
+        : "启用网盘后会在计划时间自动执行",
+    );
     return;
   }
-  const trigger = lastRun.trigger === "manual" ? "手动触发" : "定时执行";
+  const trigger = {
+    manual: "手动触发",
+    scheduled: "定时执行",
+    recording_completed: "录制完成后执行",
+  }[lastRun.trigger] || lastRun.trigger;
   setTextIfChanged(time, `${trigger} · ${formatRelative(lastRun.finished_at || lastRun.started_at)}`);
   if (lastRun.error) {
     setTextIfChanged(detail, lastRun.error);
@@ -178,11 +187,19 @@ function render(value) {
         ? `最近执行 ${formatTime(cloud.last_run.finished_at || cloud.last_run.started_at)}`
         : "尚未执行过归档",
   );
+  const completedMode = cloud.schedule.mode === "recording_completed";
   setTextIfChanged(
     document.querySelector("#next-run-time"),
-    cloud.schedule.next_run_at ? formatTime(cloud.schedule.next_run_at) : "—",
+    cloud.schedule.next_run_at
+      ? formatTime(cloud.schedule.next_run_at)
+      : cloud.enabled && completedMode
+        ? "录制完成后"
+        : "—",
   );
-  setTextIfChanged(document.querySelector("#schedule-hour"), `每天 ${String(cloud.schedule.hour).padStart(2, "0")}:00`);
+  setTextIfChanged(
+    document.querySelector("#upload-mode"),
+    completedMode ? "录制完成后上传" : `定时上传 · ${String(cloud.schedule.hour).padStart(2, "0")}:00`,
+  );
   setTextIfChanged(document.querySelector("#stable-age"), `${cloud.schedule.min_age_minutes} 分钟`);
 
   Object.keys(providerMeta).forEach((kind) => renderProvider(kind, providerFor(kind)));

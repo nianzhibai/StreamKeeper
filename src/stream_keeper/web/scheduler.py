@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..models import RecordingResult
 from ..platforms import LiveStreamClient
 from ..recorder import Recorder, RecorderOptions
 from ..settings import Settings
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[[], LiveStreamClient]
 RecorderFactory = Callable[[RecorderOptions], Recorder]
+RecordingCompletedHandler = Callable[[RecordingResult], Awaitable[object]]
 
 
 def _now() -> datetime:
@@ -57,6 +59,7 @@ class TaskScheduler:
         *,
         client_factory: ClientFactory | None = None,
         recorder_factory: RecorderFactory | None = None,
+        recording_completed_handler: RecordingCompletedHandler | None = None,
         events: EventLog | None = None,
     ) -> None:
         self.store = store
@@ -64,6 +67,9 @@ class TaskScheduler:
         self.events = events or EventLog(store)
         self._client_factory = client_factory or settings.create_client
         self._recorder_factory = recorder_factory or Recorder
+        self._recording_completed_handlers: list[RecordingCompletedHandler] = []
+        if recording_completed_handler is not None:
+            self._recording_completed_handlers.append(recording_completed_handler)
         self._recording_slots = asyncio.Semaphore(settings.max_concurrent_recordings)
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._recorders: dict[str, Recorder] = {}
@@ -80,6 +86,10 @@ class TaskScheduler:
     @property
     def recording_task_count(self) -> int:
         return len(self._recorders)
+
+    def add_recording_completed_handler(self, handler: RecordingCompletedHandler) -> None:
+        if handler not in self._recording_completed_handlers:
+            self._recording_completed_handlers.append(handler)
 
     def recording_output_directories(self) -> set[Path]:
         directories: set[Path] = set()
@@ -207,6 +217,27 @@ class TaskScheduler:
             task_id=record.id,
         )
         return await self.start(task_id, announce=False)
+
+    async def _notify_recording_completed(
+        self,
+        result: RecordingResult,
+        *,
+        task_id: str,
+        name: str,
+    ) -> None:
+        for handler in tuple(self._recording_completed_handlers):
+            try:
+                await handler(result)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("录制已完成，但完成事件处理失败：%s", result.output_path)
+                await self.events.error(
+                    "upload",
+                    f"「{name}」录像已保存，但自动归档未能启动",
+                    _error_message(exc),
+                    task_id=task_id,
+                )
 
     async def _record_failure(self, record: TaskRecord, exc: BaseException, *, stage: str) -> bool:
         message = _error_message(exc)
@@ -357,6 +388,7 @@ class TaskScheduler:
                         is_live=False,
                         output_path=result.output_path,
                     )
+                    await self._notify_recording_completed(result, task_id=task_id, name=name)
                     return
 
                 if not latest.monitor:
@@ -369,6 +401,7 @@ class TaskScheduler:
                         is_live=False,
                         output_path=result.output_path,
                     )
+                    await self._notify_recording_completed(result, task_id=task_id, name=name)
                     return
 
                 await self.store.update_runtime(
@@ -384,6 +417,7 @@ class TaskScheduler:
                     f"{recorded}，{latest.interval_seconds} 秒后重新检查是否开播",
                     task_id=task_id,
                 )
+                await self._notify_recording_completed(result, task_id=task_id, name=name)
                 await asyncio.sleep(latest.interval_seconds)
         except asyncio.CancelledError:
             record = await self.store.get(task_id)

@@ -102,7 +102,11 @@ function renderArchive(cloud) {
   );
   setTextIfChanged(
     document.querySelector("#overview-next-run"),
-    cloud.schedule.next_run_at ? formatTime(cloud.schedule.next_run_at) : "—",
+    cloud.schedule.next_run_at
+      ? formatTime(cloud.schedule.next_run_at)
+      : cloud.enabled && cloud.schedule.mode === "recording_completed"
+        ? "录制完成后"
+        : "—",
   );
 
   const providers = new Map((cloud.providers || []).map((provider) => [provider.name, provider]));

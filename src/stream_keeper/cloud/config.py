@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from ..settings import CLOUD_ARCHIVE_ROOT, Settings
+from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
 CLOUD_PROVIDER_ORDER = ("quark", "wopan", "baidu", "pan115", "guangya")
 QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115"})
@@ -160,6 +160,7 @@ def default_provider_configs() -> tuple[CloudProviderConfig, ...]:
 @dataclass(frozen=True, slots=True)
 class CloudArchiveConfig:
     providers: tuple[CloudProviderConfig, ...] = field(default_factory=default_provider_configs)
+    upload_mode: str = UPLOAD_MODE_SCHEDULED
     upload_hour: int = 1
     upload_min_age_minutes: int = 10
     upload_timeout_seconds: int = 300
@@ -234,6 +235,7 @@ class CloudArchiveConfig:
                     options={"root_id": settings.guangya_root_id},
                 ),
             ),
+            upload_mode=settings.upload_mode,
             upload_hour=settings.upload_hour,
             upload_min_age_minutes=settings.upload_min_age_minutes,
             upload_timeout_seconds=settings.upload_timeout_seconds,
@@ -294,6 +296,7 @@ class CloudArchiveConfig:
 
         return cls(
             providers=tuple(providers),
+            upload_mode=str(value.get("upload_mode", UPLOAD_MODE_SCHEDULED)),
             upload_hour=int(value.get("upload_hour", 1)),
             upload_min_age_minutes=int(value.get("upload_min_age_minutes", 10)),
             upload_timeout_seconds=int(value.get("upload_timeout_seconds", 300)),
@@ -309,6 +312,7 @@ class CloudArchiveConfig:
                 }
                 for provider in self.providers
             },
+            "upload_mode": self.upload_mode,
             "upload_hour": self.upload_hour,
             "upload_min_age_minutes": self.upload_min_age_minutes,
             "upload_timeout_seconds": self.upload_timeout_seconds,
@@ -379,6 +383,8 @@ class CloudArchiveConfig:
         return bool(self.targets)
 
     def validate(self) -> None:
+        if self.upload_mode not in UPLOAD_MODES:
+            raise ValueError("上传模式必须是定时上传或录制完成后上传")
         if not 0 <= self.upload_hour <= 23:
             raise ValueError("每日上传小时必须在 0 到 23 之间")
         if not 0 <= self.upload_min_age_minutes <= 24 * 60:

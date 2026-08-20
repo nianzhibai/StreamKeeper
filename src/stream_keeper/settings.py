@@ -8,6 +8,9 @@ from pathlib import Path
 from .platforms import LiveStreamClient
 
 CLOUD_ARCHIVE_ROOT = "/DouYinStreamKeeper"
+UPLOAD_MODE_SCHEDULED = "scheduled"
+UPLOAD_MODE_RECORDING_COMPLETED = "recording_completed"
+UPLOAD_MODES = frozenset({UPLOAD_MODE_SCHEDULED, UPLOAD_MODE_RECORDING_COMPLETED})
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -52,6 +55,7 @@ class Settings:
     guangya_client_id: str = ""
     guangya_device_id: str = ""
     guangya_root_id: str = ""
+    upload_mode: str = UPLOAD_MODE_SCHEDULED
     upload_hour: int = 1
     upload_min_age_minutes: int = 10
     upload_timeout_seconds: int = 300
@@ -109,6 +113,7 @@ class Settings:
             guangya_client_id=os.getenv("DOUYIN_GUANGYA_CLIENT_ID", ""),
             guangya_device_id=os.getenv("DOUYIN_GUANGYA_DEVICE_ID", ""),
             guangya_root_id=os.getenv("DOUYIN_GUANGYA_ROOT_ID", ""),
+            upload_mode=os.getenv("DOUYIN_UPLOAD_MODE", UPLOAD_MODE_SCHEDULED).strip().lower(),
             upload_hour=int(os.getenv("DOUYIN_UPLOAD_HOUR", "1")),
             upload_min_age_minutes=int(os.getenv("DOUYIN_UPLOAD_MIN_AGE_MINUTES", "10")),
             upload_timeout_seconds=int(os.getenv("DOUYIN_UPLOAD_TIMEOUT_SECONDS", "300")),
@@ -135,6 +140,8 @@ class Settings:
             raise RuntimeError("DOUYIN_LOGIN_MAX_ATTEMPTS 必须在 1 到 100 之间")
         if not 10 <= self.login_window_seconds <= 86400:
             raise RuntimeError("DOUYIN_LOGIN_WINDOW_SECONDS 必须在 10 到 86400 之间")
+        if self.upload_mode not in UPLOAD_MODES:
+            raise RuntimeError("DOUYIN_UPLOAD_MODE 必须是 scheduled 或 recording_completed")
         if not 0 <= self.upload_hour <= 23:
             raise RuntimeError("DOUYIN_UPLOAD_HOUR 必须在 0 到 23 之间")
         if not 0 <= self.upload_min_age_minutes <= 24 * 60:

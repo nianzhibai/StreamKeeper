@@ -778,12 +778,15 @@ class WebTests(TestCase):
         self.assertIn('data-provider-configure="guangya"', archive_page.text)
         self.assertIn('id="provider-config-dialog"', archive_page.text)
         self.assertIn('id="archive-schedule-form"', settings_page.text)
+        self.assertIn('name="upload_mode"', settings_page.text)
+        self.assertIn('value="recording_completed"', settings_page.text)
         self.assertNotIn('name="quark_', settings_page.text)
         self.assertNotIn('name="wopan_', settings_page.text)
 
         initial = self.client.get("/api/cloud/archive")
         self.assertEqual(initial.status_code, 200)
         self.assertFalse(initial.json()["enabled"])
+        self.assertEqual(initial.json()["schedule"]["mode"], "scheduled")
         self.assertEqual(
             [provider["name"] for provider in initial.json()["providers"]],
             ["quark", "wopan", "baidu", "pan115", "guangya"],
@@ -818,10 +821,17 @@ class WebTests(TestCase):
         schedule = self.client.put(
             "/api/cloud/archive/schedule",
             headers=self.csrf_headers,
-            json={"hour": 2, "min_age_minutes": 10, "timeout_seconds": 300},
+            json={
+                "mode": "recording_completed",
+                "hour": 2,
+                "min_age_minutes": 10,
+                "timeout_seconds": 300,
+            },
         )
         self.assertEqual(schedule.status_code, 200)
+        self.assertEqual(schedule.json()["schedule"]["mode"], "recording_completed")
         self.assertEqual(schedule.json()["schedule"]["hour"], 2)
+        self.assertIsNone(schedule.json()["schedule"]["next_run_at"])
 
         wopan_payload = {
             "enabled": True,
@@ -843,6 +853,7 @@ class WebTests(TestCase):
         self.assertTrue(saved_payload["wopan"]["access_token_configured"])
         self.assertTrue(saved_payload["wopan"]["refresh_token_configured"])
         self.assertEqual(saved_payload["wopan"]["upload_path"], CLOUD_ARCHIVE_ROOT)
+        self.assertEqual(saved_payload["schedule"]["mode"], "recording_completed")
         self.assertEqual(saved_payload["schedule"]["hour"], 2)
         self.assertNotIn("wopan-access-token", saved_wopan.text)
         self.assertNotIn("wopan-refresh-secret", saved_wopan.text)
@@ -856,6 +867,7 @@ class WebTests(TestCase):
         self.assertEqual(preserved.status_code, 200)
         self.assertTrue(preserved.json()["quark"]["credential_configured"])
         self.assertTrue(preserved.json()["wopan"]["refresh_token_configured"])
+        self.assertEqual(preserved.json()["schedule"]["mode"], "recording_completed")
         self.assertEqual(preserved.json()["schedule"]["hour"], 2)
 
         started = self.client.post("/api/cloud/archive/run", headers=self.csrf_headers)

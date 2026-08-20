@@ -25,7 +25,7 @@ from ..cloud import (
     CloudUploadError,
 )
 from ..errors import StreamKeeperError
-from ..settings import Settings
+from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, Settings
 from .auth import (
     SESSION_COOKIE_NAME,
     SecurityHeadersMiddleware,
@@ -117,6 +117,12 @@ def _cloud_login_response(snapshot: CloudLoginSnapshot) -> CloudLoginView:
     )
 
 
+def _archive_plan_description(config: CloudArchiveConfig) -> str:
+    if config.upload_mode == UPLOAD_MODE_RECORDING_COMPLETED:
+        return "每场直播录制完成后自动归档"
+    return f"每天 {config.upload_hour:02d}:00 自动归档"
+
+
 def _cloud_provider_view(provider: CloudProviderConfig) -> CloudProviderView:
     spec = CLOUD_PROVIDER_SPECS[provider.name]
     return CloudProviderView(
@@ -182,6 +188,7 @@ async def _cloud_archive_response(
         guangya=_cloud_provider_view(providers["guangya"]),
         providers=provider_views,
         schedule=CloudScheduleView(
+            mode=config.upload_mode,
             hour=config.upload_hour,
             min_age_minutes=config.upload_min_age_minutes,
             timeout_seconds=config.upload_timeout_seconds,
@@ -213,6 +220,10 @@ def create_app(
         events=event_log,
         preview_cache=recording_preview_cache,
     )
+    add_recording_completed_handler = getattr(scheduler, "add_recording_completed_handler", None)
+    recording_completed_handler = getattr(upload_service, "recording_completed", None)
+    if callable(add_recording_completed_handler) and callable(recording_completed_handler):
+        add_recording_completed_handler(recording_completed_handler)
     inspect_client_factory = inspect_client_factory or settings.create_client
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
@@ -618,6 +629,7 @@ def create_app(
                 )
                 config = replace(
                     config,
+                    upload_mode=payload.schedule.mode,
                     upload_hour=payload.schedule.hour,
                     upload_min_age_minutes=payload.schedule.min_age_minutes,
                     upload_timeout_seconds=payload.schedule.timeout_seconds,
@@ -637,7 +649,7 @@ def create_app(
         await event_log.info(
             "upload",
             "网盘归档设置已更新",
-            f"已启用 {enabled}，每天 {config.upload_hour:02d}:00 自动归档" if enabled else "当前没有启用任何网盘",
+            f"已启用 {enabled}，{_archive_plan_description(config)}" if enabled else "当前没有启用任何网盘",
         )
         return await _cloud_archive_response(config, upload_service)
 
@@ -739,6 +751,7 @@ def create_app(
             current = await upload_service.get_config()
             config = replace(
                 current,
+                upload_mode=payload.mode,
                 upload_hour=payload.hour,
                 upload_min_age_minutes=payload.min_age_minutes,
                 upload_timeout_seconds=payload.timeout_seconds,
@@ -750,7 +763,7 @@ def create_app(
         await event_log.info(
             "upload",
             "网盘归档计划已更新",
-            f"每天 {config.upload_hour:02d}:00 自动归档",
+            _archive_plan_description(config),
         )
         return await _cloud_archive_response(config, upload_service)
 

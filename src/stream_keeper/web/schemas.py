@@ -14,6 +14,7 @@ OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
 SourcePreference = Literal["auto", "flv", "hls"]
 EventLevel = Literal["info", "success", "warning", "error"]
 EventCategory = Literal["system", "task", "upload", "auth"]
+UploadMode = Literal["scheduled", "recording_completed"]
 
 
 class TaskStatus(str, Enum):
@@ -235,6 +236,7 @@ class CloudWoPanUpdate(StrictModel):
 
 
 class CloudScheduleUpdate(StrictModel):
+    mode: UploadMode = "scheduled"
     hour: int = Field(default=1, ge=0, le=23)
     min_age_minutes: int = Field(default=10, ge=0, le=1440)
     timeout_seconds: int = Field(default=300, ge=30, le=86400)
@@ -289,6 +291,7 @@ class CloudWoPanView(StrictModel):
 
 
 class CloudScheduleView(StrictModel):
+    mode: UploadMode
     hour: int
     min_age_minutes: int
     timeout_seconds: int
@@ -304,7 +307,7 @@ class CloudUploadSummaryView(StrictModel):
 
 
 class CloudUploadExecutionView(StrictModel):
-    trigger: Literal["manual", "scheduled"]
+    trigger: Literal["manual", "scheduled", "recording_completed"]
     status: Literal["running", "success", "partial", "failed", "cancelled"]
     started_at: datetime
     finished_at: datetime | None

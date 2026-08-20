@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
 
 from stream_keeper.cloud import CloudUploadError, UploadProgress
+from stream_keeper.models import RecordingResult, SelectedSource
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 from stream_keeper.web.recordings import RecordingPreviewCache
 from stream_keeper.web.schemas import TaskConfig, TaskStatus
@@ -215,6 +216,116 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertFalse(recording.exists())
         self.assertTrue(recording.parent.exists())
         self.assertTrue(recording.parent.parent.exists())
+
+    async def test_recording_completed_mode_uploads_only_that_fresh_segment_batch(self) -> None:
+        settings = make_settings(self.root, upload_mode="recording_completed")
+        segment_dir = settings.recordings_dir / "主播" / "2026-07-12"
+        segment_dir.mkdir(parents=True, exist_ok=True)
+        template = segment_dir / "本场直播_%03d.ts"
+        segments = [segment_dir / "本场直播_000.ts", segment_dir / "本场直播_001.ts"]
+        for index, path in enumerate(segments):
+            path.write_bytes(f"segment-{index}".encode())
+            timestamp = self.now.timestamp()
+            os.utime(path, (timestamp, timestamp))
+        unrelated = make_old_file(segment_dir / "上一场直播.ts", b"unrelated", self.now)
+
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(
+            settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            clock=lambda: self.now,
+        )
+        result = RecordingResult(str(template), SelectedSource("flv", "https://example.com/live.flv"), 0)
+
+        self.assertIsNone(await service.next_run_at())
+        await service.startup()
+        self.assertIsNone(service._runner)
+        self.assertTrue(await service.recording_completed(result))
+        active_run = service._active_run
+        self.assertIsNotNone(active_run)
+        await active_run
+
+        self.assertTrue(unrelated.exists())
+        self.assertTrue(all(not path.exists() for path in segments))
+        self.assertEqual(service.last_execution.trigger, "recording_completed")
+        self.assertEqual(service.last_execution.summary.scanned_files, 2)
+        self.assertEqual(service.last_execution.summary.uploaded_copies, 4)
+        self.assertEqual(service.last_execution.summary.deleted_files, 2)
+        for client in clients.values():
+            self.assertEqual(
+                [remote for _local, remote in client.calls],
+                [
+                    f"{CLOUD_ARCHIVE_ROOT}/主播/2026-07-12/本场直播_000.ts",
+                    f"{CLOUD_ARCHIVE_ROOT}/主播/2026-07-12/本场直播_001.ts",
+                ],
+            )
+
+    async def test_recording_completion_is_ignored_in_default_scheduled_mode(self) -> None:
+        recording = self.settings.recordings_dir / "主播" / "fresh.ts"
+        recording.parent.mkdir(parents=True)
+        recording.write_bytes(b"fresh")
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda _target: FakeUploadClient(),
+            clock=lambda: self.now,
+        )
+        result = RecordingResult(str(recording), SelectedSource("flv", "https://example.com/live.flv"), 0)
+
+        self.assertFalse(await service.recording_completed(result))
+
+        self.assertIsNone(service._active_run)
+        self.assertTrue(recording.exists())
+        self.assertEqual((await service.get_config()).upload_mode, "scheduled")
+
+    async def test_completed_recordings_queue_while_an_upload_is_running(self) -> None:
+        settings = make_settings(self.root, upload_mode="recording_completed")
+        first = settings.recordings_dir / "主播甲" / "first.ts"
+        second = settings.recordings_dir / "主播乙" / "second.ts"
+        for path in (first, second):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"video")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingFirstUploadClient(FakeUploadClient):
+            async def upload_verified(
+                self,
+                local_path: Path,
+                remote_path: str,
+                *,
+                progress: UploadProgress | None = None,
+            ) -> bool:
+                if not started.is_set():
+                    started.set()
+                    await release.wait()
+                return await super().upload_verified(local_path, remote_path, progress=progress)
+
+        client = BlockingFirstUploadClient()
+        service = RecordingUploadService(
+            settings,
+            self.store,
+            client_factory=lambda _target: client,
+            clock=lambda: self.now,
+        )
+        source = SelectedSource("flv", "https://example.com/live.flv")
+
+        self.assertTrue(await service.recording_completed(RecordingResult(str(first), source, 0)))
+        active_run = service._active_run
+        await started.wait()
+        self.assertTrue(await service.recording_completed(RecordingResult(str(second), source, 0)))
+        release.set()
+        assert active_run is not None
+        await active_run
+
+        self.assertFalse(first.exists())
+        self.assertFalse(second.exists())
+        self.assertEqual(
+            [path.name for path, _remote in client.calls],
+            ["first.ts", "first.ts", "second.ts", "second.ts"],
+        )
+        self.assertEqual(service.last_execution.trigger, "recording_completed")
 
     async def test_manual_trigger_uses_archive_policy_and_rejects_overlap(self) -> None:
         recording = make_old_file(self.settings.recordings_dir / "主播" / "manual.ts", b"video", self.now)

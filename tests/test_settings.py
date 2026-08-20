@@ -5,6 +5,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from stream_keeper import LiveStreamClient
+from stream_keeper.cloud import CloudArchiveConfig
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 
 
@@ -28,6 +29,12 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.login_window_seconds, 3600)
         self.assertEqual(settings.quark_upload_path, CLOUD_ARCHIVE_ROOT)
         self.assertEqual(settings.wopan_upload_path, CLOUD_ARCHIVE_ROOT)
+        self.assertEqual(settings.upload_mode, "scheduled")
+
+    def test_legacy_archive_config_defaults_to_scheduled_mode(self) -> None:
+        config = CloudArchiveConfig.from_dict({"providers": {}})
+
+        self.assertEqual(config.upload_mode, "scheduled")
 
     def test_prepare_creates_server_directories(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -132,6 +139,18 @@ class SettingsTests(TestCase):
             client._cookies,
             {"douyin": "douyin=1", "bilibili": "bilibili=1", "kuaishou": "kuaishou=1"},
         )
+
+    def test_upload_mode_environment_variable(self) -> None:
+        with patch.dict(os.environ, {"DOUYIN_UPLOAD_MODE": "recording_completed"}, clear=True):
+            settings = Settings.from_env()
+
+        self.assertEqual(settings.upload_mode, "recording_completed")
+
+    def test_invalid_upload_mode_is_rejected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            settings = make_settings(Path(tmp), upload_mode="immediately")
+            with self.assertRaisesRegex(RuntimeError, "DOUYIN_UPLOAD_MODE"):
+                settings.prepare()
 
     def test_platform_cookie_environment_variables(self) -> None:
         with patch.dict(os.environ, {"BILIBILI_COOKIE": "bili=1", "KUAISHOU_COOKIE": "kwai=1"}, clear=True):
