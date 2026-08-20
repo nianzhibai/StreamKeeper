@@ -39,6 +39,19 @@ class Settings:
     wopan_root_id: str = "0"
     wopan_family_id: str = ""
     wopan_upload_path: str | None = CLOUD_ARCHIVE_ROOT
+    baidu_access_token: str = ""
+    baidu_refresh_token: str = ""
+    baidu_client_id: str = ""
+    baidu_client_secret: str = ""
+    pan115_cookie: str = ""
+    pan115_access_token: str = ""
+    pan115_refresh_token: str = ""
+    pan115_root_id: str = "0"
+    guangya_access_token: str = ""
+    guangya_refresh_token: str = ""
+    guangya_client_id: str = ""
+    guangya_device_id: str = ""
+    guangya_root_id: str = ""
     upload_hour: int = 1
     upload_min_age_minutes: int = 10
     upload_timeout_seconds: int = 300
@@ -83,6 +96,19 @@ class Settings:
             wopan_root_id=os.getenv("DOUYIN_WOPAN_ROOT_ID", "0"),
             wopan_family_id=os.getenv("DOUYIN_WOPAN_FAMILY_ID", ""),
             wopan_upload_path=CLOUD_ARCHIVE_ROOT,
+            baidu_access_token=os.getenv("DOUYIN_BAIDU_ACCESS_TOKEN", ""),
+            baidu_refresh_token=os.getenv("DOUYIN_BAIDU_REFRESH_TOKEN", ""),
+            baidu_client_id=os.getenv("DOUYIN_BAIDU_CLIENT_ID", ""),
+            baidu_client_secret=os.getenv("DOUYIN_BAIDU_CLIENT_SECRET", ""),
+            pan115_cookie=os.getenv("DOUYIN_115_COOKIE", ""),
+            pan115_access_token=os.getenv("DOUYIN_115_ACCESS_TOKEN", ""),
+            pan115_refresh_token=os.getenv("DOUYIN_115_REFRESH_TOKEN", ""),
+            pan115_root_id=os.getenv("DOUYIN_115_ROOT_ID", "0"),
+            guangya_access_token=os.getenv("DOUYIN_GUANGYA_ACCESS_TOKEN", ""),
+            guangya_refresh_token=os.getenv("DOUYIN_GUANGYA_REFRESH_TOKEN", ""),
+            guangya_client_id=os.getenv("DOUYIN_GUANGYA_CLIENT_ID", ""),
+            guangya_device_id=os.getenv("DOUYIN_GUANGYA_DEVICE_ID", ""),
+            guangya_root_id=os.getenv("DOUYIN_GUANGYA_ROOT_ID", ""),
             upload_hour=int(os.getenv("DOUYIN_UPLOAD_HOUR", "1")),
             upload_min_age_minutes=int(os.getenv("DOUYIN_UPLOAD_MIN_AGE_MINUTES", "10")),
             upload_timeout_seconds=int(os.getenv("DOUYIN_UPLOAD_TIMEOUT_SECONDS", "300")),
@@ -145,6 +171,12 @@ class Settings:
             targets.append(("quark", CLOUD_ARCHIVE_ROOT))
         if self.wopan_access_token or self.wopan_refresh_token:
             targets.append(("wopan", CLOUD_ARCHIVE_ROOT))
+        if self.baidu_access_token or (self.baidu_refresh_token and self.baidu_client_id and self.baidu_client_secret):
+            targets.append(("baidu", CLOUD_ARCHIVE_ROOT))
+        if self.pan115_cookie or self.pan115_access_token or self.pan115_refresh_token:
+            targets.append(("pan115", CLOUD_ARCHIVE_ROOT))
+        if self.guangya_client_id and (self.guangya_access_token or self.guangya_refresh_token):
+            targets.append(("guangya", CLOUD_ARCHIVE_ROOT))
         return tuple(targets)
 
     @property
@@ -158,8 +190,6 @@ class Settings:
                 raise RuntimeError("启用夸克上传必须设置 DOUYIN_QUARK_COOKIE")
             if not self.quark_root_id.strip():
                 raise RuntimeError("DOUYIN_QUARK_ROOT_ID 不能为空")
-            if "\r" in self.quark_cookie or "\n" in self.quark_cookie:
-                raise RuntimeError("DOUYIN_QUARK_COOKIE 不能包含换行符")
 
         wopan_configured = bool(
             self.wopan_access_token or self.wopan_refresh_token or self.wopan_family_id or self.wopan_root_id != "0"
@@ -171,12 +201,39 @@ class Settings:
                 raise RuntimeError("DOUYIN_WOPAN_ACCESS_TOKEN 长度不能小于 16 字节")
             if not self.wopan_root_id.strip():
                 raise RuntimeError("DOUYIN_WOPAN_ROOT_ID 不能为空")
-            for name, value in (
-                ("DOUYIN_WOPAN_ACCESS_TOKEN", self.wopan_access_token),
-                ("DOUYIN_WOPAN_REFRESH_TOKEN", self.wopan_refresh_token),
-            ):
-                if "\r" in value or "\n" in value:
-                    raise RuntimeError(f"{name} 不能包含换行符")
+
+        if not self.pan115_root_id.strip():
+            raise RuntimeError("DOUYIN_115_ROOT_ID 不能为空")
+        if self.pan115_cookie and ("\r" in self.pan115_cookie or "\n" in self.pan115_cookie):
+            raise RuntimeError("DOUYIN_115_COOKIE 不能包含换行符")
+        if bool(self.baidu_client_id) != bool(self.baidu_client_secret):
+            raise RuntimeError("DOUYIN_BAIDU_CLIENT_ID 和 DOUYIN_BAIDU_CLIENT_SECRET 必须同时填写")
+        if self.baidu_refresh_token and not (self.baidu_client_id and self.baidu_client_secret):
+            raise RuntimeError("配置 DOUYIN_BAIDU_REFRESH_TOKEN 时必须同时配置 Client ID 和 Client Secret")
+        guangya_configured = bool(self.guangya_access_token or self.guangya_refresh_token or self.guangya_client_id)
+        if guangya_configured and not (
+            self.guangya_client_id and (self.guangya_access_token or self.guangya_refresh_token)
+        ):
+            raise RuntimeError("启用光鸭网盘必须配置 Client ID 和 Access/Refresh Token")
+
+        for name, value in (
+            ("DOUYIN_QUARK_COOKIE", self.quark_cookie),
+            ("DOUYIN_WOPAN_ACCESS_TOKEN", self.wopan_access_token),
+            ("DOUYIN_WOPAN_REFRESH_TOKEN", self.wopan_refresh_token),
+            ("DOUYIN_BAIDU_ACCESS_TOKEN", self.baidu_access_token),
+            ("DOUYIN_BAIDU_REFRESH_TOKEN", self.baidu_refresh_token),
+            ("DOUYIN_BAIDU_CLIENT_ID", self.baidu_client_id),
+            ("DOUYIN_BAIDU_CLIENT_SECRET", self.baidu_client_secret),
+            ("DOUYIN_115_COOKIE", self.pan115_cookie),
+            ("DOUYIN_115_ACCESS_TOKEN", self.pan115_access_token),
+            ("DOUYIN_115_REFRESH_TOKEN", self.pan115_refresh_token),
+            ("DOUYIN_GUANGYA_ACCESS_TOKEN", self.guangya_access_token),
+            ("DOUYIN_GUANGYA_REFRESH_TOKEN", self.guangya_refresh_token),
+            ("DOUYIN_GUANGYA_CLIENT_ID", self.guangya_client_id),
+            ("DOUYIN_GUANGYA_DEVICE_ID", self.guangya_device_id),
+        ):
+            if "\r" in value or "\n" in value:
+                raise RuntimeError(f"{name} 不能包含换行符")
 
     def load_douyin_cookies(self) -> str | None:
         if self.douyin_cookie_file:

@@ -25,6 +25,9 @@ _QUARK_WAITING = 50_004_001
 _QUARK_EXPIRED = 50_004_002
 _WOPAN_BASE_URL = "https://panservice.mail.wo.cn"
 _WOPAN_CLIENT_ID = "1001000021"
+_115_QR_TOKEN_URL = "https://qrcodeapi.115.com/api/1.0/web/1.0/token"
+_115_QR_STATUS_URL = "https://qrcodeapi.115.com/get/status/"
+_115_QR_LOGIN_URL = "https://passportapi.115.com/app/1.0/web/1.0/login/qrcode"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
@@ -188,6 +191,108 @@ class QuarkQrLoginFlow:
         await self._client.aclose()
 
 
+class Pan115QrLoginFlow:
+    qr_ttl_seconds = 5 * 60
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 15,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._session: dict[str, str] = {}
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+            transport=transport,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://115.com/",
+                "User-Agent": _USER_AGENT,
+            },
+        )
+
+    async def _get(self, url: str, *, params: dict[str, str] | None = None) -> httpx.Response:
+        try:
+            return await self._client.get(url, params=params)
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("115 扫码服务连接失败") from exc
+
+    async def _post(self, url: str, *, data: dict[str, str]) -> httpx.Response:
+        try:
+            return await self._client.post(url, data=data)
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("115 扫码服务连接失败") from exc
+
+    async def start(self) -> str:
+        payload = _json_object(await self._get(_115_QR_TOKEN_URL), "115")
+        if payload.get("state") not in {1, "1"}:
+            raise CloudLoginError(str(payload.get("message") or payload.get("error") or "115 二维码生成失败"))
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise CloudLoginError("115 二维码响应缺少 data")
+        values = {key: str(data.get(key) or "") for key in ("qrcode", "sign", "time", "uid")}
+        if not all(values.values()):
+            raise CloudLoginError("115 二维码响应缺少必要数据")
+        self._session = values
+        return _qr_svg_data_uri(values["qrcode"])
+
+    async def poll(self) -> CloudLoginPoll:
+        if not self._session:
+            raise CloudLoginError("115 扫码会话尚未初始化")
+        payload = _json_object(
+            await self._get(
+                _115_QR_STATUS_URL,
+                params={
+                    "uid": self._session["uid"],
+                    "time": self._session["time"],
+                    "sign": self._session["sign"],
+                    "_": str(int(datetime.now(timezone.utc).timestamp())),
+                },
+            ),
+            "115",
+        )
+        if payload.get("state") not in {1, "1"}:
+            raise CloudLoginError(str(payload.get("message") or payload.get("error") or "115 扫码状态查询失败"))
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise CloudLoginError("115 扫码状态响应缺少 data")
+        try:
+            state = int(data.get("status", -1))
+        except (TypeError, ValueError):
+            state = -1
+        if state == 0:
+            return CloudLoginPoll("waiting")
+        if state == 1:
+            return CloudLoginPoll("scanned")
+        if state in {-1, -2}:
+            return CloudLoginPoll("expired" if state == -1 else "cancelled")
+        if state != 2:
+            raise CloudLoginError("115 扫码返回了未知状态")
+        login_payload = _json_object(
+            await self._post(_115_QR_LOGIN_URL, data={"account": self._session["uid"], "app": "web"}),
+            "115",
+        )
+        if login_payload.get("state") not in {1, "1"}:
+            raise CloudLoginError(str(login_payload.get("message") or login_payload.get("error") or "115 登录失败"))
+        login_data = login_payload.get("data")
+        if not isinstance(login_data, dict):
+            raise CloudLoginError("115 登录响应缺少 data")
+        credential = login_data.get("cookie") or login_data.get("credential")
+        if not isinstance(credential, dict):
+            credential = login_data
+        values = {
+            key: str(credential.get(key) or credential.get(key.lower()) or "") for key in ("UID", "CID", "SEID", "KID")
+        }
+        if not values["UID"] or not values["CID"] or not values["SEID"]:
+            raise CloudLoginError("115 登录响应缺少有效 Cookie")
+        cookie = "; ".join(f"{key}={value}" for key, value in values.items() if value)
+        return CloudLoginPoll("success", {"cookie": cookie})
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 class WoPanQrLoginFlow:
     # The official Web client rotates its QR code every 60 seconds.
     qr_ttl_seconds = 60
@@ -283,6 +388,8 @@ def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
         return QuarkQrLoginFlow()
     if provider == "wopan":
         return WoPanQrLoginFlow()
+    if provider == "pan115":
+        return Pan115QrLoginFlow()
     raise ValueError(f"不支持的扫码登录类型: {provider}")
 
 
@@ -334,10 +441,10 @@ class CloudLoginManager:
         self._sessions: dict[str, _CloudLoginSession] = {}
         self._provider_sessions: dict[str, str] = {}
         self._lock = asyncio.Lock()
-        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan")}
+        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115")}
 
     async def start(self, provider: str) -> CloudLoginSnapshot:
-        if provider not in {"quark", "wopan"}:
+        if provider not in {"quark", "wopan", "pan115"}:
             raise ValueError(f"不支持的扫码登录类型: {provider}")
         async with self._start_locks[provider]:
             return await self._start(provider)
@@ -395,6 +502,10 @@ class CloudLoginManager:
                 if result.state == "expired":
                     session.state = "expired"
                     session.message = "二维码已过期"
+                    return
+                if result.state == "cancelled":
+                    session.state = "cancelled"
+                    session.message = "扫码登录已取消"
                     return
                 if result.state != "success" or result.credentials is None:
                     session.state = "error"

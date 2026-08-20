@@ -246,6 +246,32 @@ class CloudArchiveUpdate(StrictModel):
     schedule: CloudScheduleUpdate
 
 
+class CloudProviderUpdate(StrictModel):
+    """Provider-neutral credential update used by the extensible archive UI."""
+
+    enabled: bool = False
+    credentials: dict[str, SecretStr | None] = Field(default_factory=dict)
+    clear_credentials: bool = False
+    options: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("options")
+    @classmethod
+    def normalize_options(cls, value: dict[str, str]) -> dict[str, str]:
+        return {str(key): item.strip() for key, item in value.items()}
+
+    @field_validator("credentials")
+    @classmethod
+    def validate_credential_values(cls, value: dict[str, SecretStr | None]) -> dict[str, SecretStr | None]:
+        if len(value) > 32:
+            raise ValueError("凭据字段过多")
+        for key, item in value.items():
+            if len(key) > 128:
+                raise ValueError("凭据字段名过长")
+            if item is not None and len(item.get_secret_value()) > 32768:
+                raise ValueError("凭据值过长")
+        return value
+
+
 class CloudQuarkView(StrictModel):
     enabled: bool
     credential_configured: bool
@@ -286,18 +312,35 @@ class CloudUploadExecutionView(StrictModel):
     error: str | None
 
 
+class CloudProviderView(StrictModel):
+    name: str
+    label: str
+    enabled: bool
+    credential_configured: bool
+    configured_credentials: list[str]
+    options: dict[str, str]
+    upload_path: str
+    supports_qr_login: bool
+
+
 class CloudArchiveView(StrictModel):
     enabled: bool
     running: bool
+    # The two legacy fields remain in the response while existing installations
+    # migrate; new providers and generic clients use ``providers``.
     quark: CloudQuarkView
     wopan: CloudWoPanView
+    baidu: CloudProviderView
+    pan115: CloudProviderView
+    guangya: CloudProviderView
+    providers: list[CloudProviderView] = Field(default_factory=list)
     schedule: CloudScheduleView
     last_run: CloudUploadExecutionView | None
 
 
 class CloudLoginView(StrictModel):
     session_id: str
-    provider: Literal["quark", "wopan"]
+    provider: Literal["quark", "wopan", "pan115"]
     state: Literal["waiting", "scanned", "success", "expired", "error", "cancelled"]
     message: str
     qr_image: str | None

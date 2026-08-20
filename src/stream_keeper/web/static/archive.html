@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="把本地录像同步到夸克网盘或联通云盘，并按需清理磁盘" />
+    <meta name="description" content="把本地录像同步到多个网盘，并按需清理磁盘" />
     <title>网盘归档 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260816" />
+    <link rel="stylesheet" href="/static/style.css?v=20260819" />
   </head>
   <body data-page="archive">
     <script src="/static/sprite.js?v=20260814"></script>
@@ -68,7 +68,7 @@
               </span>
               <div class="card-heading">
                 <h2>存储目标</h2>
-                <p>点击网盘配置账号、上传根目录和启用状态</p>
+                <p>点击网盘配置凭据、上传根目录和启用状态</p>
               </div>
             </header>
             <div class="card-body">
@@ -106,6 +106,63 @@
                 </span>
                 <span id="wopan-credential" class="chip">—</span>
                 <span id="wopan-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <span class="provider-row-action" aria-hidden="true">
+                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
+                </span>
+              </button>
+              <button
+                id="baidu-configure"
+                class="provider-row provider-target"
+                type="button"
+                data-provider-configure="baidu"
+                aria-haspopup="dialog"
+                aria-label="配置百度网盘"
+              >
+                <span class="provider-logo baidu" aria-hidden="true">百</span>
+                <span class="provider-info">
+                  <strong>百度网盘</strong>
+                  <small id="baidu-path" class="mono">—</small>
+                </span>
+                <span id="baidu-credential" class="chip">—</span>
+                <span id="baidu-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <span class="provider-row-action" aria-hidden="true">
+                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
+                </span>
+              </button>
+              <button
+                id="pan115-configure"
+                class="provider-row provider-target"
+                type="button"
+                data-provider-configure="pan115"
+                aria-haspopup="dialog"
+                aria-label="配置115网盘"
+              >
+                <span class="provider-logo pan115" aria-hidden="true">115</span>
+                <span class="provider-info">
+                  <strong>115网盘</strong>
+                  <small id="pan115-path" class="mono">—</small>
+                </span>
+                <span id="pan115-credential" class="chip">—</span>
+                <span id="pan115-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <span class="provider-row-action" aria-hidden="true">
+                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
+                </span>
+              </button>
+              <button
+                id="guangya-configure"
+                class="provider-row provider-target"
+                type="button"
+                data-provider-configure="guangya"
+                aria-haspopup="dialog"
+                aria-label="配置光鸭网盘"
+              >
+                <span class="provider-logo guangya" aria-hidden="true">光</span>
+                <span class="provider-info">
+                  <strong>光鸭网盘</strong>
+                  <small id="guangya-path" class="mono">—</small>
+                </span>
+                <span id="guangya-credential" class="chip">—</span>
+                <span id="guangya-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
                 </span>
@@ -238,6 +295,58 @@
               </div>
             </details>
           </section>
+
+          <section data-provider-fields="baidu" class="provider-config-fields hidden">
+            <div class="form-grid">
+              <label class="field span-2">
+                <span class="field-label">上传目录<em>固定</em></span>
+                <input class="input" name="baidu_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
+              </label>
+            </div>
+            <details class="disclosure">
+              <summary><span>百度开放平台凭证</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
+              <div class="form-grid">
+                <label class="field"><span class="field-label">Access Token</span><input class="input" name="baidu_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="可选" /></label>
+                <label class="field"><span class="field-label">Refresh Token</span><input class="input" name="baidu_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="用于自动刷新" /></label>
+                <label class="field"><span class="field-label">Client ID</span><input class="input" name="baidu_client_id" type="text" maxlength="1024" autocomplete="off" /></label>
+                <label class="field"><span class="field-label">Client Secret</span><input class="input" name="baidu_client_secret" type="password" maxlength="4096" autocomplete="new-password" /></label>
+                <label class="check span-2"><input name="baidu_clear_credentials" type="checkbox" /><span>清除已保存的百度凭证</span></label>
+              </div>
+            </details>
+          </section>
+
+          <section data-provider-fields="pan115" class="provider-config-fields hidden">
+            <div class="form-grid">
+              <label class="field"><span class="field-label">Root ID</span><input class="input" name="pan115_root_id" type="text" maxlength="512" value="0" autocomplete="off" /></label>
+              <label class="field"><span class="field-label">上传目录<em>固定</em></span><input class="input" name="pan115_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
+            </div>
+            <details class="disclosure">
+              <summary><span>115 登录凭据</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
+              <div class="form-grid">
+                <label class="field span-2"><span class="field-label">115 Cookie</span><input class="input" name="pan115_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="UID=...;CID=...;SEID=...;KID=..." /></label>
+                <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="pan115_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
+                <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="pan115_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
+                <label class="check span-2"><input name="pan115_clear_credentials" type="checkbox" /><span>清除已保存的 115 凭据</span></label>
+              </div>
+            </details>
+          </section>
+
+          <section data-provider-fields="guangya" class="provider-config-fields hidden">
+            <div class="form-grid">
+              <label class="field"><span class="field-label">Root ID<em>选填</em></span><input class="input" name="guangya_root_id" type="text" maxlength="512" placeholder="留空表示根目录" autocomplete="off" /></label>
+              <label class="field"><span class="field-label">上传目录<em>固定</em></span><input class="input" name="guangya_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
+            </div>
+            <details class="disclosure">
+              <summary><span>光鸭 API 凭证</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
+              <div class="form-grid">
+                <label class="field"><span class="field-label">Client ID</span><input class="input" name="guangya_client_id" type="text" maxlength="1024" autocomplete="off" /></label>
+                <label class="field"><span class="field-label">Device ID<em>选填</em></span><input class="input" name="guangya_device_id" type="text" maxlength="64" autocomplete="off" placeholder="留空自动生成" /></label>
+                <label class="field"><span class="field-label">Access Token</span><input class="input" name="guangya_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="可选" /></label>
+                <label class="field"><span class="field-label">Refresh Token</span><input class="input" name="guangya_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="用于自动刷新" /></label>
+                <label class="check span-2"><input name="guangya_clear_credentials" type="checkbox" /><span>清除已保存的光鸭凭证</span></label>
+              </div>
+            </details>
+          </section>
         </div>
         <footer class="modal-foot">
           <button id="provider-config-cancel" class="btn btn-soft" type="button">取消</button>
@@ -269,6 +378,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260816"></script>
+    <script type="module" src="/static/archive.js?v=20260820"></script>
   </body>
 </html>

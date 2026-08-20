@@ -12,13 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..cloud import (
-    CloudArchiveConfig,
-    CloudUploadClient,
-    CloudUploadError,
-    QuarkClient,
-    WoPanClient,
-)
+from ..cloud import CloudArchiveConfig, CloudUploadClient, CloudUploadError, create_cloud_client
 from ..settings import Settings
 from .events import EventLog
 from .recordings import RecordingPreviewCache
@@ -264,40 +258,25 @@ class RecordingUploadService:
             await self.events.success("upload", f"{label}归档完成", detail)
 
     async def _create_client(self, target: UploadTarget, config: CloudArchiveConfig) -> CloudUploadClient:
-        if target.name == "quark":
-            defaults = {"cookie": config.quark_cookie}
-            fingerprint = self._fingerprint(defaults)
-            credentials = await self.store.resolve_cloud_credentials("quark", fingerprint, defaults)
+        provider = config.provider(target.name)
+        defaults = dict(provider.credentials)
+        fingerprint = self._fingerprint(defaults)
+        credentials = await self.store.resolve_cloud_credentials(target.name, fingerprint, defaults)
 
-            async def save_quark(state: dict[str, str]) -> None:
-                await self.store.save_cloud_credentials("quark", fingerprint, state)
+        credential_state = dict(credentials)
 
-            return QuarkClient(
-                credentials["cookie"],
-                root_id=config.quark_root_id,
-                timeout_seconds=config.upload_timeout_seconds,
-                on_credential_update=save_quark,
-            )
-        if target.name == "wopan":
-            defaults = {
-                "access_token": config.wopan_access_token,
-                "refresh_token": config.wopan_refresh_token,
-            }
-            fingerprint = self._fingerprint(defaults)
-            credentials = await self.store.resolve_cloud_credentials("wopan", fingerprint, defaults)
+        async def save_credentials(state: dict[str, str]) -> None:
+            # Refresh callbacks may only return rotated fields. Keep the latest
+            # complete state across multiple refreshes by this client.
+            credential_state.update(state)
+            await self.store.save_cloud_credentials(target.name, fingerprint, dict(credential_state))
 
-            async def save_wopan(state: dict[str, str]) -> None:
-                await self.store.save_cloud_credentials("wopan", fingerprint, state)
-
-            return WoPanClient(
-                credentials.get("access_token", ""),
-                credentials.get("refresh_token", ""),
-                root_id=config.wopan_root_id,
-                family_id=config.wopan_family_id,
-                timeout_seconds=config.upload_timeout_seconds,
-                on_credential_update=save_wopan,
-            )
-        raise CloudUploadError(f"不支持的网盘上传目标：{target.name}")
+        return create_cloud_client(
+            provider,
+            credentials,
+            timeout_seconds=config.upload_timeout_seconds,
+            on_credential_update=save_credentials,
+        )
 
     async def _get_client(
         self,

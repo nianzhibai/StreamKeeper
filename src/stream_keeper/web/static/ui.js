@@ -375,11 +375,11 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
   }
 }
 
-export function providerStatus(provider, kind) {
-  const configured = kind === "quark"
-    ? provider.credential_configured
-    : provider.access_token_configured || provider.refresh_token_configured;
-  if (provider.enabled) return { label: "已启用", tone: "ok" };
+export function providerStatus(provider, _kind) {
+  const configured = Boolean(
+    provider?.credential_configured || provider?.access_token_configured || provider?.refresh_token_configured,
+  );
+  if (provider?.enabled) return { label: "已启用", tone: "ok" };
   return configured ? { label: "未启用", tone: "idle" } : { label: "未配置", tone: "idle" };
 }
 

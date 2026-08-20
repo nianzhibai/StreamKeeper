@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..cloud.config import CLOUD_PROVIDER_ORDER
 from .schemas import (
     EventCategory,
     EventLevel,
@@ -320,7 +321,7 @@ class TaskStore:
 
     @staticmethod
     def _validate_cloud_state(provider: str, state: dict[str, str]) -> None:
-        if provider not in {"quark", "wopan"}:
+        if provider not in CLOUD_PROVIDER_ORDER:
             raise ValueError(f"不支持的网盘凭据类型: {provider}")
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in state.items()):
             raise ValueError("网盘凭据必须是字符串字典")

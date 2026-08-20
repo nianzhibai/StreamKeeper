@@ -7,6 +7,7 @@ import httpx
 from stream_keeper.web.cloud_login import (
     CloudLoginManager,
     CloudLoginPoll,
+    Pan115QrLoginFlow,
     QuarkQrLoginFlow,
     WoPanQrLoginFlow,
 )
@@ -66,6 +67,75 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
             self.assertIn("__pus=session-cookie", cookie)
             self.assertIn("__puus=refresh-cookie", cookie)
             self.assertNotIn("one-time-service-ticket", cookie)
+        finally:
+            await flow.aclose()
+
+    async def test_pan115_qr_login_returns_cookie_credentials(self) -> None:
+        status_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal status_calls
+            if request.url.path.endswith("/api/1.0/web/1.0/token"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "state": 1,
+                        "data": {"qrcode": "115-qr-content", "sign": "sign", "time": 123, "uid": "uid"},
+                    },
+                )
+            if request.url.path.endswith("/get/status/"):
+                status_calls += 1
+                self.assertEqual(set(request.url.params), {"uid", "time", "sign", "_"})
+                self.assertEqual(request.url.params["uid"], "uid")
+                self.assertEqual(request.url.params["time"], "123")
+                self.assertEqual(request.url.params["sign"], "sign")
+                return httpx.Response(200, json={"state": 1, "data": {"status": 2}})
+            if request.url.path.endswith("/login/qrcode"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "state": 1,
+                        "data": {"cookie": {"UID": "uid-value", "CID": "cid-value", "SEID": "seid-value"}},
+                    },
+                )
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        flow = Pan115QrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            self.assertTrue((await flow.start()).startswith("data:image/svg+xml;base64,"))
+            completed = await flow.poll()
+            self.assertEqual(completed.state, "success")
+            self.assertEqual(
+                completed.credentials,
+                {"cookie": "UID=uid-value; CID=cid-value; SEID=seid-value"},
+            )
+            self.assertEqual(status_calls, 1)
+        finally:
+            await flow.aclose()
+
+    async def test_pan115_maps_waiting_scanned_expired_and_cancelled_states(self) -> None:
+        statuses = iter((0, 1, -1, -2))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/api/1.0/web/1.0/token"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "state": 1,
+                        "data": {"qrcode": "115-qr-content", "sign": "sign", "time": 123, "uid": "uid"},
+                    },
+                )
+            if request.url.path.endswith("/get/status/"):
+                return httpx.Response(200, json={"state": 1, "data": {"status": next(statuses)}})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        flow = Pan115QrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            await flow.start()
+            self.assertEqual((await flow.poll()).state, "waiting")
+            self.assertEqual((await flow.poll()).state, "scanned")
+            self.assertEqual((await flow.poll()).state, "expired")
+            self.assertEqual((await flow.poll()).state, "cancelled")
         finally:
             await flow.aclose()
 

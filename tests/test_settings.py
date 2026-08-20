@@ -91,6 +91,7 @@ class SettingsTests(TestCase):
                 {"quark_root_id": "folder-without-cookie"},
                 {"wopan_family_id": "family-without-token"},
                 {"wopan_access_token": "short"},
+                {"baidu_access_token": "access", "baidu_refresh_token": "refresh"},
             )
             for overrides in invalid_values:
                 with self.subTest(overrides=overrides), self.assertRaises(RuntimeError):

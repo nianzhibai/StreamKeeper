@@ -19,7 +19,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260820";
 
 const MAX_VISIBLE_TASKS = 6;
 const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
@@ -105,8 +105,9 @@ function renderArchive(cloud) {
     cloud.schedule.next_run_at ? formatTime(cloud.schedule.next_run_at) : "—",
   );
 
-  for (const kind of ["quark", "wopan"]) {
-    const state = providerStatus(cloud[kind], kind);
+  const providers = new Map((cloud.providers || []).map((provider) => [provider.name, provider]));
+  for (const kind of ["quark", "wopan", "baidu", "pan115", "guangya"]) {
+    const state = providerStatus(providers.get(kind) || cloud[kind], kind);
     const node = document.querySelector(`#overview-${kind}-status`);
     setTextIfChanged(node, state.label);
     node.className = `mini-state tone-${state.tone}`;

@@ -14,7 +14,7 @@ import {
   setTextIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260820";
 
 const refreshButton = document.querySelector("#refresh-button");
 const runButton = document.querySelector("#cloud-run-button");
@@ -29,6 +29,7 @@ const providerTitle = document.querySelector("#provider-config-title");
 const providerDescription = document.querySelector("#provider-config-description");
 const providerCredentialHint = document.querySelector("#provider-credential-hint");
 const providerLoginDescription = document.querySelector("#provider-login-description");
+const providerAuthRow = document.querySelector(".auth-row");
 const loginDialog = document.querySelector("#cloud-login-dialog");
 const loginImage = document.querySelector("#cloud-login-image");
 const loginStatus = document.querySelector("#cloud-login-status");
@@ -39,15 +40,56 @@ const loginClose = document.querySelector("#cloud-login-close");
 const providerMeta = {
   quark: {
     name: "夸克网盘",
+    logo: "夸",
     app: "夸克 App",
     description: "配置夸克账号、上传根目录和启用状态",
     loginDescription: "使用夸克 App 扫码，无需手动复制 Cookie",
+    credentials: ["cookie"],
+    options: ["root_id"],
+    clearField: "quark_clear_cookie",
+    supportsQr: true,
   },
   wopan: {
     name: "联通云盘",
+    logo: "联",
     app: "联通云盘 App",
     description: "配置联通云盘账号、上传根目录和启用状态",
     loginDescription: "使用联通云盘 App 扫码获取 Token",
+    credentials: ["access_token", "refresh_token"],
+    options: ["root_id", "family_id"],
+    clearField: "wopan_clear_tokens",
+    supportsQr: true,
+  },
+  baidu: {
+    name: "百度网盘",
+    logo: "百",
+    description: "配置百度网盘开放平台凭据",
+    loginDescription: "请填写百度开放平台 Access/Refresh Token",
+    supportsQr: false,
+    credentials: ["access_token", "refresh_token", "client_id", "client_secret"],
+    options: [],
+    clearField: "baidu_clear_credentials",
+  },
+  pan115: {
+    name: "115网盘",
+    logo: "115",
+    app: "115 App",
+    description: "配置 115 Cookie 或 Open Token",
+    loginDescription: "使用 115 App 扫码，或填写 Cookie / Open Token",
+    supportsQr: true,
+    credentials: ["cookie", "access_token", "refresh_token"],
+    options: ["root_id"],
+    clearField: "pan115_clear_credentials",
+  },
+  guangya: {
+    name: "光鸭网盘",
+    logo: "光",
+    description: "配置光鸭网盘 API 凭据",
+    loginDescription: "请填写光鸭 Client ID 与 Access/Refresh Token",
+    supportsQr: false,
+    credentials: ["client_id", "device_id", "access_token", "refresh_token"],
+    options: ["root_id"],
+    clearField: "guangya_clear_credentials",
   },
 };
 
@@ -58,10 +100,12 @@ let activeLogin = null;
 let loginPollTimer = null;
 let loginGeneration = 0;
 
-function credentialConfigured(kind, provider) {
-  return kind === "quark"
-    ? provider.credential_configured
-    : provider.access_token_configured || provider.refresh_token_configured;
+function providerFor(kind) {
+  return cloud?.providers?.find((provider) => provider.name === kind) || cloud?.[kind];
+}
+
+function credentialConfigured(_kind, provider) {
+  return Boolean(provider?.credential_configured);
 }
 
 function renderProvider(kind, provider) {
@@ -141,43 +185,54 @@ function render(value) {
   setTextIfChanged(document.querySelector("#schedule-hour"), `每天 ${String(cloud.schedule.hour).padStart(2, "0")}:00`);
   setTextIfChanged(document.querySelector("#stable-age"), `${cloud.schedule.min_age_minutes} 分钟`);
 
-  renderProvider("quark", cloud.quark);
-  renderProvider("wopan", cloud.wopan);
+  Object.keys(providerMeta).forEach((kind) => renderProvider(kind, providerFor(kind)));
   renderLastRun(cloud.last_run);
 }
 
 function updateProviderCredentialHint(kind) {
-  const provider = cloud?.[kind];
+  const provider = providerFor(kind);
   if (!provider) return;
   const configured = credentialConfigured(kind, provider);
-  providerCredentialHint.textContent = configured ? "账号已登录，可作为归档目标使用" : "尚未登录，扫码后即可上传";
+  providerCredentialHint.textContent = configured
+    ? "凭据已保存，可作为归档目标使用"
+    : metaFor(kind).supportsQr
+      ? "尚未登录，扫码后即可上传"
+      : "尚未配置，请填写手动凭据";
   providerCredentialHint.classList.toggle("is-ok", configured);
 }
 
+function metaFor(kind) {
+  return providerMeta[kind] || {};
+}
+
 function populateProviderForm(kind) {
-  const provider = cloud?.[kind];
+  const provider = providerFor(kind);
   if (!provider) return;
   const meta = providerMeta[kind];
   providerForm.reset();
   providerForm.elements.enabled.checked = provider.enabled;
-  providerForm.elements.quark_root_id.value = cloud.quark.root_id;
-  providerForm.elements.quark_upload_path.value = cloud.quark.upload_path;
-  providerForm.elements.wopan_root_id.value = cloud.wopan.root_id;
-  providerForm.elements.wopan_family_id.value = cloud.wopan.family_id;
-  providerForm.elements.wopan_upload_path.value = cloud.wopan.upload_path;
+  const field = (name) => providerForm.elements[`${kind}_${name}`];
+  meta.options.forEach((name) => {
+    if (field(name)) field(name).value = provider.options?.[name] || "";
+  });
+  const pathField = field("upload_path");
+  if (pathField) pathField.value = provider.upload_path || "";
+  const supportsQr = provider.supports_qr_login ?? meta.supportsQr;
   providerForm.querySelectorAll("details").forEach((details) => {
-    details.open = false;
+    details.open = !supportsQr;
   });
   providerForm.querySelectorAll("[data-provider-fields]").forEach((section) => {
     section.classList.toggle("hidden", section.dataset.providerFields !== kind);
   });
 
   providerLogo.className = `provider-logo ${kind}`;
-  providerLogo.textContent = kind === "quark" ? "夸" : "联";
+  providerLogo.textContent = meta.logo;
   providerTitle.textContent = `配置${meta.name}`;
   providerDescription.textContent = meta.description;
   providerLoginDescription.textContent = meta.loginDescription;
   providerLoginButton.dataset.cloudLogin = kind;
+  providerAuthRow.classList.toggle("hidden", !supportsQr);
+  providerLoginButton.disabled = !supportsQr;
   updateProviderCredentialHint(kind);
 }
 
@@ -190,25 +245,23 @@ function openProviderConfig(kind) {
 
 function providerPayload() {
   const fields = providerForm.elements;
-  const text = (name) => String(fields[name].value || "").trim();
+  const meta = providerMeta[activeProvider];
+  const text = (name) => String(fields[name]?.value || "").trim();
   const secret = (name) => text(name) || null;
-  if (activeProvider === "quark") {
-    return {
-      enabled: fields.enabled.checked,
-      cookie: secret("quark_cookie"),
-      clear_cookie: fields.quark_clear_cookie.checked,
-      root_id: text("quark_root_id"),
-      upload_path: text("quark_upload_path"),
-    };
-  }
+  const credentials = {};
+  meta.credentials.forEach((name) => {
+    const value = secret(`${activeProvider}_${name}`);
+    if (value) credentials[name] = value;
+  });
+  const options = {};
+  meta.options.forEach((name) => {
+    options[name] = text(`${activeProvider}_${name}`);
+  });
   return {
     enabled: fields.enabled.checked,
-    access_token: secret("wopan_access_token"),
-    refresh_token: secret("wopan_refresh_token"),
-    clear_tokens: fields.wopan_clear_tokens.checked,
-    root_id: text("wopan_root_id"),
-    family_id: text("wopan_family_id"),
-    upload_path: text("wopan_upload_path"),
+    credentials,
+    clear_credentials: Boolean(fields[meta.clearField]?.checked),
+    options,
   };
 }
 
@@ -220,7 +273,7 @@ async function saveProviderConfig(event) {
   providerSaveButton.textContent = "保存中…";
   try {
     render(
-      await api(`/api/cloud/archive/providers/${provider}`, {
+      await api(`/api/cloud/archive/providers/${provider}/config`, {
         method: "PUT",
         body: JSON.stringify(providerPayload()),
       }),
@@ -276,14 +329,13 @@ async function finishSuccessfulLogin(value) {
   try {
     render(await api("/api/cloud/archive"));
     if (providerDialog.open && activeProvider === value.provider) {
-      if (value.provider === "quark") {
-        providerForm.elements.quark_cookie.value = "";
-        providerForm.elements.quark_clear_cookie.checked = false;
-      } else {
-        providerForm.elements.wopan_access_token.value = "";
-        providerForm.elements.wopan_refresh_token.value = "";
-        providerForm.elements.wopan_clear_tokens.checked = false;
-      }
+      const meta = providerMeta[value.provider];
+      meta.credentials.forEach((name) => {
+        const input = providerForm.elements[`${value.provider}_${name}`];
+        if (input) input.value = "";
+      });
+      const clearInput = providerForm.elements[meta.clearField];
+      if (clearInput) clearInput.checked = false;
       updateProviderCredentialHint(value.provider);
     }
     toast(`${providerMeta[value.provider].name}登录成功`, "success");

@@ -1,0 +1,523 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import mimetypes
+import posixpath
+import secrets
+from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+import httpx
+
+from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
+
+logger = logging.getLogger(__name__)
+
+_API_BASE_URL = "https://pan.baidu.com/rest/2.0"
+_TOKEN_URL = "https://openapi.baidu.com/oauth/2.0/token"
+_UPLOAD_BASE_URL = "https://d.pcs.baidu.com"
+_MAX_PARTS = 2048
+_Sleep = Callable[[float], Awaitable[None]]
+
+
+class BaiduNetdiskClient:
+    """Baidu Open Platform directory API and superfile2 multipart uploader."""
+
+    def __init__(
+        self,
+        access_token: str = "",
+        refresh_token: str = "",
+        client_id: str = "",
+        client_secret: str = "",
+        *,
+        timeout_seconds: int = 300,
+        on_credential_update: CredentialUpdate | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: _Sleep = asyncio.sleep,
+        api_base_url: str = _API_BASE_URL,
+        token_url: str = _TOKEN_URL,
+        upload_base_url: str = _UPLOAD_BASE_URL,
+    ) -> None:
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self._on_credential_update = on_credential_update
+        self._sleep = sleep
+        self._api_base_url = api_base_url.rstrip("/")
+        self._token_url = token_url
+        self._upload_base_url = upload_base_url.rstrip("/")
+        self._refresh_lock = asyncio.Lock()
+        self._vip_type: int | None = None
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(float(timeout_seconds)),
+            transport=transport,
+            headers={"Accept": "application/json", "User-Agent": "StreamKeeper/0.6"},
+        )
+
+    @staticmethod
+    def _detail(response: httpx.Response) -> str:
+        return " ".join(response.text.split())[:300]
+
+    @staticmethod
+    def _json_object(response: httpx.Response, operation: str) -> dict[str, object]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CloudUploadError(f"百度网盘{operation}返回无效 JSON：{BaiduNetdiskClient._detail(response)}") from exc
+        if not isinstance(payload, dict):
+            raise CloudUploadError(f"百度网盘{operation}返回格式错误")
+        return payload
+
+    @staticmethod
+    def _is_auth_expired(payload: dict[str, object]) -> bool:
+        codes: list[int] = []
+        for key in ("errno", "error_code", "code"):
+            try:
+                codes.append(int(payload.get(key, 0) or 0))
+            except (TypeError, ValueError):
+                continue
+        if any(code in {6, 110, 111, 31023, 31024, 401, -6} or str(code).startswith("401") for code in codes):
+            return True
+        text = " ".join(
+            str(payload.get(key) or "") for key in ("error", "error_msg", "errmsg", "error_description")
+        ).lower()
+        return "access token" in text and any(word in text for word in ("invalid", "expire", "过期", "失效"))
+
+    async def _save_credentials(self) -> None:
+        if self._on_credential_update is not None:
+            await self._on_credential_update(
+                {
+                    "access_token": self.access_token,
+                    "refresh_token": self.refresh_token,
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                }
+            )
+
+    async def _refresh_access_token(self, *, force: bool = True) -> None:
+        async with self._refresh_lock:
+            if not force and self.access_token:
+                return
+            if not self.refresh_token or not self.client_id or not self.client_secret:
+                raise CloudUploadError("百度网盘 Access Token 已失效，且没有可用的客户端刷新凭据")
+            try:
+                response = await self._client.get(
+                    self._token_url,
+                    params={
+                        "grant_type": "refresh_token",
+                        "refresh_token": self.refresh_token,
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise CloudUploadError(f"百度网盘刷新 Token 请求失败：{exc}") from exc
+            payload = self._json_object(response, "刷新 Token")
+            access_token = payload.get("access_token")
+            refresh_token = payload.get("refresh_token")
+            if response.is_error or not isinstance(access_token, str) or not access_token:
+                message = payload.get("error_description") or payload.get("error") or self._detail(response)
+                raise CloudUploadError(f"百度网盘刷新 Token 失败：{message}")
+            self.access_token = access_token
+            if isinstance(refresh_token, str) and refresh_token:
+                self.refresh_token = refresh_token
+            await self._save_credentials()
+
+    async def _api_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str | int] | None = None,
+        form: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        if not self.access_token:
+            await self._refresh_access_token(force=False)
+        for auth_attempt in range(2):
+            query: dict[str, str | int] = {"access_token": self.access_token}
+            if params:
+                query.update(params)
+            try:
+                response = await self._client.request(
+                    method,
+                    f"{self._api_base_url}{path}",
+                    params=query,
+                    data=form,
+                )
+            except httpx.HTTPError as exc:
+                raise CloudUploadError(f"百度网盘接口 {path} 请求失败：{exc}") from exc
+            payload = self._json_object(response, f"接口 {path}")
+            try:
+                errno = int(payload.get("errno", 0))
+            except (TypeError, ValueError):
+                errno = -1
+            if self._is_auth_expired(payload) and auth_attempt == 0:
+                await self._refresh_access_token()
+                continue
+            if response.is_error or errno != 0:
+                message = payload.get("errmsg") or payload.get("error_msg") or payload.get("error") or ""
+                raise CloudUploadError(
+                    f"百度网盘接口 {path} 失败（HTTP {response.status_code}，errno={errno}）：{message}"
+                )
+            return payload
+        raise CloudUploadError("百度网盘 Token 刷新后仍无法访问接口")
+
+    async def _list_directory(self, directory: str) -> list[RemoteEntry]:
+        entries: list[RemoteEntry] = []
+        start = 0
+        page_size = 1000
+        while True:
+            payload = await self._api_request(
+                "GET",
+                "/xpan/file",
+                params={
+                    "method": "list",
+                    "dir": directory,
+                    "start": start,
+                    "limit": page_size,
+                    "order": "name",
+                    "web": "web",
+                },
+            )
+            raw_entries = payload.get("list")
+            if not isinstance(raw_entries, list):
+                raise CloudUploadError("百度网盘目录列表响应缺少 list")
+            for raw in raw_entries:
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    entries.append(
+                        RemoteEntry(
+                            id=str(raw.get("fs_id") or raw["path"]),
+                            name=str(raw.get("server_filename") or posixpath.basename(str(raw["path"]))),
+                            size=int(raw.get("size", 0)),
+                            is_directory=int(raw.get("isdir", 0)) == 1,
+                        )
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise CloudUploadError("百度网盘目录列表包含无效文件记录") from exc
+            if len(raw_entries) < page_size:
+                return entries
+            start += page_size
+
+    @staticmethod
+    def _named_entry(entries: list[RemoteEntry], name: str) -> RemoteEntry | None:
+        return next((entry for entry in entries if entry.name == name), None)
+
+    async def _walk_directories(self, parts: list[str], *, create: bool) -> str | None:
+        current = "/"
+        for name in parts:
+            entry = self._named_entry(await self._list_directory(current), name)
+            child = posixpath.join(current, name)
+            if entry is not None:
+                if not entry.is_directory:
+                    raise CloudUploadError(f"百度网盘远端路径冲突，{name} 已存在且不是目录")
+                current = child
+                continue
+            if not create:
+                return None
+            try:
+                await self._api_request(
+                    "POST",
+                    "/xpan/file",
+                    params={"method": "create"},
+                    form={"path": child, "size": "0", "isdir": "1", "rtype": "3"},
+                )
+            except CloudUploadError:
+                entry = self._named_entry(await self._list_directory(current), name)
+                if entry is None or not entry.is_directory:
+                    raise
+            current = child
+        return current
+
+    async def remote_size(self, remote_path: str) -> int | None:
+        directory_parts, filename = split_remote_file(remote_path)
+        directory = await self._walk_directories(directory_parts, create=False)
+        if directory is None:
+            return None
+        entry = self._named_entry(await self._list_directory(directory), filename)
+        if entry is None:
+            return None
+        if entry.is_directory:
+            raise CloudUploadError(f"百度网盘远端路径冲突，目标是目录：{remote_path}")
+        return entry.size
+
+    async def _part_size(self, file_size: int) -> int:
+        if self._vip_type is None:
+            payload = await self._api_request("GET", "/xpan/nas", params={"method": "uinfo"})
+            try:
+                self._vip_type = int(payload.get("vip_type", 0))
+            except (TypeError, ValueError):
+                logger.warning("百度网盘会员类型响应无效，按普通账号分片")
+                self._vip_type = 0
+        part_size = {0: 4, 1: 16, 2: 32}.get(self._vip_type, 4) * 1024 * 1024
+        if (file_size + part_size - 1) // part_size > _MAX_PARTS:
+            raise CloudUploadError("百度网盘账号允许的分片大小不足以上传该录像，请缩短录像分段时长")
+        return part_size
+
+    @staticmethod
+    def _hash_file(path: Path, part_size: int) -> tuple[str, str, list[str]]:
+        full = hashlib.md5()
+        first_slice = hashlib.md5()
+        first_remaining = 256 * 1024
+        blocks: list[str] = []
+        with path.open("rb") as stream:
+            while chunk := stream.read(part_size):
+                full.update(chunk)
+                if first_remaining:
+                    first = chunk[:first_remaining]
+                    first_slice.update(first)
+                    first_remaining -= len(first)
+                blocks.append(hashlib.md5(chunk).hexdigest())
+        return full.hexdigest(), first_slice.hexdigest(), blocks
+
+    @staticmethod
+    def _safe_upload_base(value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if not parsed.hostname or parsed.username or parsed.password:
+            raise CloudUploadError("百度网盘返回了无效上传地址")
+        return urlunsplit(("https", parsed.netloc, "", "", ""))
+
+    async def _locate_upload(self, remote_path: str, upload_id: str) -> str:
+        try:
+            response = await self._client.get(
+                f"{self._upload_base_url}/rest/2.0/pcs/file",
+                params={
+                    "method": "locateupload",
+                    "appid": "250528",
+                    "path": remote_path,
+                    "uploadid": upload_id,
+                    "upload_version": "2.0",
+                    "access_token": self.access_token,
+                },
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("百度网盘动态上传地址获取失败，使用默认地址：%s", exc)
+            return self._upload_base_url
+        try:
+            payload = self._json_object(response, "获取上传地址")
+        except CloudUploadError as exc:
+            logger.warning("百度网盘动态上传地址响应无效，使用默认地址：%s", exc)
+            return self._upload_base_url
+        candidates = payload.get("servers") or payload.get("bak_servers")
+        if not response.is_error and isinstance(candidates, list) and candidates:
+            first = candidates[0]
+            server = first.get("server") if isinstance(first, dict) else None
+            if isinstance(server, str) and server:
+                return self._safe_upload_base(server)
+        return self._upload_base_url
+
+    @staticmethod
+    def _multipart_prefix(boundary: str, filename: str, content_type: str) -> bytes:
+        safe_filename = filename.replace("\r", "_").replace("\n", "_").replace('"', "%22")
+        return (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{safe_filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode()
+
+    @staticmethod
+    async def _multipart_content(
+        local_path: Path,
+        offset: int,
+        size: int,
+        prefix: bytes,
+        suffix: bytes,
+        on_streamed: Callable[[int], None] | None,
+    ) -> AsyncIterator[bytes]:
+        yield prefix
+        stream = local_path.open("rb")
+        remaining = size
+        try:
+            stream.seek(offset)
+            while remaining:
+                chunk = await asyncio.to_thread(stream.read, min(1024 * 1024, remaining))
+                if not chunk:
+                    raise CloudUploadError(f"读取百度上传分片时提前到达文件末尾：{local_path}")
+                remaining -= len(chunk)
+                if on_streamed is not None:
+                    on_streamed(size - remaining)
+                yield chunk
+        finally:
+            stream.close()
+        yield suffix
+
+    async def _upload_part(
+        self,
+        upload_base: str,
+        local_path: Path,
+        remote_path: str,
+        upload_id: str,
+        filename: str,
+        *,
+        part_number: int,
+        offset: int,
+        size: int,
+        progress: UploadProgress | None,
+    ) -> None:
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        last_error: Exception | None = None
+        for attempt in range(3):
+            boundary = f"----StreamKeeper{secrets.token_hex(12)}"
+            prefix = self._multipart_prefix(boundary, filename, content_type)
+            suffix = f"\r\n--{boundary}--\r\n".encode()
+            on_streamed = None
+            if progress is not None:
+
+                def on_streamed(streamed: int) -> None:
+                    progress("uploading", offset + streamed)
+
+            try:
+                response = await self._client.post(
+                    f"{upload_base}/rest/2.0/pcs/superfile2",
+                    params={
+                        "method": "upload",
+                        "access_token": self.access_token,
+                        "type": "tmpfile",
+                        "path": remote_path,
+                        "uploadid": upload_id,
+                        "partseq": str(part_number),
+                    },
+                    headers={
+                        "Content-Length": str(len(prefix) + size + len(suffix)),
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    },
+                    content=self._multipart_content(local_path, offset, size, prefix, suffix, on_streamed),
+                )
+                payload = self._json_object(response, f"上传第 {part_number + 1} 片")
+                error_code = int(payload.get("error_code", payload.get("errno", 0)))
+                if response.is_error or error_code != 0:
+                    raise CloudUploadError(
+                        f"百度网盘第 {part_number + 1} 片上传失败（HTTP {response.status_code}，code={error_code}）"
+                    )
+                return
+            except (CloudUploadError, httpx.HTTPError, TypeError, ValueError) as exc:
+                last_error = exc
+                if attempt < 2:
+                    await self._sleep(2**attempt)
+        assert last_error is not None
+        if isinstance(last_error, CloudUploadError):
+            raise last_error
+        raise CloudUploadError(f"百度网盘第 {part_number + 1} 片上传失败：{last_error}") from last_error
+
+    async def _upload(
+        self,
+        local_path: Path,
+        remote_path: str,
+        filename: str,
+        progress: UploadProgress | None,
+    ) -> None:
+        size = local_path.stat().st_size
+        if size <= 0:
+            raise CloudUploadError("百度网盘不允许上传空文件")
+        part_size = await self._part_size(size)
+        if progress is not None:
+            progress("preparing", 0)
+        content_md5, slice_md5, block_list = await asyncio.to_thread(self._hash_file, local_path, part_size)
+        stat = local_path.stat()
+        common_form = {
+            "path": remote_path,
+            "size": str(size),
+            "isdir": "0",
+            "rtype": "3",
+            "block_list": json.dumps(block_list, separators=(",", ":")),
+            "local_mtime": str(int(stat.st_mtime)),
+            "local_ctime": str(int(stat.st_ctime)),
+        }
+        precreate = await self._api_request(
+            "POST",
+            "/xpan/file",
+            params={"method": "precreate"},
+            form={
+                **common_form,
+                "autoinit": "1",
+                "content-md5": content_md5,
+                "slice-md5": slice_md5,
+            },
+        )
+        try:
+            return_type = int(precreate.get("return_type", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise CloudUploadError("百度网盘预上传响应包含无效 return_type") from exc
+        if return_type == 2:
+            if progress is not None:
+                progress("uploading", size)
+            return
+        upload_id = str(precreate.get("uploadid") or "")
+        needed = precreate.get("block_list")
+        if not upload_id or not isinstance(needed, list):
+            raise CloudUploadError("百度网盘预上传响应缺少 uploadid 或 block_list")
+        upload_base = await self._locate_upload(remote_path, upload_id)
+        for raw_part in needed:
+            try:
+                part_number = int(raw_part)
+            except (TypeError, ValueError) as exc:
+                raise CloudUploadError("百度网盘预上传响应包含无效分片编号") from exc
+            if not 0 <= part_number < len(block_list):
+                raise CloudUploadError("百度网盘预上传响应的分片编号越界")
+            offset = part_number * part_size
+            await self._upload_part(
+                upload_base,
+                local_path,
+                remote_path,
+                upload_id,
+                filename,
+                part_number=part_number,
+                offset=offset,
+                size=min(part_size, size - offset),
+                progress=progress,
+            )
+        await self._api_request(
+            "POST",
+            "/xpan/file",
+            params={"method": "create"},
+            form={**common_form, "uploadid": upload_id},
+        )
+        if progress is not None:
+            progress("uploading", size)
+
+    async def upload_verified(
+        self,
+        local_path: Path,
+        remote_path: str,
+        *,
+        progress: UploadProgress | None = None,
+    ) -> bool:
+        local_size = local_path.stat().st_size
+        if progress is not None:
+            progress("preparing", 0)
+        existing_size = await self.remote_size(remote_path)
+        if existing_size == local_size:
+            logger.info("百度网盘远端文件已存在且大小一致，跳过重复上传：%s", remote_path)
+            if progress is not None:
+                progress("verifying", local_size)
+            return False
+        if existing_size is not None:
+            raise CloudUploadError(
+                f"百度网盘远端文件已存在但大小不一致：{remote_path}（本地 {local_size}，远端 {existing_size}）"
+            )
+
+        directory_parts, filename = split_remote_file(remote_path)
+        await self._walk_directories(directory_parts, create=True)
+        await self._upload(local_path, remote_path, filename, progress)
+        if progress is not None:
+            progress("verifying", local_size)
+        uploaded_size: int | None = None
+        for attempt in range(5):
+            uploaded_size = await self.remote_size(remote_path)
+            if uploaded_size == local_size:
+                return True
+            if attempt < 4:
+                await self._sleep(1)
+        raise CloudUploadError(
+            f"百度网盘上传后文件大小校验失败：{remote_path}（本地 {local_size}，远端 {uploaded_size}）"
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

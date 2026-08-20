@@ -2062,6 +2062,25 @@ select.input {
   color: #3fc4de;
 }
 
+.provider-logo.baidu {
+  border-color: rgba(45, 112, 236, 0.26);
+  background: rgba(45, 112, 236, 0.13);
+  color: #6d9fff;
+}
+
+.provider-logo.pan115 {
+  border-color: rgba(244, 133, 47, 0.26);
+  background: rgba(244, 133, 47, 0.13);
+  color: #f5a15d;
+  font-size: var(--t-xs);
+}
+
+.provider-logo.guangya {
+  border-color: rgba(77, 184, 112, 0.26);
+  background: rgba(77, 184, 112, 0.13);
+  color: #76d391;
+}
+
 .provider-logo.neutral {
   border-color: var(--line);
   background: var(--surface-3);
@@ -2070,6 +2089,9 @@ select.input {
 
 :root[data-theme="light"] .provider-logo.quark { color: #4c31c9; }
 :root[data-theme="light"] .provider-logo.wopan { color: #096174; }
+:root[data-theme="light"] .provider-logo.baidu { color: #185bc7; }
+:root[data-theme="light"] .provider-logo.pan115 { color: #c26116; }
+:root[data-theme="light"] .provider-logo.guangya { color: #268447; }
 
 .spec-list {
   padding: var(--s2) var(--s7) var(--s5);
