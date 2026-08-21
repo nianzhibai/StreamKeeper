@@ -9,7 +9,6 @@ import {
   paintProgress,
   providerStatus,
   recordingProgressMarkup,
-  setBusy,
   setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
@@ -27,7 +26,6 @@ const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waitin
 const elements = {
   list: document.querySelector("#active-task-list"),
   empty: document.querySelector("#active-task-empty"),
-  refresh: document.querySelector("#refresh-button"),
 };
 
 let loading = false;
@@ -143,7 +141,6 @@ function renderSystem(system, tasks) {
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
-  if (!quiet) setBusy(elements.refresh, true);
   try {
     const [tasks, system, cloud] = await Promise.all([
       api("/api/tasks"),
@@ -171,9 +168,7 @@ async function load({ quiet = false } = {}) {
     throw error;
   } finally {
     loading = false;
-    setBusy(elements.refresh, false);
   }
 }
 
-elements.refresh?.addEventListener("click", () => load());
 bootstrap(load);

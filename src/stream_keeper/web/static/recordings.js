@@ -6,7 +6,6 @@ import {
   formatBytes,
   formatTime,
   icon,
-  setBusy,
   setHealth,
   showPageError,
   toast,
@@ -26,7 +25,6 @@ const headNode = document.querySelector(".file-head");
 const emptyNode = document.querySelector("#recording-empty");
 const searchNode = document.querySelector("#recording-search");
 const sortNode = document.querySelector("#recording-sort");
-const refreshButton = document.querySelector("#refresh-button");
 const playerDialog = document.querySelector("#recording-player-dialog");
 const playerContainer = document.querySelector("#recording-player");
 const playerLoading = document.querySelector("#recording-player-loading");
@@ -147,7 +145,6 @@ function updateUrl(path, { replace = false } = {}) {
 async function load({ quiet = false, path = currentPath, history = null } = {}) {
   requestController?.abort();
   requestController = new AbortController();
-  if (!quiet) setBusy(refreshButton, true);
   try {
     const query = path ? `?path=${encodeURIComponent(path)}` : "";
     const value = await api(`/api/recordings${query}`, { signal: requestController.signal });
@@ -170,8 +167,6 @@ async function load({ quiet = false, path = currentPath, history = null } = {}) 
     showPageError(`无法读取录像：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;
-  } finally {
-    setBusy(refreshButton, false);
   }
 }
 
@@ -303,7 +298,6 @@ function closePlayer() {
   showPlayerMessage("loading");
 }
 
-refreshButton?.addEventListener("click", () => load());
 document.querySelector("#recording-up")?.addEventListener("click", () => {
   if (!currentPath) return;
   navigate(currentPath.split("/").slice(0, -1).join("/"));

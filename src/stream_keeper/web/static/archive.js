@@ -10,14 +10,12 @@ import {
   formatTime,
   icon,
   providerStatus,
-  setBusy,
   setHealth,
   setTextIfChanged,
   showPageError,
   toast,
 } from "/static/ui.js?v=20260820";
 
-const refreshButton = document.querySelector("#refresh-button");
 const runButton = document.querySelector("#cloud-run-button");
 const providerDialog = document.querySelector("#provider-config-dialog");
 const providerForm = document.querySelector("#provider-config-form");
@@ -483,7 +481,6 @@ async function startCloudLogin(provider) {
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
-  if (!quiet) setBusy(refreshButton, true);
   try {
     render(await api("/api/cloud/archive"));
     clearPageError();
@@ -495,7 +492,6 @@ async function load({ quiet = false } = {}) {
     throw error;
   } finally {
     loading = false;
-    setBusy(refreshButton, false);
   }
 }
 
@@ -519,7 +515,6 @@ async function runArchive() {
   }
 }
 
-refreshButton?.addEventListener("click", () => load());
 runButton?.addEventListener("click", runArchive);
 document.querySelectorAll("[data-provider-configure]").forEach((button) => {
   button.addEventListener("click", () => openProviderConfig(button.dataset.providerConfigure));

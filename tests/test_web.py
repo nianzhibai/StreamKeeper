@@ -381,6 +381,11 @@ class WebTests(TestCase):
         self.assertIn('mobileLabel: "录像"', shell)
         self.assertIn('aria-current="page"', shell)
 
+        page_header_style = style.split('.page-head {', 1)[1].split('}', 1)[0]
+        page_title_style = style.split('.page-heading h1 {', 1)[1].split('}', 1)[0]
+        self.assertIn('align-items: center;', page_header_style)
+        self.assertIn('min-height: 38px;', page_title_style)
+        self.assertIn('align-items: center;', page_title_style)
         self.assertIn('@media (max-width: 640px)', style)
         self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr))', style)
         self.assertIn('.nav-link[data-nav="archive"]', style)
@@ -391,9 +396,22 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260824', page.text)
+                self.assertIn('/static/style.css?v=20260828', page.text)
                 self.assertIn('/static/sprite.js?v=20260821', page.text)
                 self.assertIn('/static/shell.js?v=20260821', page.text)
+                self.assertNotIn('class="page-eyebrow"', page.text)
+                self.assertNotIn('id="refresh-button"', page.text)
+                self.assertRegex(
+                    page.text,
+                    r'<div class="page-heading">\s*<h1>[^<]+</h1>\s*</div>',
+                )
+
+    def test_page_scripts_do_not_bind_removed_refresh_controls(self) -> None:
+        self.login()
+        for script in ("dashboard.js", "tasks.js", "recordings.js", "archive.js", "logs.js"):
+            with self.subTest(script=script):
+                self.assertNotIn("#refresh-button", self.client.get(f"/static/{script}").text)
+        self.assertIn('id="cloud-login-refresh"', self.client.get("/archive").text)
 
     def test_task_url_input_keeps_standard_field_size_on_phones(self) -> None:
         self.login()
@@ -428,7 +446,7 @@ class WebTests(TestCase):
         self.assertIn("form.elements.recording_output_format.value", settings_script)
 
         self.assertIn("仅覆盖当前任务", task_page)
-        self.assertIn("/static/tasks.js?v=20260823", task_page)
+        self.assertIn("/static/tasks.js?v=20260828", task_page)
         self.assertIn("form.output_format.value = state.recordingDefaults.output_format", tasks_script)
         self.assertIn("form.segment_seconds.value = String(state.recordingDefaults.segment_seconds)", tasks_script)
         self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", tasks_script)
@@ -922,7 +940,7 @@ class WebTests(TestCase):
         self.assertIn("payload.inspection_token = inspection.token", tasks_script)
         self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
         self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
-        self.assertIn("/static/tasks.js?v=20260823", self.client.get("/tasks").text)
+        self.assertIn("/static/tasks.js?v=20260828", self.client.get("/tasks").text)
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
         self.login()

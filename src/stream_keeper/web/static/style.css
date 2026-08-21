@@ -840,7 +840,7 @@ img, svg {
   top: var(--sticky-top);
   z-index: 20;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--s7);
   margin-top: calc(var(--s8) * -1);
@@ -869,34 +869,14 @@ body.is-stuck .page-head::after {
   min-width: 0;
 }
 
-.page-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  margin-bottom: var(--s2);
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.page-eyebrow .ic {
-  width: 13px;
-  height: 13px;
-}
-
 .page-heading h1 {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
   font-size: clamp(var(--t-xl), 2.2vw, var(--t-2xl));
   font-weight: 660;
   line-height: 1.18;
   letter-spacing: -0.032em;
-}
-
-.page-heading p {
-  margin-top: var(--s2);
-  color: var(--text-3);
-  font-size: var(--t-base);
 }
 
 .page-tools {

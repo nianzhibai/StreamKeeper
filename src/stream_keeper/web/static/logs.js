@@ -40,7 +40,6 @@ const CATEGORIES = {
 const elements = {
   list: document.querySelector("#log-list"),
   empty: document.querySelector("#log-empty"),
-  refresh: document.querySelector("#refresh-button"),
   search: document.querySelector("#log-search"),
   auto: document.querySelector("#log-auto"),
   levelChips: document.querySelector("#log-level-chips"),
@@ -219,7 +218,6 @@ function applyPayload(payload) {
 async function load({ quiet = false } = {}) {
   if (state.loading) return;
   state.loading = true;
-  if (!quiet) setBusy(elements.refresh, true);
   try {
     const query = filterParams();
     query.set("limit", String(PAGE_SIZE));
@@ -240,7 +238,6 @@ async function load({ quiet = false } = {}) {
     throw error;
   } finally {
     state.loading = false;
-    setBusy(elements.refresh, false);
   }
 }
 
@@ -361,7 +358,6 @@ async function clearLog() {
   }
 }
 
-elements.refresh?.addEventListener("click", () => load());
 elements.more?.addEventListener("click", loadEarlier);
 elements.clear?.addEventListener("click", clearLog);
 

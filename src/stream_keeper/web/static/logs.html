@@ -8,7 +8,7 @@
     <title>运行日志 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260824" />
+    <link rel="stylesheet" href="/static/style.css?v=20260828" />
   </head>
   <body data-page="logs">
     <script src="/static/sprite.js?v=20260821"></script>
@@ -17,16 +17,9 @@
       <main class="main" id="main">
         <header class="page-head">
           <div class="page-heading">
-            <p class="page-eyebrow">
-              <svg class="ic" aria-hidden="true"><use href="#ic-logs" /></svg>运维
-            </p>
             <h1>运行日志</h1>
-            <p>开播、录制、归档与登录的关键事件</p>
           </div>
           <div class="page-tools">
-            <button id="refresh-button" class="btn btn-icon btn-soft" type="button" aria-label="刷新" title="刷新">
-              <svg class="ic" aria-hidden="true"><use href="#ic-refresh" /></svg>
-            </button>
             <a id="log-export" class="btn btn-soft" href="/api/events/export?format=txt" download>
               <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-download" /></svg>导出
             </a>
@@ -147,6 +140,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/logs.js?v=20260814"></script>
+    <script type="module" src="/static/logs.js?v=20260828"></script>
   </body>
 </html>

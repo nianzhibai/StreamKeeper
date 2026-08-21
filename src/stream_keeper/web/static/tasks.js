@@ -10,7 +10,6 @@ import {
   paintProgress,
   QUALITY_LABELS,
   recordingProgressMarkup,
-  setBusy,
   setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
@@ -54,7 +53,6 @@ const elements = {
   monitorHint: document.querySelector("#monitor-hint"),
   inspectButton: document.querySelector("#inspect-button"),
   inspectResult: document.querySelector("#inspect-result"),
-  refresh: document.querySelector("#refresh-button"),
 };
 
 function taskTitle(task) {
@@ -196,7 +194,6 @@ function render() {
 async function load({ quiet = false } = {}) {
   if (state.loading) return;
   state.loading = true;
-  if (!quiet) setBusy(elements.refresh, true);
   try {
     const [tasks, recordingDefaults] = await Promise.all([
       api("/api/tasks"),
@@ -214,7 +211,6 @@ async function load({ quiet = false } = {}) {
     throw error;
   } finally {
     state.loading = false;
-    setBusy(elements.refresh, false);
   }
 }
 
@@ -452,7 +448,6 @@ async function taskAction(action, taskId) {
 
 document.querySelectorAll("[data-open-create]").forEach((button) => button.addEventListener("click", openCreateDialog));
 document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", closeDialog));
-elements.refresh?.addEventListener("click", () => load());
 elements.inspectButton.addEventListener("click", inspectRoom);
 elements.form.addEventListener("submit", submitTask);
 elements.form.elements.url.addEventListener("input", invalidateInspection);
