@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 from stream_keeper.models import LiveInfo, RecordingResult, SelectedSource
 from stream_keeper.settings import Settings
 from stream_keeper.web import scheduler as scheduler_module
-from stream_keeper.web.scheduler import TaskScheduler
+from stream_keeper.web.scheduler import ResizableRecordingLimiter, TaskScheduler
 from stream_keeper.web.schemas import TaskConfig, TaskStatus
 from stream_keeper.web.store import TaskStore
 
@@ -103,6 +103,75 @@ class SchedulerTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    async def test_increasing_recording_limit_releases_queued_work(self) -> None:
+        limiter = ResizableRecordingLimiter(1)
+        first_started = asyncio.Event()
+        second_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold(started: asyncio.Event) -> None:
+            async with limiter:
+                started.set()
+                await release.wait()
+
+        first = asyncio.create_task(hold(first_started))
+        second = asyncio.create_task(hold(second_started))
+        await first_started.wait()
+        await asyncio.sleep(0)
+        self.assertFalse(second_started.is_set())
+        self.assertEqual(limiter.active, 1)
+
+        limiter.resize(2)
+        await asyncio.wait_for(second_started.wait(), timeout=1)
+        self.assertEqual(limiter.active, 2)
+
+        release.set()
+        await asyncio.gather(first, second)
+        self.assertEqual(limiter.active, 0)
+
+    async def test_lowering_recording_limit_drains_without_interrupting_active_work(self) -> None:
+        limiter = ResizableRecordingLimiter(2)
+        releases = {name: asyncio.Event() for name in ("first", "second", "third")}
+        started: asyncio.Queue[str] = asyncio.Queue()
+
+        async def hold(name: str) -> None:
+            async with limiter:
+                await started.put(name)
+                await releases[name].wait()
+
+        tasks = [asyncio.create_task(hold(name)) for name in releases]
+        self.assertEqual({await started.get(), await started.get()}, {"first", "second"})
+        self.assertEqual(limiter.active, 2)
+
+        limiter.resize(1)
+        releases["first"].set()
+        await asyncio.sleep(0.02)
+        self.assertTrue(started.empty())
+        self.assertEqual(limiter.active, 1)
+
+        releases["second"].set()
+        self.assertEqual(await asyncio.wait_for(started.get(), timeout=1), "third")
+        self.assertEqual(limiter.active, 1)
+        releases["third"].set()
+        await asyncio.gather(*tasks)
+        self.assertEqual(limiter.active, 0)
+
+    async def test_cancelled_recording_waiter_does_not_leak_capacity(self) -> None:
+        limiter = ResizableRecordingLimiter(1)
+        await limiter.acquire()
+        waiter = asyncio.create_task(limiter.acquire())
+        await asyncio.sleep(0)
+
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        limiter.release()
+        self.assertEqual(limiter.active, 0)
+
+        async with limiter:
+            self.assertEqual(limiter.active, 1)
+        self.assertEqual(limiter.active, 0)
 
     async def test_one_shot_offline_task_stops(self) -> None:
         task = await self.store.create(make_config(monitor=False))

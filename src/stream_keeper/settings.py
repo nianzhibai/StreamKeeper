@@ -14,6 +14,8 @@ UPLOAD_MODES = frozenset({UPLOAD_MODE_SCHEDULED, UPLOAD_MODE_RECORDING_COMPLETED
 ENV_PREFIX = "STREAM_KEEPER_"
 DEFAULT_WEB_USERNAME = "admin"
 WEB_SETUP_PASSWORD = "replace-with-a-long-random-password"
+DEFAULT_MAX_CONCURRENT_RECORDINGS = 3
+MAX_RECORDING_CONCURRENCY = 100
 
 
 def _env_name(suffix: str) -> str:
@@ -71,7 +73,7 @@ class Settings:
     upload_hour: int = 1
     upload_min_age_minutes: int = 10
     upload_timeout_seconds: int = 300
-    max_concurrent_recordings: int = 3
+    max_concurrent_recordings: int = DEFAULT_MAX_CONCURRENT_RECORDINGS
     fetch_timeout_seconds: int = 45
     proxy: str | None = None
     douyin_cookies: str | None = None
@@ -127,7 +129,9 @@ class Settings:
             upload_hour=int(_env("UPLOAD_HOUR", "1")),
             upload_min_age_minutes=int(_env("UPLOAD_MIN_AGE_MINUTES", "10")),
             upload_timeout_seconds=int(_env("UPLOAD_TIMEOUT_SECONDS", "300")),
-            max_concurrent_recordings=int(_env("MAX_CONCURRENT_RECORDINGS", "3")),
+            max_concurrent_recordings=int(
+                _env("MAX_CONCURRENT_RECORDINGS", str(DEFAULT_MAX_CONCURRENT_RECORDINGS))
+            ),
             fetch_timeout_seconds=int(_env("FETCH_TIMEOUT_SECONDS", "45")),
             proxy=_env("PROXY") or None,
             douyin_cookies=_env("DOUYIN_COOKIE") or None,
@@ -167,8 +171,10 @@ class Settings:
         if self.upload_timeout_seconds < 30:
             raise RuntimeError("STREAM_KEEPER_UPLOAD_TIMEOUT_SECONDS 不能小于 30")
         self._validate_cloud_uploads()
-        if self.max_concurrent_recordings < 1:
-            raise RuntimeError("STREAM_KEEPER_MAX_CONCURRENT_RECORDINGS 必须大于 0")
+        if not 1 <= self.max_concurrent_recordings <= MAX_RECORDING_CONCURRENCY:
+            raise RuntimeError(
+                f"STREAM_KEEPER_MAX_CONCURRENT_RECORDINGS 必须在 1 到 {MAX_RECORDING_CONCURRENCY} 之间"
+            )
         if self.fetch_timeout_seconds < 5:
             raise RuntimeError("STREAM_KEEPER_FETCH_TIMEOUT_SECONDS 不能小于 5")
         if not 1 <= self.web_port <= 65535:

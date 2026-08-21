@@ -7,7 +7,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from ..platforms import LiveStreamClient
-from ..settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD
+from ..settings import (
+    CLOUD_ARCHIVE_ROOT,
+    DEFAULT_MAX_CONCURRENT_RECORDINGS,
+    MAX_RECORDING_CONCURRENCY,
+    WEB_SETUP_PASSWORD,
+)
 
 Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
@@ -80,6 +85,14 @@ class RecordingDefaults(StrictModel):
         if self.segment_count and not self.segment_seconds:
             raise ValueError("设置录制段数时，分段时长必须大于 0")
         return self
+
+
+class RecordingRuntimeSettings(StrictModel):
+    max_concurrent_recordings: int = Field(
+        default=DEFAULT_MAX_CONCURRENT_RECORDINGS,
+        ge=1,
+        le=MAX_RECORDING_CONCURRENCY,
+    )
 
 
 class TaskConfig(StrictModel):

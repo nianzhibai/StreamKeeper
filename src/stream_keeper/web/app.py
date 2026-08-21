@@ -71,6 +71,7 @@ from .schemas import (
     LoginRequest,
     RecordingDefaults,
     RecordingDirectoryView,
+    RecordingRuntimeSettings,
     RuntimeEventListView,
     SystemInfo,
     TaskConfig,
@@ -251,6 +252,7 @@ def create_app(
         inspection_handoffs = InspectionHandoffStore()
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
+    recording_settings_lock = asyncio.Lock()
     authentication_enabled = bool(settings.web_password)
 
     async def persist_cloud_archive_config(
@@ -305,6 +307,10 @@ def create_app(
     async def lifespan(_app: FastAPI):
         settings.prepare()
         await store.initialize()
+        runtime_settings = await store.sync_recording_runtime_settings(
+            RecordingRuntimeSettings(max_concurrent_recordings=settings.max_concurrent_recordings)
+        )
+        scheduler.set_max_concurrent_recordings(runtime_settings.max_concurrent_recordings)
         if authentication_enabled:
             if settings.web_setup_mode:
                 # Older releases persisted the documented placeholder as if it
@@ -316,7 +322,7 @@ def create_app(
         await event_log.info(
             "system",
             f"服务已启动（v{__version__}）",
-            f"录像目录 {settings.recordings_dir} · 最多同时录制 {settings.max_concurrent_recordings} 个直播间",
+            f"录像目录 {settings.recordings_dir} · 最多同时录制 {scheduler.max_concurrent_recordings} 个直播间",
         )
         await scheduler.startup()
         await upload_service.startup()
@@ -602,6 +608,31 @@ def create_app(
             "system",
             "录制默认设置已更新",
             f"{payload.output_format.upper()} · {segment_description} · {count_description}",
+        )
+        return payload
+
+    @app.get("/api/settings/recording-runtime", response_model=RecordingRuntimeSettings)
+    async def get_recording_runtime_settings() -> RecordingRuntimeSettings:
+        return RecordingRuntimeSettings(max_concurrent_recordings=scheduler.max_concurrent_recordings)
+
+    @app.put("/api/settings/recording-runtime", response_model=RecordingRuntimeSettings)
+    async def update_recording_runtime_settings(
+        payload: RecordingRuntimeSettings,
+    ) -> RecordingRuntimeSettings:
+        async with recording_settings_lock:
+            previous = scheduler.max_concurrent_recordings
+            await store.save_recording_runtime_settings(payload)
+            scheduler.set_max_concurrent_recordings(payload.max_concurrent_recordings)
+        active = scheduler.recording_task_count
+        effect = (
+            f"当前 {active} 个录制不会中断，新任务将在数量降至上限后开始"
+            if active > payload.max_concurrent_recordings
+            else "新上限已立即生效"
+        )
+        await event_log.info(
+            "system",
+            "录制并发设置已更新",
+            f"{previous} → {payload.max_concurrent_recordings} · {effect}",
         )
         return payload
 
@@ -1014,7 +1045,7 @@ def create_app(
             free_space_gb=round(usage.free / (1024**3), 2),
             active_tasks=scheduler.active_task_count,
             recording_tasks=scheduler.recording_task_count,
-            max_concurrent_recordings=settings.max_concurrent_recordings,
+            max_concurrent_recordings=scheduler.max_concurrent_recordings,
         )
 
     return app

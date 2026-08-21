@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 
 from stream_keeper.settings import WEB_SETUP_PASSWORD
-from stream_keeper.web.schemas import RecordingDefaults, TaskConfig, TaskStatus
+from stream_keeper.web.schemas import RecordingDefaults, RecordingRuntimeSettings, TaskConfig, TaskStatus
 from stream_keeper.web.store import TaskStore
 
 
@@ -43,6 +43,31 @@ class StoreTests(IsolatedAsyncioTestCase):
         await self.store.initialize()
 
         self.assertEqual(await self.store.get_recording_defaults(), configured)
+
+    async def test_recording_runtime_settings_follow_environment_until_web_save(self) -> None:
+        initial = await self.store.sync_recording_runtime_settings(
+            RecordingRuntimeSettings(max_concurrent_recordings=3)
+        )
+        self.assertEqual(initial.max_concurrent_recordings, 3)
+
+        environment_update = await self.store.sync_recording_runtime_settings(
+            RecordingRuntimeSettings(max_concurrent_recordings=5)
+        )
+        self.assertEqual(environment_update.max_concurrent_recordings, 5)
+
+        await self.store.save_recording_runtime_settings(
+            RecordingRuntimeSettings(max_concurrent_recordings=2)
+        )
+        ignored_environment_update = await self.store.sync_recording_runtime_settings(
+            RecordingRuntimeSettings(max_concurrent_recordings=7)
+        )
+        self.assertEqual(ignored_environment_update.max_concurrent_recordings, 2)
+
+        await self.store.initialize()
+        self.assertEqual(
+            (await self.store.get_recording_runtime_settings()).max_concurrent_recordings,
+            2,
+        )
 
     async def test_create_update_list_and_delete(self) -> None:
         created = await self.store.create(task_config())

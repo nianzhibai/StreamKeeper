@@ -30,6 +30,12 @@ class FakeScheduler:
         self.initial_infos: list[LiveInfo | None] = []
         self.active_task_count = 0
         self.recording_task_count = 0
+        self.max_concurrent_recordings = 3
+        self.capacity_updates: list[int] = []
+
+    def set_max_concurrent_recordings(self, limit: int) -> None:
+        self.max_concurrent_recordings = limit
+        self.capacity_updates.append(limit)
 
     async def startup(self) -> None:
         pass
@@ -408,12 +414,17 @@ class WebTests(TestCase):
         settings_script = self.client.get("/static/settings.js").text
         tasks_script = self.client.get("/static/tasks.js").text
 
+        self.assertIn("录制并发", settings_page)
+        self.assertIn('name="max_concurrent_recordings"', settings_page)
+        self.assertIn("调低不会中断正在录制的直播", settings_page)
         self.assertIn("录制默认值", settings_page)
         self.assertIn('name="recording_output_format"', settings_page)
         self.assertIn('name="recording_segment_seconds"', settings_page)
         self.assertIn('name="recording_segment_count"', settings_page)
-        self.assertIn("/static/settings.js?v=20260823", settings_page)
+        self.assertIn("/static/settings.js?v=20260825", settings_page)
         self.assertIn("/api/settings/recording-defaults", settings_script)
+        self.assertIn("/api/settings/recording-runtime", settings_script)
+        self.assertIn("form.elements.max_concurrent_recordings.value", settings_script)
         self.assertIn("form.elements.recording_output_format.value", settings_script)
 
         self.assertIn("仅覆盖当前任务", task_page)
@@ -719,6 +730,41 @@ class WebTests(TestCase):
         self.assertEqual(unchanged["output_format"], "mp4")
         self.assertEqual(unchanged["segment_seconds"], 600)
         self.assertEqual(unchanged["segment_count"], 4)
+
+    def test_recording_concurrency_can_be_updated_at_runtime(self) -> None:
+        self.login()
+        initial = self.client.get("/api/settings/recording-runtime")
+        self.assertEqual(initial.json(), {"max_concurrent_recordings": 3})
+        self.assertEqual(self.scheduler.capacity_updates, [3])
+
+        rejected = self.client.put(
+            "/api/settings/recording-runtime",
+            json={"max_concurrent_recordings": 2},
+        )
+        self.assertEqual(rejected.status_code, 403)
+        for invalid in (0, 101):
+            with self.subTest(invalid=invalid):
+                response = self.client.put(
+                    "/api/settings/recording-runtime",
+                    headers=self.csrf_headers,
+                    json={"max_concurrent_recordings": invalid},
+                )
+                self.assertEqual(response.status_code, 422)
+
+        saved = self.client.put(
+            "/api/settings/recording-runtime",
+            headers=self.csrf_headers,
+            json={"max_concurrent_recordings": 2},
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json(), {"max_concurrent_recordings": 2})
+        self.assertEqual(self.scheduler.max_concurrent_recordings, 2)
+        self.assertEqual(self.scheduler.capacity_updates, [3, 2])
+        self.assertEqual(self.client.get("/api/system").json()["max_concurrent_recordings"], 2)
+        self.assertEqual(
+            asyncio.run(self.store.get_recording_runtime_settings()).max_concurrent_recordings,
+            2,
+        )
 
     def test_create_task_accepts_share_text_and_stores_clean_url(self) -> None:
         self.login()

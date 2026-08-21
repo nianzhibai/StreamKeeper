@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from ..cloud.config import CLOUD_PROVIDER_ORDER
-from ..settings import WEB_SETUP_PASSWORD
+from ..settings import MAX_RECORDING_CONCURRENCY, WEB_SETUP_PASSWORD
 from .schemas import (
     EventCategory,
     EventLevel,
     RecordingDefaults,
+    RecordingRuntimeSettings,
     RuntimeEventFacetsView,
     RuntimeEventSummaryView,
     RuntimeEventView,
@@ -174,6 +175,21 @@ class TaskStore:
                 ),
             )
             connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS recording_runtime_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    max_concurrent_recordings INTEGER NOT NULL
+                        CHECK (max_concurrent_recordings BETWEEN 1 AND {MAX_RECORDING_CONCURRENCY}),
+                    source_max_concurrent_recordings INTEGER
+                        CHECK (
+                            source_max_concurrent_recordings IS NULL
+                            OR source_max_concurrent_recordings BETWEEN 1 AND {MAX_RECORDING_CONCURRENCY}
+                        ),
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS web_sessions (
                     token_hash TEXT PRIMARY KEY,
@@ -305,6 +321,87 @@ class TaskStore:
                     defaults.segment_count,
                     utc_now().isoformat(),
                 ),
+            )
+
+    async def sync_recording_runtime_settings(
+        self,
+        defaults: RecordingRuntimeSettings,
+    ) -> RecordingRuntimeSettings:
+        """Seed runtime capacity from the environment until the Web UI takes ownership."""
+
+        return await self._run_sync(self._sync_recording_runtime_settings_sync, defaults)
+
+    def _sync_recording_runtime_settings_sync(
+        self,
+        defaults: RecordingRuntimeSettings,
+    ) -> RecordingRuntimeSettings:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT max_concurrent_recordings, source_max_concurrent_recordings
+                FROM recording_runtime_settings
+                WHERE id = 1
+                """
+            ).fetchone()
+            if row is not None:
+                web_managed = row["source_max_concurrent_recordings"] is None
+                source_matches = row["source_max_concurrent_recordings"] == defaults.max_concurrent_recordings
+                if web_managed or source_matches:
+                    return RecordingRuntimeSettings(
+                        max_concurrent_recordings=row["max_concurrent_recordings"]
+                    )
+
+            connection.execute(
+                """
+                INSERT INTO recording_runtime_settings (
+                    id, max_concurrent_recordings, source_max_concurrent_recordings, updated_at
+                ) VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    max_concurrent_recordings = excluded.max_concurrent_recordings,
+                    source_max_concurrent_recordings = excluded.source_max_concurrent_recordings,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    defaults.max_concurrent_recordings,
+                    defaults.max_concurrent_recordings,
+                    utc_now().isoformat(),
+                ),
+            )
+        return defaults
+
+    async def get_recording_runtime_settings(self) -> RecordingRuntimeSettings:
+        return await self._run_sync(self._get_recording_runtime_settings_sync)
+
+    def _get_recording_runtime_settings_sync(self) -> RecordingRuntimeSettings:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT max_concurrent_recordings
+                FROM recording_runtime_settings
+                WHERE id = 1
+                """
+            ).fetchone()
+        if row is None:
+            return RecordingRuntimeSettings()
+        return RecordingRuntimeSettings(max_concurrent_recordings=row["max_concurrent_recordings"])
+
+    async def save_recording_runtime_settings(self, settings: RecordingRuntimeSettings) -> None:
+        await self._run_sync(self._save_recording_runtime_settings_sync, settings)
+
+    def _save_recording_runtime_settings_sync(self, settings: RecordingRuntimeSettings) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO recording_runtime_settings (
+                    id, max_concurrent_recordings, source_max_concurrent_recordings, updated_at
+                ) VALUES (1, ?, NULL, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    max_concurrent_recordings = excluded.max_concurrent_recordings,
+                    source_max_concurrent_recordings = NULL,
+                    updated_at = excluded.updated_at
+                """,
+                (settings.max_concurrent_recordings, utc_now().isoformat()),
             )
 
     async def sync_cloud_upload_config(

@@ -31,6 +31,7 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.quark_upload_path, CLOUD_ARCHIVE_ROOT)
         self.assertEqual(settings.wopan_upload_path, CLOUD_ARCHIVE_ROOT)
         self.assertEqual(settings.upload_mode, "scheduled")
+        self.assertEqual(settings.max_concurrent_recordings, 3)
 
     def test_documented_placeholder_enables_web_setup_mode(self) -> None:
         self.assertTrue(Settings(web_password=WEB_SETUP_PASSWORD).web_setup_mode)
@@ -73,6 +74,8 @@ class SettingsTests(TestCase):
                 {"session_ttl_hours": 0},
                 {"login_max_attempts": 0},
                 {"login_window_seconds": 9},
+                {"max_concurrent_recordings": 0},
+                {"max_concurrent_recordings": 101},
             )
             for overrides in invalid_values:
                 with self.subTest(overrides=overrides), self.assertRaises(RuntimeError):
@@ -154,6 +157,7 @@ class SettingsTests(TestCase):
             "STREAM_KEEPER_WEB_PASSWORD": "long-test-password",
             "STREAM_KEEPER_WEB_WORKERS": "1",
             "STREAM_KEEPER_UPLOAD_MODE": "recording_completed",
+            "STREAM_KEEPER_MAX_CONCURRENT_RECORDINGS": "8",
             "STREAM_KEEPER_PROXY": "http://127.0.0.1:7890",
             "STREAM_KEEPER_DOUYIN_COOKIE": "douyin=1",
             "STREAM_KEEPER_BILIBILI_COOKIE": "bili=1",
@@ -170,6 +174,7 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.web_username, "operator")
         self.assertEqual(settings.web_password, "long-test-password")
         self.assertEqual(settings.upload_mode, "recording_completed")
+        self.assertEqual(settings.max_concurrent_recordings, 8)
         self.assertEqual(settings.proxy, "http://127.0.0.1:7890")
         self.assertEqual(settings.douyin_cookies, "douyin=1")
         self.assertEqual(settings.bilibili_cookies, "bili=1")

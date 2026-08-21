@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from ..models import LiveInfo, RecordingResult
 from ..platforms import LiveStreamClient
 from ..recorder import Recorder, RecorderOptions
-from ..settings import Settings
+from ..settings import MAX_RECORDING_CONCURRENCY, Settings
 from .events import EventLog
 from .schemas import TaskRecord, TaskStatus
 from .store import TaskStore
@@ -49,6 +50,68 @@ def _duration_text(seconds: float) -> str:
     return f"{remainder} 秒"
 
 
+class ResizableRecordingLimiter:
+    """FIFO recording capacity that can be resized without stranding waiters."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = self._validated_limit(limit)
+        self._active = 0
+        self._waiters: deque[asyncio.Future[None]] = deque()
+
+    @staticmethod
+    def _validated_limit(limit: int) -> int:
+        if not 1 <= limit <= MAX_RECORDING_CONCURRENCY:
+            raise ValueError(f"录制并发数量必须在 1 到 {MAX_RECORDING_CONCURRENCY} 之间")
+        return limit
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    @property
+    def active(self) -> int:
+        return self._active
+
+    def resize(self, limit: int) -> None:
+        self._limit = self._validated_limit(limit)
+        self._dispatch()
+
+    async def acquire(self) -> None:
+        future = asyncio.get_running_loop().create_future()
+        self._waiters.append(future)
+        self._dispatch()
+        try:
+            await future
+        except asyncio.CancelledError:
+            # A cancellation can race with set_result(). Return a slot that was
+            # already granted; cancelled pending futures are skipped by dispatch.
+            if future.done() and not future.cancelled():
+                self.release()
+            else:
+                self._dispatch()
+            raise
+
+    def release(self) -> None:
+        if self._active <= 0:
+            raise RuntimeError("录制并发槽位释放次数超过获取次数")
+        self._active -= 1
+        self._dispatch()
+
+    def _dispatch(self) -> None:
+        while self._active < self._limit and self._waiters:
+            future = self._waiters.popleft()
+            if future.done():
+                continue
+            self._active += 1
+            future.set_result(None)
+
+    async def __aenter__(self) -> None:
+        await self.acquire()
+
+    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
+        self.release()
+
+
 class TaskScheduler:
     """Owns all background monitor and FFmpeg tasks for one server process."""
 
@@ -70,7 +133,7 @@ class TaskScheduler:
         self._recording_completed_handlers: list[RecordingCompletedHandler] = []
         if recording_completed_handler is not None:
             self._recording_completed_handlers.append(recording_completed_handler)
-        self._recording_slots = asyncio.Semaphore(settings.max_concurrent_recordings)
+        self._recording_slots = ResizableRecordingLimiter(settings.max_concurrent_recordings)
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._recorders: dict[str, Recorder] = {}
         # Tasks whose last check failed, so a stuck room reports once instead of
@@ -86,6 +149,13 @@ class TaskScheduler:
     @property
     def recording_task_count(self) -> int:
         return len(self._recorders)
+
+    @property
+    def max_concurrent_recordings(self) -> int:
+        return self._recording_slots.limit
+
+    def set_max_concurrent_recordings(self, limit: int) -> None:
+        self._recording_slots.resize(limit)
 
     def add_recording_completed_handler(self, handler: RecordingCompletedHandler) -> None:
         if handler not in self._recording_completed_handlers:

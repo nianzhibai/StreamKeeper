@@ -17,6 +17,7 @@ const modeHint = document.querySelector("[data-mode-hint]");
 
 let cloud = null;
 let recordingDefaults = null;
+let recordingRuntime = null;
 let pristine = "";
 
 function formSignature() {
@@ -48,10 +49,12 @@ function validateRecordingSettings() {
   );
 }
 
-function populate(cloudValue, recordingValue) {
+function populate(cloudValue, recordingValue, runtimeValue) {
   cloud = cloudValue;
   recordingDefaults = recordingValue;
+  recordingRuntime = runtimeValue;
   form.reset();
+  form.elements.max_concurrent_recordings.value = String(recordingRuntime.max_concurrent_recordings);
   form.elements.recording_output_format.value = recordingDefaults.output_format;
   form.elements.recording_segment_seconds.value = String(recordingDefaults.segment_seconds);
   form.elements.recording_segment_count.value = String(recordingDefaults.segment_count);
@@ -67,11 +70,12 @@ function populate(cloudValue, recordingValue) {
 
 async function load() {
   try {
-    const [cloudValue, recordingValue] = await Promise.all([
+    const [cloudValue, recordingValue, runtimeValue] = await Promise.all([
       api("/api/cloud/archive"),
       api("/api/settings/recording-defaults"),
+      api("/api/settings/recording-runtime"),
     ]);
-    populate(cloudValue, recordingValue);
+    populate(cloudValue, recordingValue, runtimeValue);
     clearPageError();
     setHealth(true);
   } catch (error) {
@@ -98,6 +102,9 @@ async function submit(event) {
     segment_seconds: Number(fields.recording_segment_seconds.value),
     segment_count: Number(fields.recording_segment_count.value),
   };
+  const runtimePayload = {
+    max_concurrent_recordings: Number(fields.max_concurrent_recordings.value),
+  };
   const scheduleChanged = (
     schedulePayload.mode !== cloud.schedule.mode
     || schedulePayload.hour !== cloud.schedule.hour
@@ -109,17 +116,23 @@ async function submit(event) {
     || recordingPayload.segment_seconds !== recordingDefaults.segment_seconds
     || recordingPayload.segment_count !== recordingDefaults.segment_count
   );
+  const runtimeChanged = (
+    runtimePayload.max_concurrent_recordings !== recordingRuntime.max_concurrent_recordings
+  );
   saveButton.textContent = "保存中…";
   try {
-    const [cloudValue, recordingValue] = await Promise.all([
+    const [cloudValue, recordingValue, runtimeValue] = await Promise.all([
       scheduleChanged
         ? api("/api/cloud/archive/schedule", { method: "PUT", body: JSON.stringify(schedulePayload) })
         : Promise.resolve(cloud),
       recordingChanged
         ? api("/api/settings/recording-defaults", { method: "PUT", body: JSON.stringify(recordingPayload) })
         : Promise.resolve(recordingDefaults),
+      runtimeChanged
+        ? api("/api/settings/recording-runtime", { method: "PUT", body: JSON.stringify(runtimePayload) })
+        : Promise.resolve(recordingRuntime),
     ]);
-    populate(cloudValue, recordingValue);
+    populate(cloudValue, recordingValue, runtimeValue);
     toast("设置已保存", "success");
   } catch (error) {
     toast(error.message, "error");
@@ -140,7 +153,7 @@ form.addEventListener("change", () => {
   updateDirtyState();
 });
 resetButton.addEventListener("click", () => {
-  if (cloud && recordingDefaults) populate(cloud, recordingDefaults);
+  if (cloud && recordingDefaults && recordingRuntime) populate(cloud, recordingDefaults, recordingRuntime);
 });
 window.addEventListener("beforeunload", (event) => {
   if (formSignature() === pristine) return;
