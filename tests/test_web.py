@@ -364,6 +364,93 @@ class WebTests(TestCase):
         self.assertIsNone(self.client.cookies.get(SESSION_COOKIE_NAME))
         self.assertEqual(self.client.get("/api/auth/session").status_code, 401)
 
+    def test_account_credentials_can_be_updated_and_all_sessions_are_revoked(self) -> None:
+        self.login()
+        current_token = self.client.cookies.get(SESSION_COOKIE_NAME)
+        second_token, _ = asyncio.run(self.store.create_session("admin", 3600))
+
+        missing_csrf = self.client.put(
+            "/api/settings/account",
+            json={
+                "username": "operator",
+                "current_password": "secret-password",
+                "new_password": None,
+                "new_password_confirmation": None,
+            },
+        )
+        self.assertEqual(missing_csrf.status_code, 403)
+
+        wrong_password = self.client.put(
+            "/api/settings/account",
+            headers=self.csrf_headers,
+            json={
+                "username": "operator",
+                "current_password": "incorrect-password",
+                "new_password": None,
+                "new_password_confirmation": None,
+            },
+        )
+        self.assertEqual(wrong_password.status_code, 400)
+        self.assertIn("当前密码不正确", wrong_password.text)
+        self.assertIsNotNone(asyncio.run(self.store.get_session(current_token)))
+        self.assertIsNotNone(asyncio.run(self.store.get_session(second_token)))
+
+        mismatch = self.client.put(
+            "/api/settings/account",
+            headers=self.csrf_headers,
+            json={
+                "username": "operator",
+                "current_password": "secret-password",
+                "new_password": "replacement-password",
+                "new_password_confirmation": "different-password",
+            },
+        )
+        self.assertEqual(mismatch.status_code, 422)
+
+        unchanged = self.client.put(
+            "/api/settings/account",
+            headers=self.csrf_headers,
+            json={
+                "username": "admin",
+                "current_password": "secret-password",
+                "new_password": None,
+                "new_password_confirmation": None,
+            },
+        )
+        self.assertEqual(unchanged.status_code, 400)
+        self.assertIn("均未更改", unchanged.text)
+        self.assertIsNotNone(asyncio.run(self.store.get_session(current_token)))
+
+        updated = self.client.put(
+            "/api/settings/account",
+            headers=self.csrf_headers,
+            json={
+                "username": "  operator  ",
+                "current_password": "secret-password",
+                "new_password": "replacement-password",
+                "new_password_confirmation": "replacement-password",
+            },
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json(), {"username": "operator", "sessions_revoked": True})
+        self.assertIsNone(self.client.cookies.get(SESSION_COOKIE_NAME))
+        self.assertIsNone(asyncio.run(self.store.get_session(current_token)))
+        self.assertIsNone(asyncio.run(self.store.get_session(second_token)))
+        self.assertEqual(self.client.get("/api/auth/session").status_code, 401)
+
+        old_login = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "secret-password"},
+        )
+        self.assertEqual(old_login.status_code, 401)
+        new_login = self.client.post(
+            "/api/auth/login",
+            json={"username": "operator", "password": "replacement-password"},
+        )
+        self.assertEqual(new_login.status_code, 200)
+        events = self.client.get("/api/events").json()["events"]
+        self.assertTrue(any(event["message"] == "管理员登录账号已更新" for event in events))
+
     def test_phone_navigation_groups_secondary_pages_under_more_sheet(self) -> None:
         self.login()
         shell = self.client.get("/static/shell.js").text
@@ -396,7 +483,7 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260828', page.text)
+                self.assertIn('/static/style.css?v=20260829', page.text)
                 self.assertIn('/static/sprite.js?v=20260821', page.text)
                 self.assertIn('/static/shell.js?v=20260821', page.text)
                 self.assertNotIn('class="page-eyebrow"', page.text)
@@ -432,6 +519,11 @@ class WebTests(TestCase):
         settings_script = self.client.get("/static/settings.js").text
         tasks_script = self.client.get("/static/tasks.js").text
 
+        self.assertIn("管理员账号", settings_page)
+        self.assertIn('id="account-settings-form"', settings_page)
+        self.assertIn('name="current_password"', settings_page)
+        self.assertIn('name="new_password_confirmation"', settings_page)
+        self.assertIn("所有登录会话都会立即失效", settings_page)
         self.assertIn("录制并发", settings_page)
         self.assertIn('name="max_concurrent_recordings"', settings_page)
         self.assertIn("调低不会中断正在录制的直播", settings_page)
@@ -439,7 +531,10 @@ class WebTests(TestCase):
         self.assertIn('name="recording_output_format"', settings_page)
         self.assertIn('name="recording_segment_seconds"', settings_page)
         self.assertIn('name="recording_segment_count"', settings_page)
-        self.assertIn("/static/settings.js?v=20260825", settings_page)
+        self.assertIn("/static/settings.js?v=20260830", settings_page)
+        self.assertIn("/api/settings/account", settings_script)
+        self.assertIn('window.location.replace("/login")', settings_script)
+        self.assertIn("new_password_confirmation", settings_script)
         self.assertIn("/api/settings/recording-defaults", settings_script)
         self.assertIn("/api/settings/recording-runtime", settings_script)
         self.assertIn("form.elements.max_concurrent_recordings.value", settings_script)

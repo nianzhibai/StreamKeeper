@@ -46,6 +46,42 @@ class AuthSession(StrictModel):
     expires_at: datetime
 
 
+class WebAccountUpdate(StrictModel):
+    username: str = Field(min_length=1, max_length=128)
+    current_password: SecretStr = Field(min_length=1, max_length=1024)
+    new_password: SecretStr | None = Field(default=None, min_length=10, max_length=1024)
+    new_password_confirmation: SecretStr | None = Field(default=None, min_length=10, max_length=1024)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("用户名不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_new_password(self) -> WebAccountUpdate:
+        if self.new_password is None:
+            if self.new_password_confirmation is not None:
+                raise ValueError("请先输入新密码")
+            return self
+        password = self.new_password.get_secret_value()
+        if password == WEB_SETUP_PASSWORD:
+            raise ValueError("不能使用默认占位密码")
+        if (
+            self.new_password_confirmation is None
+            or password != self.new_password_confirmation.get_secret_value()
+        ):
+            raise ValueError("两次输入的新密码不一致")
+        return self
+
+
+class WebAccountUpdateResult(StrictModel):
+    username: str
+    sessions_revoked: Literal[True] = True
+
+
 class AuthStatus(StrictModel):
     authentication_enabled: bool
     setup_required: bool

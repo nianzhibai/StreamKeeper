@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from stream_keeper.settings import WEB_SETUP_PASSWORD
 from stream_keeper.web.schemas import RecordingDefaults, RecordingRuntimeSettings, TaskConfig, TaskStatus
-from stream_keeper.web.store import TaskStore
+from stream_keeper.web.store import CredentialUpdateStatus, TaskStore
 
 
 def task_config(**overrides) -> TaskConfig:
@@ -212,6 +212,37 @@ class StoreTests(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await self.store.update_runtime(created.id, url="https://example.com")
 
+    async def test_initialize_migrates_legacy_web_credentials_to_source_tracking(self) -> None:
+        legacy_path = Path(self.temp_dir.name) / "legacy-auth.db"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE web_auth_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    username TEXT NOT NULL,
+                    password_salt BLOB NOT NULL,
+                    password_digest BLOB NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO web_auth_state (
+                    id, username, password_salt, password_digest, updated_at
+                ) VALUES (1, 'legacy-admin', ?, ?, ?)
+                """,
+                (bytes(16), bytes(32), "2026-01-01T00:00:00+00:00"),
+            )
+
+        legacy_store = TaskStore(legacy_path)
+        await legacy_store.initialize()
+        with sqlite3.connect(legacy_path) as connection:
+            source = connection.execute(
+                "SELECT credential_source FROM web_auth_state WHERE id = 1"
+            ).fetchone()[0]
+        self.assertEqual(source, "legacy")
+
     async def test_session_create_validate_expire_and_delete(self) -> None:
         token, created = await self.store.create_session("admin", 3600)
         self.assertTrue(token)
@@ -279,6 +310,83 @@ class StoreTests(IsolatedAsyncioTestCase):
         await self.store.initialize()
         self.assertFalse(await self.store.sync_web_credentials("admin", "second-long-password"))
         self.assertIsNotNone(await self.store.get_session(replacement_token))
+
+    async def test_web_credential_update_revokes_sessions_and_takes_ownership_from_environment(self) -> None:
+        await self.store.sync_web_credentials("admin", "first-long-password")
+        first_token, _ = await self.store.create_session("admin", 3600)
+        second_token, _ = await self.store.create_session("admin", 3600)
+
+        invalid = await self.store.update_web_credentials(
+            "admin",
+            "incorrect-password",
+            "operator",
+            "new-secure-password",
+        )
+        self.assertIs(invalid, CredentialUpdateStatus.INVALID_CURRENT_PASSWORD)
+        self.assertIsNotNone(await self.store.get_session(first_token))
+        self.assertIsNotNone(await self.store.get_session(second_token))
+
+        updated = await self.store.update_web_credentials(
+            "admin",
+            "first-long-password",
+            "operator",
+            "new-secure-password",
+        )
+        self.assertIs(updated, CredentialUpdateStatus.UPDATED)
+        self.assertIsNone(await self.store.get_session(first_token))
+        self.assertIsNone(await self.store.get_session(second_token))
+        self.assertTrue(await self.store.verify_web_credentials("operator", "new-secure-password"))
+        self.assertFalse(await self.store.verify_web_credentials("admin", "first-long-password"))
+
+        # Once the Web UI takes ownership, a later restart must not restore
+        # changed environment credentials over the administrator's choice.
+        self.assertFalse(await self.store.sync_web_credentials("admin", "environment-replacement"))
+        self.assertTrue(await self.store.verify_web_credentials("operator", "new-secure-password"))
+
+        replacement_token, _ = await self.store.create_session("operator", 3600)
+        unchanged = await self.store.update_web_credentials(
+            "operator",
+            "new-secure-password",
+            "operator",
+            "new-secure-password",
+        )
+        self.assertIs(unchanged, CredentialUpdateStatus.UNCHANGED)
+        self.assertIsNotNone(await self.store.get_session(replacement_token))
+        self.assertNotIn(b"new-secure-password", self.store.database_path.read_bytes())
+
+    async def test_concurrent_old_login_cannot_survive_credential_update(self) -> None:
+        await self.store.sync_web_credentials("admin", "first-long-password")
+        update_result, raced_login = await asyncio.gather(
+            self.store.update_web_credentials(
+                "admin",
+                "first-long-password",
+                "operator",
+                "new-secure-password",
+            ),
+            self.store.authenticate_web_session("admin", "first-long-password", 3600),
+        )
+
+        self.assertIs(update_result, CredentialUpdateStatus.UPDATED)
+        if raced_login is not None:
+            raced_token, _ = raced_login
+            self.assertIsNone(await self.store.get_session(raced_token))
+        self.assertTrue(await self.store.verify_web_credentials("operator", "new-secure-password"))
+
+    async def test_authentication_creates_session_only_for_current_credentials(self) -> None:
+        await self.store.sync_web_credentials("admin", "first-long-password")
+        self.assertIsNone(
+            await self.store.authenticate_web_session("admin", "incorrect-password", 3600)
+        )
+
+        authenticated = await self.store.authenticate_web_session(
+            "admin",
+            "first-long-password",
+            3600,
+        )
+        self.assertIsNotNone(authenticated)
+        token, session = authenticated
+        self.assertEqual(session.username, "admin")
+        self.assertEqual(await self.store.get_session(token), session)
 
     async def test_first_web_credentials_are_initialized_once_and_verified_from_digest(self) -> None:
         self.assertFalse(await self.store.web_credentials_configured())

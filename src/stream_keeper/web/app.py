@@ -78,8 +78,10 @@ from .schemas import (
     TaskCreate,
     TaskRecord,
     TaskUpdate,
+    WebAccountUpdate,
+    WebAccountUpdateResult,
 )
-from .store import TaskStore, WebSession, utc_now
+from .store import CredentialUpdateStatus, TaskStore, WebSession, utc_now
 from .uploader import RecordingUploadService
 
 # The activity-log page judges "is everything fine" over the last day.
@@ -426,11 +428,13 @@ def create_app(
         if await store.is_login_blacklisted(client_key):
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
 
-        credentials_match = await store.verify_web_credentials(
+        ttl_seconds = settings.session_ttl_hours * 3600
+        authenticated = await store.authenticate_web_session(
             payload.username,
             payload.password.get_secret_value(),
+            ttl_seconds,
         )
-        if not credentials_match:
+        if authenticated is None:
             blacklisted = await store.register_login_failure(
                 client_key,
                 settings.login_max_attempts,
@@ -442,10 +446,19 @@ def create_app(
             await event_log.warning("auth", "登录失败：用户名或密码错误", source)
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
+        token, session = authenticated
         if not await store.accept_login_success(client_key):
+            await store.delete_session(token)
             raise HTTPException(status_code=403, detail="当前 IP 已被永久禁止登录")
         await event_log.info("auth", f"{payload.username} 登录成功", source)
-        return await issue_authenticated_session(payload.username, request, response)
+        set_session_cookie(
+            response,
+            token,
+            session,
+            ttl_seconds,
+            secure=request.url.scheme == "https",
+        )
+        return _auth_session_response(session)
 
     @app.get("/api/auth/blocked-clients", response_model=list[str])
     async def blocked_clients() -> list[str]:
@@ -594,6 +607,42 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    @app.put("/api/settings/account", response_model=WebAccountUpdateResult)
+    async def update_web_account(
+        payload: WebAccountUpdate,
+        request: Request,
+        response: Response,
+    ) -> WebAccountUpdateResult:
+        if not authentication_enabled:
+            raise HTTPException(status_code=409, detail="当前实例未启用登录认证")
+        current_username = request.state.auth_session.username
+        result = await store.update_web_credentials(
+            current_username,
+            payload.current_password.get_secret_value(),
+            payload.username,
+            payload.new_password.get_secret_value() if payload.new_password is not None else None,
+        )
+        if result is CredentialUpdateStatus.INVALID_CURRENT_PASSWORD:
+            # This is a form validation failure, not an expired Web session;
+            # returning 401 would make the shared API client redirect too early.
+            raise HTTPException(status_code=400, detail="当前密码不正确")
+        if result is CredentialUpdateStatus.UNCHANGED:
+            raise HTTPException(status_code=400, detail="用户名和密码均未更改")
+
+        await event_log.info(
+            "auth",
+            "管理员登录账号已更新",
+            f"{current_username} → {payload.username} · 所有登录会话已注销",
+        )
+        response.delete_cookie(
+            SESSION_COOKIE_NAME,
+            path="/",
+            secure=request.url.scheme == "https",
+            httponly=True,
+            samesite="strict",
+        )
+        return WebAccountUpdateResult(username=payload.username)
 
     @app.get("/api/settings/recording-defaults", response_model=RecordingDefaults)
     async def get_recording_defaults() -> RecordingDefaults:

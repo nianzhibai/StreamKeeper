@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="description" content="配置录制并发、任务默认值与网盘归档计划" />
+    <meta name="description" content="配置管理员账号、录制并发、任务默认值与网盘归档计划" />
     <title>设置 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260828" />
+    <link rel="stylesheet" href="/static/style.css?v=20260829" />
   </head>
   <body data-page="settings">
     <script src="/static/sprite.js?v=20260821"></script>
@@ -28,6 +28,42 @@
           <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
           <span data-error-text></span>
         </div>
+
+        <section id="account-settings-card" class="card">
+          <header class="card-head">
+            <span class="card-glyph tone-info" aria-hidden="true">
+              <svg class="ic ic-sm"><use href="#ic-shield" /></svg>
+            </span>
+            <div class="card-heading">
+              <h2>管理员账号</h2>
+              <p>修改用于登录 Stream Keeper 的用户名或密码</p>
+            </div>
+          </header>
+          <form id="account-settings-form" class="card-body">
+            <div class="form-grid">
+              <label class="field">
+                <span class="field-label">用户名</span>
+                <input class="input" name="username" type="text" minlength="1" maxlength="128" autocomplete="username" required />
+              </label>
+              <label class="field">
+                <span class="field-label">当前密码</span>
+                <input class="input" name="current_password" type="password" maxlength="1024" autocomplete="current-password" required />
+              </label>
+              <label class="field">
+                <span class="field-label">新密码<em>留空则不修改</em></span>
+                <input class="input" name="new_password" type="password" minlength="10" maxlength="1024" autocomplete="new-password" />
+              </label>
+              <label class="field">
+                <span class="field-label">确认新密码</span>
+                <input class="input" name="new_password_confirmation" type="password" minlength="10" maxlength="1024" autocomplete="new-password" />
+              </label>
+              <p class="field-hint span-2">更新后，包括当前浏览器在内的所有登录会话都会立即失效，需要使用新凭据重新登录。</p>
+              <div class="account-actions span-2">
+                <button id="account-save-button" class="btn btn-primary" type="submit" disabled>更新账号并退出</button>
+              </div>
+            </div>
+          </form>
+        </section>
 
         <form id="archive-schedule-form" class="settings">
           <section class="card">
@@ -132,6 +168,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/settings.js?v=20260825"></script>
+    <script type="module" src="/static/settings.js?v=20260830"></script>
   </body>
 </html>

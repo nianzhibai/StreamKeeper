@@ -69,6 +69,12 @@ class WebSession:
     expires_at: datetime
 
 
+class CredentialUpdateStatus(str, Enum):
+    UPDATED = "updated"
+    INVALID_CURRENT_PASSWORD = "invalid_current_password"
+    UNCHANGED = "unchanged"
+
+
 class TaskStore:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
@@ -208,10 +214,23 @@ class TaskStore:
                     username TEXT NOT NULL,
                     password_salt BLOB NOT NULL,
                     password_digest BLOB NOT NULL,
+                    credential_source TEXT NOT NULL DEFAULT 'legacy'
+                        CHECK (credential_source IN ('legacy', 'environment', 'web')),
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            auth_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(web_auth_state)").fetchall()
+            }
+            if "credential_source" not in auth_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE web_auth_state
+                    ADD COLUMN credential_source TEXT NOT NULL DEFAULT 'legacy'
+                        CHECK (credential_source IN ('legacy', 'environment', 'web'))
+                    """
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS web_login_failures (
@@ -623,6 +642,116 @@ class TaskStore:
             ).fetchone()
         return self._stored_credentials_match(row, username, password)
 
+    async def authenticate_web_session(
+        self,
+        username: str,
+        password: str,
+        ttl_seconds: int,
+    ) -> tuple[str, WebSession] | None:
+        """Verify credentials and atomically create a session for that credential version."""
+
+        return await self._run_sync(
+            self._authenticate_web_session_sync,
+            username,
+            password,
+            ttl_seconds,
+        )
+
+    def _authenticate_web_session_sync(
+        self,
+        username: str,
+        password: str,
+        ttl_seconds: int,
+    ) -> tuple[str, WebSession] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+            ).fetchone()
+            if not self._stored_credentials_match(row, username, password):
+                return None
+
+            # The expensive KDF above runs without a SQLite write lock. Once it
+            # succeeds, lock and ensure those exact credentials are still current
+            # before inserting the session. A concurrent account update either
+            # makes this check fail or runs afterwards and deletes the new row.
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+            ).fetchone()
+            credentials_unchanged = current is not None and all(
+                secrets.compare_digest(current[column], row[column])
+                for column in ("username", "password_salt", "password_digest")
+            )
+            if not credentials_unchanged:
+                return None
+            return self._create_session_in_connection_sync(connection, username, ttl_seconds)
+
+    async def update_web_credentials(
+        self,
+        current_username: str,
+        current_password: str,
+        new_username: str,
+        new_password: str | None,
+    ) -> CredentialUpdateStatus:
+        normalized_username = new_username.strip()
+        if not normalized_username:
+            raise ValueError("用户名不能为空")
+        if new_password is not None and len(new_password) < 10:
+            raise ValueError("新密码至少需要 10 个字符")
+        if new_password == WEB_SETUP_PASSWORD:
+            raise ValueError("不能使用默认占位密码")
+        return await self._run_sync(
+            self._update_web_credentials_sync,
+            current_username,
+            current_password,
+            normalized_username,
+            new_password,
+        )
+
+    def _update_web_credentials_sync(
+        self,
+        current_username: str,
+        current_password: str,
+        new_username: str,
+        new_password: str | None,
+    ) -> CredentialUpdateStatus:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT username, password_salt, password_digest
+                FROM web_auth_state
+                WHERE id = 1
+                """
+            ).fetchone()
+            if not self._stored_credentials_match(row, current_username, current_password):
+                return CredentialUpdateStatus.INVALID_CURRENT_PASSWORD
+
+            salt = row["password_salt"]
+            digest = row["password_digest"]
+            password_changed = False
+            if new_password is not None:
+                candidate_digest = self._credential_digest(new_password, salt)
+                password_changed = not secrets.compare_digest(digest, candidate_digest)
+                if password_changed:
+                    salt = secrets.token_bytes(16)
+                    digest = self._credential_digest(new_password, salt)
+
+            if new_username == row["username"] and not password_changed:
+                return CredentialUpdateStatus.UNCHANGED
+
+            connection.execute(
+                """
+                UPDATE web_auth_state
+                SET username = ?, password_salt = ?, password_digest = ?,
+                    credential_source = 'web', updated_at = ?
+                WHERE id = 1
+                """,
+                (new_username, salt, digest, utc_now().isoformat()),
+            )
+            connection.execute("DELETE FROM web_sessions")
+        return CredentialUpdateStatus.UPDATED
+
     async def initialize_web_credentials(self, username: str, password: str) -> bool:
         """Create the first Web account exactly once and clear pre-setup login state."""
 
@@ -643,8 +772,9 @@ class TaskStore:
             salt = secrets.token_bytes(16)
             connection.execute(
                 """
-                INSERT INTO web_auth_state (id, username, password_salt, password_digest, updated_at)
-                VALUES (1, ?, ?, ?, ?)
+                INSERT INTO web_auth_state (
+                    id, username, password_salt, password_digest, credential_source, updated_at
+                ) VALUES (1, ?, ?, ?, 'web', ?)
                 """,
                 (username, salt, self._credential_digest(password, salt), utc_now().isoformat()),
             )
@@ -665,6 +795,12 @@ class TaskStore:
                 "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
             ).fetchone()
             if not self._stored_credentials_match(row, username, password):
+                if row is not None:
+                    # A real account created by an older setup-mode release is
+                    # Web-managed even though its source column was not present.
+                    connection.execute(
+                        "UPDATE web_auth_state SET credential_source = 'web' WHERE id = 1"
+                    )
                 return False
             connection.execute("DELETE FROM web_auth_state WHERE id = 1")
             connection.execute("DELETE FROM web_sessions")
@@ -679,22 +815,35 @@ class TaskStore:
 
     def _sync_web_credentials_sync(self, username: str, password: str) -> bool:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
+                """
+                SELECT username, password_salt, password_digest, credential_source
+                FROM web_auth_state
+                WHERE id = 1
+                """
             ).fetchone()
+            if row is not None and row["credential_source"] == "web":
+                return False
             if self._stored_credentials_match(row, username, password):
+                if row is not None and row["credential_source"] != "environment":
+                    connection.execute(
+                        "UPDATE web_auth_state SET credential_source = 'environment' WHERE id = 1"
+                    )
                 return False
 
             salt = secrets.token_bytes(16)
             digest = self._credential_digest(password, salt)
             connection.execute(
                 """
-                INSERT INTO web_auth_state (id, username, password_salt, password_digest, updated_at)
-                VALUES (1, ?, ?, ?, ?)
+                INSERT INTO web_auth_state (
+                    id, username, password_salt, password_digest, credential_source, updated_at
+                ) VALUES (1, ?, ?, ?, 'environment', ?)
                 ON CONFLICT(id) DO UPDATE SET
                     username = excluded.username,
                     password_salt = excluded.password_salt,
                     password_digest = excluded.password_digest,
+                    credential_source = excluded.credential_source,
                     updated_at = excluded.updated_at
                 """,
                 (username, salt, digest, utc_now().isoformat()),
@@ -1179,6 +1328,15 @@ class TaskStore:
         return await self._run_sync(self._create_session_sync, username, ttl_seconds)
 
     def _create_session_sync(self, username: str, ttl_seconds: int) -> tuple[str, WebSession]:
+        with self._connect() as connection:
+            return self._create_session_in_connection_sync(connection, username, ttl_seconds)
+
+    def _create_session_in_connection_sync(
+        self,
+        connection: sqlite3.Connection,
+        username: str,
+        ttl_seconds: int,
+    ) -> tuple[str, WebSession]:
         token = secrets.token_urlsafe(32)
         now = utc_now()
         session = WebSession(
@@ -1187,21 +1345,20 @@ class TaskStore:
             created_at=now,
             expires_at=now + timedelta(seconds=ttl_seconds),
         )
-        with self._connect() as connection:
-            connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (now.isoformat(),))
-            connection.execute(
-                """
-                INSERT INTO web_sessions (token_hash, username, csrf_token, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    self._session_token_hash(token),
-                    session.username,
-                    session.csrf_token,
-                    session.created_at.isoformat(),
-                    session.expires_at.isoformat(),
-                ),
-            )
+        connection.execute("DELETE FROM web_sessions WHERE expires_at <= ?", (now.isoformat(),))
+        connection.execute(
+            """
+            INSERT INTO web_sessions (token_hash, username, csrf_token, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                self._session_token_hash(token),
+                session.username,
+                session.csrf_token,
+                session.created_at.isoformat(),
+                session.expires_at.isoformat(),
+            ),
+        )
         return token, session
 
     async def get_session(self, token: str) -> WebSession | None:

@@ -3291,6 +3291,11 @@ select.input {
   gap: var(--s5);
 }
 
+.account-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .provider-card {
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
@@ -4105,6 +4110,7 @@ select.input {
   .input-row { grid-template-columns: minmax(0, 1fr); }
   .input-row .btn { width: 100%; }
   .save-bar { align-items: stretch; flex-direction: column; gap: var(--s4); }
+  .account-actions .btn { width: 100%; }
   .save-actions .btn { flex: 1; }
 
   .modal-player .player-stage { max-height: calc(100dvh - 280px); aspect-ratio: auto; }
