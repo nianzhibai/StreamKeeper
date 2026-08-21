@@ -14,7 +14,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..cloud import CloudArchiveConfig, CloudUploadClient, CloudUploadError, create_cloud_client
+from ..cloud import (
+    CLOUD_PROVIDER_LABELS,
+    CloudArchiveConfig,
+    CloudUploadClient,
+    CloudUploadError,
+    UploadStage,
+    create_cloud_client,
+)
 from ..models import RecordingResult
 from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, UPLOAD_MODE_SCHEDULED, Settings
 from .events import EventLog
@@ -49,12 +56,34 @@ class UploadCandidate:
     mtime_ns: int
 
 
+def _error_message(error: BaseException, *, limit: int = 500) -> str:
+    return (" ".join(str(error).split()) or type(error).__name__)[:limit]
+
+
+@dataclass(frozen=True, slots=True)
+class UploadTargetFailure:
+    name: str
+    error: Exception
+
+
 @dataclass(frozen=True, slots=True)
 class ArchiveCandidateResult:
-    """The useful work completed before one recording's archive stopped."""
+    """All target outcomes completed before one recording can be cleaned up."""
 
     uploaded_copies: int = 0
-    error: Exception | None = None
+    target_failures: tuple[UploadTargetFailure, ...] = ()
+    file_error: Exception | None = None
+
+    @property
+    def error(self) -> Exception | None:
+        details: list[str] = []
+        if self.file_error is not None:
+            details.append(_error_message(self.file_error))
+        details.extend(
+            f"{CLOUD_PROVIDER_LABELS.get(failure.name, failure.name)}：{_error_message(failure.error)}"
+            for failure in self.target_failures
+        )
+        return CloudUploadError("；".join(details)) if details else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +95,56 @@ class UploadRunSummary:
     failed_files: int = 0
 
 
+@dataclass(slots=True)
+class UploadTargetExecution:
+    """Live and final state for one target in the current archive run."""
+
+    name: str
+    status: str = "pending"
+    current_file: str | None = None
+    transferred_bytes: int = 0
+    total_bytes: int = 0
+    verified_files: int = 0
+    uploaded_copies: int = 0
+    failed_files: int = 0
+    error: str | None = None
+
+    def begin(self, candidate: UploadCandidate) -> None:
+        self.status = "preparing"
+        self.current_file = candidate.relative_path.as_posix()
+        self.transferred_bytes = 0
+        self.total_bytes = candidate.size
+
+    def progress(self, stage: UploadStage, transferred_bytes: int) -> None:
+        self.status = stage
+        self.transferred_bytes = max(0, transferred_bytes)
+
+    def succeed(self, *, created: bool) -> None:
+        self.verified_files += 1
+        self.uploaded_copies += int(created)
+        self.transferred_bytes = self.total_bytes
+        self.status = "partial" if self.failed_files else "success"
+
+    def fail(self, error: Exception) -> None:
+        self.failed_files += 1
+        self.error = _error_message(error)
+        self.status = "partial" if self.verified_files else "failed"
+
+    def finish(self, *, had_candidates: bool) -> None:
+        if self.failed_files:
+            self.status = "partial" if self.verified_files else "failed"
+        elif self.verified_files:
+            self.status = "success"
+        else:
+            self.status = "skipped" if had_candidates else "success"
+        self.current_file = None
+
+    def cancel(self) -> None:
+        self.status = "cancelled"
+        self.current_file = None
+        self.error = "任务已取消"
+
+
 @dataclass(frozen=True, slots=True)
 class UploadExecution:
     trigger: str
@@ -74,6 +153,7 @@ class UploadExecution:
     finished_at: datetime | None = None
     summary: UploadRunSummary | None = None
     error: str | None = None
+    targets: tuple[UploadTargetExecution, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,29 +372,53 @@ class RecordingUploadService:
         recording_outputs: tuple[str, ...] | None = None,
     ) -> None:
         started_at = self._clock()
-        self._last_execution = UploadExecution(trigger=trigger, status="running", started_at=started_at)
+        target_states = {name: UploadTargetExecution(name=name) for name, _path in config.targets}
+        execution_targets = tuple(target_states.values())
+        self._last_execution = UploadExecution(
+            trigger=trigger,
+            status="running",
+            started_at=started_at,
+            targets=execution_targets,
+        )
         label = TRIGGER_LABELS.get(trigger, trigger)
-        targets = "、".join(name for name, _path in config.targets)
-        await self.events.info("upload", f"开始{label}归档到网盘", f"上传目标：{targets}" if targets else None)
+        target_labels = "、".join(CLOUD_PROVIDER_LABELS.get(name, name) for name in target_states)
+        await self.events.info(
+            "upload",
+            f"开始{label}归档到网盘",
+            f"上传目标：{target_labels}" if target_labels else None,
+        )
         try:
-            summary = await self.run_once(config, recording_outputs=recording_outputs)
+            summary = await self.run_once(
+                config,
+                recording_outputs=recording_outputs,
+                target_states=target_states,
+            )
         except asyncio.CancelledError:
+            for state in execution_targets:
+                state.cancel()
             self._last_execution = UploadExecution(
                 trigger=trigger,
                 status="cancelled",
                 started_at=started_at,
                 finished_at=self._clock(),
                 error="任务已取消，本地文件保持不变",
+                targets=execution_targets,
             )
             raise
         except Exception as exc:
-            message = (" ".join(str(exc).split()) or type(exc).__name__)[:500]
+            message = _error_message(exc)
+            for state in execution_targets:
+                if state.status in {"pending", "preparing", "uploading", "verifying"}:
+                    state.status = "failed"
+                    state.current_file = None
+                    state.error = message
             self._last_execution = UploadExecution(
                 trigger=trigger,
                 status="failed",
                 started_at=started_at,
                 finished_at=self._clock(),
                 error=message,
+                targets=execution_targets,
             )
             logger.exception("网盘归档任务执行失败，本地文件保持不变")
             await self.events.error("upload", f"{label}归档执行失败，本地文件保持不变", message)
@@ -325,6 +429,7 @@ class RecordingUploadService:
             started_at=started_at,
             finished_at=self._clock(),
             summary=summary,
+            targets=execution_targets,
         )
         detail = (
             f"扫描 {summary.scanned_files} 个文件 · 跳过 {summary.skipped_files} 个 · "
@@ -580,20 +685,61 @@ class RecordingUploadService:
         targets: tuple[UploadTarget, ...],
         config: CloudArchiveConfig,
         clients: dict[str, CloudUploadClient],
+        target_states: dict[str, UploadTargetExecution],
     ) -> ArchiveCandidateResult:
-        """Upload one recording to every target, then delete the local copy."""
+        """Reconcile one recording on every target, then clean it up atomically.
+
+        A provider failure belongs to that provider, not to the whole fan-out.
+        Remaining targets are still attempted, while any failed target keeps the
+        source file available for a later idempotent retry.
+        """
         uploaded_copies = 0
-        try:
+        failures: list[UploadTargetFailure] = []
+        if not self._is_unchanged(candidate):
+            return ArchiveCandidateResult(file_error=CloudUploadError("文件在扫描后发生变化"))
+
+        for target in targets:
             if not self._is_unchanged(candidate):
-                raise CloudUploadError("文件在扫描后发生变化")
-            for target in targets:
-                if not self._is_unchanged(candidate):
-                    raise CloudUploadError("文件在上传期间发生变化")
-                remote_path = posixpath.join(target.remote_root, candidate.relative_path.as_posix())
+                return ArchiveCandidateResult(
+                    uploaded_copies=uploaded_copies,
+                    target_failures=tuple(failures),
+                    file_error=CloudUploadError("文件在上传期间发生变化"),
+                )
+
+            state = target_states[target.name]
+            state.begin(candidate)
+            remote_path = posixpath.join(target.remote_root, candidate.relative_path.as_posix())
+            try:
                 client = await self._get_client(target, config, clients)
-                if await client.upload_verified(candidate.path, remote_path):
-                    uploaded_copies += 1
-                logger.info("录像已在 %s 上确认：%s", target.name, remote_path)
+                created = await client.upload_verified(
+                    candidate.path,
+                    remote_path,
+                    progress=state.progress,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                state.fail(exc)
+                failures.append(UploadTargetFailure(name=target.name, error=exc))
+                logger.error(
+                    "录像在 %s 归档失败，继续尝试其他目标 %s：%s",
+                    target.name,
+                    candidate.path,
+                    exc,
+                )
+                continue
+
+            state.succeed(created=created)
+            uploaded_copies += int(created)
+            logger.info("录像已在 %s 上确认：%s", target.name, remote_path)
+
+        if failures:
+            return ArchiveCandidateResult(
+                uploaded_copies=uploaded_copies,
+                target_failures=tuple(failures),
+            )
+
+        try:
             if not self._is_unchanged(candidate):
                 raise CloudUploadError("文件在上传完成后发生变化")
             active_directories = await self._active_recording_directories()
@@ -605,7 +751,7 @@ class RecordingUploadService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return ArchiveCandidateResult(uploaded_copies=uploaded_copies, error=exc)
+            return ArchiveCandidateResult(uploaded_copies=uploaded_copies, file_error=exc)
 
         logger.info("所有目标上传成功，已删除本地录像：%s", candidate.path)
         if removed_directories:
@@ -628,11 +774,13 @@ class RecordingUploadService:
         config: CloudArchiveConfig | None = None,
         *,
         recording_outputs: tuple[str, ...] | None = None,
+        target_states: dict[str, UploadTargetExecution] | None = None,
     ) -> UploadRunSummary:
         config = config or await self.get_config()
         targets = tuple(UploadTarget(name, path.rstrip("/") or "/") for name, path in config.targets)
         if not targets:
             return UploadRunSummary()
+        target_states = target_states or {target.name: UploadTargetExecution(name=target.name) for target in targets}
 
         async with self._upload_lock:
             if recording_outputs is None:
@@ -653,21 +801,30 @@ class RecordingUploadService:
             clients: dict[str, CloudUploadClient] = {}
             try:
                 for candidate in candidates:
-                    result = await self._archive_candidate(candidate, targets, config, clients)
+                    result = await self._archive_candidate(
+                        candidate,
+                        targets,
+                        config,
+                        clients,
+                        target_states,
+                    )
                     uploaded_copies += result.uploaded_copies
-                    if result.error is not None:
+                    error = result.error
+                    if error is not None:
                         failed_files += 1
-                        logger.error("录像归档失败，保留本地文件 %s：%s", candidate.path, result.error)
+                        logger.error("录像归档失败，保留本地文件 %s：%s", candidate.path, error)
                         if failed_files <= MAX_FAILURE_EVENTS_PER_RUN:
                             await self.events.error(
                                 "upload",
                                 f"{candidate.path.name} 归档失败，已保留本地文件",
-                                str(result.error),
+                                str(error),
                             )
                     else:
                         deleted_files += 1
             finally:
                 await self._close_clients(clients)
+                for state in target_states.values():
+                    state.finish(had_candidates=bool(candidates))
 
         summary = UploadRunSummary(
             scanned_files=scanned_files,

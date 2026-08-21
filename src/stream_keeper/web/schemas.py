@@ -349,6 +349,29 @@ class CloudUploadSummaryView(StrictModel):
     failed_files: int
 
 
+class CloudUploadTargetExecutionView(StrictModel):
+    name: str
+    label: str
+    status: Literal[
+        "pending",
+        "preparing",
+        "uploading",
+        "verifying",
+        "success",
+        "partial",
+        "failed",
+        "skipped",
+        "cancelled",
+    ]
+    current_file: str | None
+    transferred_bytes: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    verified_files: int = Field(ge=0)
+    uploaded_copies: int = Field(ge=0)
+    failed_files: int = Field(ge=0)
+    error: str | None
+
+
 class CloudUploadExecutionView(StrictModel):
     trigger: Literal["manual", "scheduled", "recording_completed"]
     status: Literal["running", "success", "partial", "failed", "cancelled"]
@@ -356,6 +379,7 @@ class CloudUploadExecutionView(StrictModel):
     finished_at: datetime | None
     summary: CloudUploadSummaryView | None
     error: str | None
+    targets: list[CloudUploadTargetExecutionView] = Field(default_factory=list)
 
 
 class CloudProviderView(StrictModel):

@@ -2060,6 +2060,23 @@ select.input {
   font-size: var(--t-xs);
 }
 
+.provider-logo.provider-logo.has-image {
+  overflow: hidden;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}
+
+.provider-logo-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: contain;
+}
+
+
 .provider-logo.quark {
   border-color: rgba(122, 100, 255, 0.26);
   background: rgba(122, 100, 255, 0.13);
@@ -2919,6 +2936,71 @@ select.input {
 
 .run-metrics > div.is-danger strong {
   color: var(--bad);
+}
+
+.run-targets {
+  display: grid;
+  gap: var(--s3);
+  margin-top: var(--s5);
+}
+
+.run-targets-empty {
+  padding: var(--s4);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-4);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.run-target {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.run-target.has-error {
+  border-color: var(--bad-line);
+}
+
+.run-target-info {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.run-target-info strong {
+  font-size: var(--t-sm);
+  font-weight: 620;
+}
+
+.run-target-info small {
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-target-progress {
+  overflow: hidden;
+  height: 3px;
+  margin-top: var(--s2);
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+
+.run-target-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand);
+  transition: width var(--fast) var(--ease);
 }
 
 .run-detail {

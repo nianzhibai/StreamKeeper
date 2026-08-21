@@ -8,7 +8,7 @@
     <title>网盘归档 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260822" />
+    <link rel="stylesheet" href="/static/style.css?v=20260824" />
   </head>
   <body data-page="archive">
     <script src="/static/sprite.js?v=20260821"></script>
@@ -80,7 +80,9 @@
                 aria-haspopup="dialog"
                 aria-label="配置夸克网盘"
               >
-                <span class="provider-logo quark" aria-hidden="true">夸</span>
+                <span class="provider-logo quark has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-quark.png?v=20260823" alt="" />
+                </span>
                 <span class="provider-info">
                   <strong>夸克网盘</strong>
                   <small id="quark-path" class="mono">—</small>
@@ -99,7 +101,9 @@
                 aria-haspopup="dialog"
                 aria-label="配置联通云盘"
               >
-                <span class="provider-logo wopan" aria-hidden="true">联</span>
+                <span class="provider-logo wopan has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260823" alt="" />
+                </span>
                 <span class="provider-info">
                   <strong>联通云盘</strong>
                   <small id="wopan-path" class="mono">—</small>
@@ -118,7 +122,9 @@
                 aria-haspopup="dialog"
                 aria-label="配置百度网盘"
               >
-                <span class="provider-logo baidu" aria-hidden="true">百</span>
+                <span class="provider-logo baidu has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260824" alt="" />
+                </span>
                 <span class="provider-info">
                   <strong>百度网盘</strong>
                   <small id="baidu-path" class="mono">—</small>
@@ -137,7 +143,9 @@
                 aria-haspopup="dialog"
                 aria-label="配置115网盘"
               >
-                <span class="provider-logo pan115" aria-hidden="true">115</span>
+                <span class="provider-logo pan115 has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260823" alt="" />
+                </span>
                 <span class="provider-info">
                   <strong>115网盘</strong>
                   <small id="pan115-path" class="mono">—</small>
@@ -156,7 +164,9 @@
                 aria-haspopup="dialog"
                 aria-label="配置光鸭网盘"
               >
-                <span class="provider-logo guangya" aria-hidden="true">光</span>
+                <span class="provider-logo guangya has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260823" alt="" />
+                </span>
                 <span class="provider-info">
                   <strong>光鸭网盘</strong>
                   <small id="guangya-path" class="mono">—</small>
@@ -187,6 +197,9 @@
                 <div><small>跳过</small><strong id="run-skipped">—</strong></div>
                 <div><small>清理本地</small><strong id="run-deleted">—</strong></div>
                 <div class="is-danger"><small>失败</small><strong id="run-failed">—</strong></div>
+              </div>
+              <div id="run-targets" class="run-targets" aria-live="polite">
+                <p class="run-targets-empty">尚无目标执行记录</p>
               </div>
               <p id="last-run-detail" class="run-detail">—</p>
             </div>
@@ -378,6 +391,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260821"></script>
+    <script type="module" src="/static/archive.js?v=20260824"></script>
   </body>
 </html>

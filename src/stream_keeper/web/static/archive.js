@@ -5,6 +5,7 @@ import {
   clearPageError,
   confirmAction,
   escapeHtml,
+  formatBytes,
   formatRelative,
   formatTime,
   icon,
@@ -40,7 +41,7 @@ const loginClose = document.querySelector("#cloud-login-close");
 const providerMeta = {
   quark: {
     name: "夸克网盘",
-    logo: "夸",
+    icon: "/static/provider-quark.png?v=20260823",
     app: "夸克 App",
     description: "配置夸克账号、上传根目录和启用状态",
     loginDescription: "使用夸克 App 扫码，无需手动复制 Cookie",
@@ -51,7 +52,7 @@ const providerMeta = {
   },
   wopan: {
     name: "联通云盘",
-    logo: "联",
+    icon: "/static/provider-wopan.png?v=20260823",
     app: "联通云盘 App",
     description: "配置联通云盘账号、上传根目录和启用状态",
     loginDescription: "使用联通云盘 App 扫码获取 Token",
@@ -62,7 +63,7 @@ const providerMeta = {
   },
   baidu: {
     name: "百度网盘",
-    logo: "百",
+    icon: "/static/provider-baidu.png?v=20260824",
     description: "配置百度网盘开放平台凭据",
     loginDescription: "请填写百度开放平台 Access/Refresh Token",
     supportsQr: false,
@@ -72,7 +73,7 @@ const providerMeta = {
   },
   pan115: {
     name: "115网盘",
-    logo: "115",
+    icon: "/static/provider-pan115.png?v=20260823",
     app: "115 App",
     description: "配置 115 Cookie 或 Open Token",
     loginDescription: "使用 115 App 扫码，或填写 Cookie / Open Token",
@@ -83,7 +84,7 @@ const providerMeta = {
   },
   guangya: {
     name: "光鸭网盘",
-    logo: "光",
+    icon: "/static/provider-guangya.png?v=20260823",
     description: "配置光鸭网盘 API 凭据",
     loginDescription: "请填写光鸭 Client ID 与 Access/Refresh Token",
     supportsQr: false,
@@ -92,6 +93,24 @@ const providerMeta = {
     clearField: "guangya_clear_credentials",
   },
 };
+
+const targetStatusMeta = {
+  pending: { label: "等待", tone: "idle" },
+  preparing: { label: "准备中", tone: "info" },
+  uploading: { label: "上传中", tone: "live" },
+  verifying: { label: "校验中", tone: "info" },
+  success: { label: "已确认", tone: "ok" },
+  partial: { label: "部分失败", tone: "bad" },
+  failed: { label: "失败", tone: "bad" },
+  skipped: { label: "未执行", tone: "idle" },
+  cancelled: { label: "已取消", tone: "bad" },
+};
+
+function providerLogoHtml(kind) {
+  const meta = providerMeta[kind];
+  if (!meta?.icon) return `<span class="provider-logo neutral" aria-hidden="true">?</span>`;
+  return `<span class="provider-logo ${escapeHtml(kind)} has-image" aria-hidden="true"><img class="provider-logo-image" src="${escapeHtml(meta.icon)}" alt="" /></span>`;
+}
 
 let cloud = null;
 let loading = false;
@@ -123,7 +142,49 @@ function renderProvider(kind, provider) {
   document.querySelector(`#${kind}-configure`)?.classList.toggle("is-enabled", provider.enabled);
 }
 
+function renderRunTargets(lastRun) {
+  const container = document.querySelector("#run-targets");
+  const targets = lastRun?.targets || [];
+  if (!targets.length) {
+    container.innerHTML = '<p class="run-targets-empty">尚无目标执行记录</p>';
+    return;
+  }
+
+  container.innerHTML = targets
+    .map((target) => {
+      const state = targetStatusMeta[target.status] || { label: target.status, tone: "idle" };
+      const active = ["preparing", "uploading", "verifying"].includes(target.status);
+      const total = Number(target.total_bytes || 0);
+      const transferred = Number(target.transferred_bytes || 0);
+      const percent = total > 0 ? Math.min(100, Math.max(0, (transferred / total) * 100)) : 0;
+      let detail;
+      if (active) {
+        const file = target.current_file || "正在准备录像";
+        detail = total > 0
+          ? `${file} · ${formatBytes(transferred)} / ${formatBytes(total)}`
+          : file;
+      } else if (target.verified_files || target.failed_files) {
+        detail = `确认 ${target.verified_files} 个 · 新上传 ${target.uploaded_copies} 个 · 失败 ${target.failed_files} 个`;
+      } else {
+        detail = target.status === "success" ? "本轮没有待归档文件" : "本轮未执行";
+      }
+      if (target.error) detail += ` · ${target.error}`;
+      return `
+        <article class="run-target${target.failed_files ? " has-error" : ""}">
+          ${providerLogoHtml(target.name)}
+          <div class="run-target-info">
+            <strong>${escapeHtml(target.label || providerMeta[target.name]?.name || target.name)}</strong>
+            <small title="${escapeHtml(detail)}">${escapeHtml(detail)}</small>
+            ${active ? `<span class="run-target-progress" aria-hidden="true"><i style="width:${percent.toFixed(1)}%"></i></span>` : ""}
+          </div>
+          <span class="pill tone-${state.tone}"><i class="dot"></i>${escapeHtml(state.label)}</span>
+        </article>`;
+    })
+    .join("");
+}
+
 function renderLastRun(lastRun) {
+  renderRunTargets(lastRun);
   const summary = lastRun?.summary;
   setTextIfChanged(document.querySelector("#run-scanned"), summary?.scanned_files ?? "—");
   setTextIfChanged(document.querySelector("#run-uploaded"), summary?.uploaded_copies ?? "—");
@@ -242,8 +303,8 @@ function populateProviderForm(kind) {
     section.classList.toggle("hidden", section.dataset.providerFields !== kind);
   });
 
-  providerLogo.className = `provider-logo ${kind}`;
-  providerLogo.textContent = meta.logo;
+  providerLogo.className = `provider-logo ${kind} has-image`;
+  providerLogo.innerHTML = `<img class="provider-logo-image" src="${escapeHtml(meta.icon)}" alt="" />`;
   providerTitle.textContent = `配置${meta.name}`;
   providerDescription.textContent = meta.description;
   providerLoginDescription.textContent = meta.loginDescription;

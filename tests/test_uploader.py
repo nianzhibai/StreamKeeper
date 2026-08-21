@@ -166,6 +166,42 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(second.deleted_files, 1)
         self.assertFalse(recording.exists())
 
+    async def test_one_failed_target_does_not_block_later_targets(self) -> None:
+        settings = make_settings(self.root, baidu_access_token="baidu-access-token")
+        recording = make_old_file(settings.recordings_dir / "主播" / "fan-out.ts", b"video", self.now)
+        clients = {
+            "quark": FakeUploadClient(),
+            "wopan": FakeUploadClient(fail_fragment=CLOUD_ARCHIVE_ROOT),
+            "baidu": FakeUploadClient(),
+        }
+        service = RecordingUploadService(
+            settings,
+            self.store,
+            client_factory=lambda target: clients[target.name],
+            clock=lambda: self.now,
+        )
+
+        first = await service.run_once()
+
+        self.assertEqual(first.uploaded_copies, 2)
+        self.assertEqual(first.failed_files, 1)
+        self.assertTrue(recording.exists())
+        self.assertEqual(
+            {name: len(client.calls) for name, client in clients.items()},
+            {"quark": 1, "wopan": 1, "baidu": 1},
+        )
+
+        clients["wopan"].fail_fragment = None
+        second = await service.run_once()
+
+        self.assertEqual(second.uploaded_copies, 1)
+        self.assertEqual(second.deleted_files, 1)
+        self.assertFalse(recording.exists())
+        self.assertEqual(
+            {name: len(client.calls) for name, client in clients.items()},
+            {"quark": 2, "wopan": 2, "baidu": 2},
+        )
+
     async def test_uploading_last_recording_prunes_empty_parent_directories(self) -> None:
         recording = make_old_file(
             self.settings.recordings_dir / "主播" / "2026-07-11" / "archived.ts",
@@ -367,6 +403,56 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(service.last_execution.status, "success")
         self.assertEqual(service.last_execution.summary.deleted_files, 1)
         self.assertEqual(service.last_execution.summary.skipped_files, 1)
+
+    async def test_active_execution_exposes_per_target_byte_progress(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "progress.ts", b"video", self.now)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class ProgressUploadClient(FakeUploadClient):
+            async def upload_verified(
+                self,
+                local_path: Path,
+                remote_path: str,
+                *,
+                progress: UploadProgress | None = None,
+            ) -> bool:
+                if not started.is_set():
+                    if progress is not None:
+                        progress("preparing", 0)
+                        progress("uploading", 3)
+                    started.set()
+                    await release.wait()
+                return await super().upload_verified(local_path, remote_path, progress=progress)
+
+        client = ProgressUploadClient()
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda _target: client,
+            clock=lambda: self.now,
+        )
+
+        self.assertTrue(await service.trigger("manual"))
+        active_run = service._active_run
+        await started.wait()
+
+        execution = service.last_execution
+        self.assertIsNotNone(execution)
+        assert execution is not None
+        quark = execution.targets[0]
+        self.assertEqual(quark.status, "uploading")
+        self.assertEqual(quark.current_file, "主播/progress.ts")
+        self.assertEqual(quark.transferred_bytes, 3)
+        self.assertEqual(quark.total_bytes, recording.stat().st_size)
+
+        release.set()
+        assert active_run is not None
+        await active_run
+        self.assertEqual(
+            [(target.name, target.status) for target in execution.targets],
+            [("quark", "success"), ("wopan", "success")],
+        )
 
     async def test_successful_upload_also_drops_the_browser_playback_cache(self) -> None:
         recording = make_old_file(self.settings.recordings_dir / "主播" / "played.ts", b"video", self.now)

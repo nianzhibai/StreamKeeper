@@ -385,7 +385,7 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260822', page.text)
+                self.assertIn('/static/style.css?v=20260824', page.text)
                 self.assertIn('/static/sprite.js?v=20260821', page.text)
                 self.assertIn('/static/shell.js?v=20260821', page.text)
 
@@ -1090,6 +1090,16 @@ class WebTests(TestCase):
         self.assertIn('data-provider-configure="pan115"', archive_page.text)
         self.assertIn('data-provider-configure="guangya"', archive_page.text)
         self.assertIn('id="provider-config-dialog"', archive_page.text)
+        self.assertIn('id="run-targets"', archive_page.text)
+        for icon_path in (
+            "/static/provider-quark.png",
+            "/static/provider-wopan.png",
+            "/static/provider-baidu.png",
+            "/static/provider-pan115.png",
+            "/static/provider-guangya.png",
+        ):
+            self.assertIn(icon_path, archive_page.text)
+            self.assertEqual(self.client.get(icon_path).status_code, 200)
         self.assertIn('id="archive-schedule-form"', settings_page.text)
         self.assertIn('name="recording_output_format"', settings_page.text)
         self.assertIn('name="recording_segment_seconds"', settings_page.text)
@@ -1198,6 +1208,10 @@ class WebTests(TestCase):
         self.assertIsNotNone(last_status)
         self.assertEqual(last_status["status"], "success")
         self.assertEqual(last_status["summary"]["scanned_files"], 0)
+        self.assertEqual(
+            [(target["name"], target["status"]) for target in last_status["targets"]],
+            [("quark", "success"), ("wopan", "success")],
+        )
 
         quark_payload["cookie"] = "new-cookie"
         quark_payload["clear_cookie"] = True

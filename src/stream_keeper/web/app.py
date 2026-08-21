@@ -61,6 +61,7 @@ from .schemas import (
     CloudScheduleView,
     CloudUploadExecutionView,
     CloudUploadSummaryView,
+    CloudUploadTargetExecutionView,
     CloudWoPanUpdate,
     CloudWoPanView,
     EventCategory,
@@ -165,6 +166,21 @@ async def _cloud_archive_response(
             finished_at=execution.finished_at,
             summary=summary_view,
             error=execution.error,
+            targets=[
+                CloudUploadTargetExecutionView(
+                    name=target.name,
+                    label=CLOUD_PROVIDER_LABELS.get(target.name, target.name),
+                    status=target.status,
+                    current_file=target.current_file,
+                    transferred_bytes=target.transferred_bytes,
+                    total_bytes=target.total_bytes,
+                    verified_files=target.verified_files,
+                    uploaded_copies=target.uploaded_copies,
+                    failed_files=target.failed_files,
+                    error=target.error,
+                )
+                for target in execution.targets
+            ],
         )
 
     providers = {provider.name: provider for provider in config.providers}
