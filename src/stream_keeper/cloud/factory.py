@@ -55,6 +55,7 @@ def create_cloud_client(
             values.get("refresh_token", ""),
             values.get("client_id", ""),
             values.get("client_secret", ""),
+            values.get("cookie", ""),
             timeout_seconds=timeout_seconds,
             on_credential_update=on_credential_update,
             transport=transport,

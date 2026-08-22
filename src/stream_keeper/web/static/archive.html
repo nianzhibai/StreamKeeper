@@ -310,13 +310,14 @@
               </label>
             </div>
             <details class="disclosure">
-              <summary><span>百度开放平台凭证</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
+              <summary><span>百度登录凭据</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
               <div class="form-grid">
-                <label class="field"><span class="field-label">Access Token</span><input class="input" name="baidu_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="可选" /></label>
-                <label class="field"><span class="field-label">Refresh Token</span><input class="input" name="baidu_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="用于自动刷新" /></label>
+                <label class="field span-2"><span class="field-label">Cookie</span><input class="input" name="baidu_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="扫码登录后自动保存" /></label>
+                <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="baidu_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="百度开放平台" /></label>
+                <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="baidu_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="用于自动刷新" /></label>
                 <label class="field"><span class="field-label">Client ID</span><input class="input" name="baidu_client_id" type="text" maxlength="1024" autocomplete="off" /></label>
                 <label class="field"><span class="field-label">Client Secret</span><input class="input" name="baidu_client_secret" type="password" maxlength="4096" autocomplete="new-password" /></label>
-                <label class="check span-2"><input name="baidu_clear_credentials" type="checkbox" /><span>清除已保存的百度凭证</span></label>
+                <label class="check span-2"><input name="baidu_clear_credentials" type="checkbox" /><span>清除已保存的百度凭据</span></label>
               </div>
             </details>
           </section>

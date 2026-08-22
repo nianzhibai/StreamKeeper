@@ -6,7 +6,7 @@ from typing import Any
 from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
 CLOUD_PROVIDER_ORDER = ("quark", "wopan", "baidu", "pan115", "guangya")
-QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115"})
+QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "baidu"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +40,8 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
     "baidu": CloudProviderSpec(
         name="baidu",
         label="百度网盘",
-        credential_keys=("access_token", "refresh_token", "client_id", "client_secret"),
+        credential_keys=("cookie", "access_token", "refresh_token", "client_id", "client_secret"),
+        supports_qr_login=True,
     ),
     "pan115": CloudProviderSpec(
         name="pan115",
@@ -90,7 +91,8 @@ class CloudProviderConfig:
             return bool(values.get("access_token") or values.get("refresh_token"))
         if self.name == "baidu":
             return bool(
-                values.get("access_token")
+                values.get("cookie")
+                or values.get("access_token")
                 or (values.get("refresh_token") and values.get("client_id") and values.get("client_secret"))
             )
         if self.name == "pan115":
@@ -132,7 +134,7 @@ class CloudProviderConfig:
             raise ValueError("联通云盘 access token 长度不能小于 16 字节")
         if self.name == "pan115" and self.enabled and not cookie and not (access_token or refresh_token):
             raise ValueError("启用 115 网盘前必须填写 Cookie 或 Access/Refresh Token")
-        if self.name == "baidu":
+        if self.name == "baidu" and not self.credentials.get("cookie"):
             client_id = self.credentials.get("client_id", "")
             client_secret = self.credentials.get("client_secret", "")
             if bool(client_id) != bool(client_secret):
@@ -146,7 +148,7 @@ class CloudProviderConfig:
             requirements = {
                 "quark": "Cookie",
                 "wopan": "至少一个 Token",
-                "baidu": "Access Token，或 Refresh Token 与客户端凭据",
+                "baidu": "Cookie、Access Token，或 Refresh Token 与客户端凭据",
                 "pan115": "Cookie 或 Access/Refresh Token",
                 "guangya": "Client ID 和 Access/Refresh Token",
             }

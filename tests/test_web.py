@@ -102,8 +102,8 @@ class FakeCloudLoginFlow:
         return "data:image/png;base64,dGVzdC1xci1pbWFnZQ=="
 
     async def poll(self) -> CloudLoginPoll:
-        if self.provider == "quark":
-            return CloudLoginPoll("success", {"cookie": "qr-quark-secret-cookie"})
+        if self.provider in {"quark", "baidu"}:
+            return CloudLoginPoll("success", {"cookie": f"qr-{self.provider}-secret-cookie"})
         if self.provider == "pan115":
             return CloudLoginPoll("success", {"cookie": "UID=qr-uid; CID=qr-cid; SEID=qr-seid"})
         return CloudLoginPoll(
@@ -1564,7 +1564,7 @@ class WebTests(TestCase):
         rejected = self.client.post("/api/cloud/login/quark")
         self.assertEqual(rejected.status_code, 403)
 
-        for provider in ("quark", "wopan", "pan115"):
+        for provider in ("quark", "wopan", "pan115", "baidu"):
             created = self.client.post(
                 f"/api/cloud/login/{provider}",
                 headers=self.csrf_headers,
@@ -1596,4 +1596,6 @@ class WebTests(TestCase):
         self.assertTrue(archive["wopan"]["refresh_token_configured"])
         self.assertTrue(archive["pan115"]["credential_configured"])
         self.assertEqual(archive["pan115"]["configured_credentials"], ["cookie"])
+        self.assertTrue(archive["baidu"]["credential_configured"])
+        self.assertEqual(archive["baidu"]["configured_credentials"], ["cookie"])
         self.assertNotIn("qr-seid", json.dumps(archive))

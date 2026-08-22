@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable
@@ -28,6 +29,10 @@ _WOPAN_CLIENT_ID = "1001000021"
 _115_QR_TOKEN_URL = "https://qrcodeapi.115.com/api/1.0/web/1.0/token"
 _115_QR_STATUS_URL = "https://qrcodeapi.115.com/get/status/"
 _115_QR_LOGIN_URL = "https://passportapi.115.com/app/1.0/web/1.0/login/qrcode"
+_BAIDU_QR_TOKEN_URL = "https://passport.baidu.com/v2/api/getqrcode"
+_BAIDU_QR_POLL_URL = "https://passport.baidu.com/channel/unicast"
+_BAIDU_QR_LOGIN_URL = "https://passport.baidu.com/v3/login/main/qrbdusslogin"
+_BAIDU_NETDISK_HOME = "https://pan.baidu.com/disk/home"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
@@ -383,6 +388,163 @@ class WoPanQrLoginFlow:
         await self._client.aclose()
 
 
+class BaiduQrLoginFlow:
+    # The official Web client rotates its QR code after 10 minutes.
+    qr_ttl_seconds = 5 * 60
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 40,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._sign = ""
+        self._gid = str(uuid.uuid4()).upper()
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+            transport=transport,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://pan.baidu.com/",
+                "User-Agent": _USER_AGENT,
+            },
+        )
+
+    async def _get(self, url: str, *, params: dict[str, str]) -> httpx.Response:
+        try:
+            return await self._client.get(url, params=params)
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("百度网盘扫码服务连接失败") from exc
+
+    async def start(self) -> str:
+        now = datetime.now(timezone.utc)
+        timestamp = str(int(now.timestamp() * 1000))
+        payload = _json_object(
+            await self._get(
+                _BAIDU_QR_TOKEN_URL,
+                params={
+                    "lp": "pc",
+                    "qrloginfrom": "pc",
+                    "gid": self._gid,
+                    "apiver": "v3",
+                    "tt": timestamp,
+                    "tpl": "netdisk",
+                    "logPage": f"traceId:pc_loginv5_{int(now.timestamp())},logPage:loginv5",
+                },
+            ),
+            "百度网盘",
+        )
+        if payload.get("errno") != 0:
+            raise CloudLoginError("百度网盘二维码生成失败")
+        sign = payload.get("sign")
+        imgurl = payload.get("imgurl")
+        if not isinstance(sign, str) or not sign or not isinstance(imgurl, str) or not imgurl:
+            raise CloudLoginError("百度网盘二维码响应缺少必要数据")
+        self._sign = sign
+        return f"https://{imgurl}" if not imgurl.startswith("http") else imgurl
+
+    @staticmethod
+    def _channel_state(payload: dict[str, object]) -> int | None:
+        raw = payload.get("channel_v")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        try:
+            return int(parsed.get("status", -1))
+        except (TypeError, ValueError):
+            return None
+
+    async def poll(self) -> CloudLoginPoll:
+        if not self._sign:
+            raise CloudLoginError("百度网盘扫码会话尚未初始化")
+        now = datetime.now(timezone.utc)
+        timestamp = str(int(now.timestamp() * 1000))
+        payload = _json_object(
+            await self._get(
+                _BAIDU_QR_POLL_URL,
+                params={
+                    "channel_id": self._sign,
+                    "gid": self._gid,
+                    "tpl": "netdisk",
+                    "_sdkFrom": "1",
+                    "apiver": "v3",
+                    "tt": timestamp,
+                },
+            ),
+            "百度网盘",
+        )
+        if payload.get("errno") != 0:
+            return CloudLoginPoll("waiting")
+        state = self._channel_state(payload)
+        if state == 1:
+            return CloudLoginPoll("scanned")
+        if state == 2:
+            return CloudLoginPoll("cancelled")
+        if state != 0:
+            return CloudLoginPoll("waiting")
+        data = payload.get("channel_v")
+        if not isinstance(data, str) or not data:
+            raise CloudLoginError("百度网盘扫码响应缺少登录令牌")
+        try:
+            channel = json.loads(data)
+        except ValueError as exc:
+            raise CloudLoginError("百度网盘扫码响应格式错误") from exc
+        bduss = channel.get("v") if isinstance(channel, dict) else None
+        if not isinstance(bduss, str) or not bduss:
+            raise CloudLoginError("百度网盘扫码响应缺少登录票据")
+        return CloudLoginPoll("success", {"cookie": await self._exchange(bduss)})
+
+    async def _exchange(self, bduss: str) -> str:
+        now = datetime.now(timezone.utc)
+        timestamp = str(int(now.timestamp() * 1000))
+        payload = _json_object(
+            await self._get(
+                _BAIDU_QR_LOGIN_URL,
+                params={
+                    "v": timestamp,
+                    "bduss": bduss,
+                    "u": "https%3A%2F%2Fpan.baidu.com%2Fdisk%2Fhome",
+                    "loginVersion": "v5",
+                    "qrcode": "1",
+                    "tpl": "netdisk",
+                    "apiver": "v3",
+                    "tt": timestamp,
+                },
+            ),
+            "百度网盘",
+        )
+        err_info = payload.get("errInfo")
+        error_no = err_info.get("no") if isinstance(err_info, dict) else payload.get("code")
+        if str(error_no) not in {"0", "110000"}:
+            raise CloudLoginError("百度网盘登录票据交换失败，请重新扫码")
+        # The netdisk home page redirects and installs the netdisk-scoped
+        # STOKEN cookie that the drive API requires.
+        await self._client.get(_BAIDU_NETDISK_HOME)
+        return self._cookie_header()
+
+    def _cookie_header(self) -> str:
+        values: dict[str, str] = {}
+        for cookie in self._client.cookies.jar:
+            domain = cookie.domain.lstrip(".").lower()
+            if not (domain == "baidu.com" or domain.endswith(".baidu.com")):
+                continue
+            if cookie.is_expired():
+                continue
+            values[cookie.name] = cookie.value
+        if not any(name in values for name in ("BDUSS", "STOKEN")):
+            raise CloudLoginError("百度网盘登录成功，但没有收到可用的网盘 Cookie")
+        return "; ".join(f"{name}={value}" for name, value in sorted(values.items()))
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
     if provider == "quark":
         return QuarkQrLoginFlow()
@@ -390,6 +552,8 @@ def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
         return WoPanQrLoginFlow()
     if provider == "pan115":
         return Pan115QrLoginFlow()
+    if provider == "baidu":
+        return BaiduQrLoginFlow()
     raise ValueError(f"不支持的扫码登录类型: {provider}")
 
 
@@ -441,10 +605,10 @@ class CloudLoginManager:
         self._sessions: dict[str, _CloudLoginSession] = {}
         self._provider_sessions: dict[str, str] = {}
         self._lock = asyncio.Lock()
-        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115")}
+        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115", "baidu")}
 
     async def start(self, provider: str) -> CloudLoginSnapshot:
-        if provider not in {"quark", "wopan", "pan115"}:
+        if provider not in {"quark", "wopan", "pan115", "baidu"}:
             raise ValueError(f"不支持的扫码登录类型: {provider}")
         async with self._start_locks[provider]:
             return await self._start(provider)
