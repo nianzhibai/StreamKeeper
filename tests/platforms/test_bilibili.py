@@ -23,7 +23,7 @@ def _room_info(*, live_status: int = 1) -> dict:
     }
 
 
-def _play_info(*, requested_qn: int = 150) -> dict:
+def _play_info(*, requested_qn: int = 250) -> dict:
     def codec(name: str, qn: int, suffix: str) -> dict:
         return {
             "codec_name": name,
@@ -79,7 +79,7 @@ class BilibiliClientTests(IsolatedAsyncioTestCase):
             if request.url.path.endswith("getH5InfoByRoom"):
                 return httpx.Response(200, json=_room_info())
             if request.url.path.endswith("getRoomPlayInfo"):
-                self.assertEqual(request.url.params["qn"], "150")
+                self.assertEqual(request.url.params["qn"], "250")
                 return httpx.Response(200, json=_play_info())
             raise AssertionError(f"unexpected request: {request.url}")
 
@@ -118,12 +118,12 @@ class BilibiliClientTests(IsolatedAsyncioTestCase):
                 return httpx.Response(200, json=_room_info())
             if request.url.path.endswith("getRoomPlayInfo"):
                 # Anonymous playback can return a nearby AVC tier alongside a
-                # much higher HEVC/HDR tier, even when HD was requested.
+                # much higher HEVC/HDR tier, even when UHD (蓝光) was requested.
                 return httpx.Response(200, json=_play_info(requested_qn=250))
             raise AssertionError(f"unexpected request: {request.url}")
 
         info = await BilibiliClient(transport=httpx.MockTransport(handler)).fetch(
-            "https://live.bilibili.com/123456", "HD"
+            "https://live.bilibili.com/123456", "UHD"
         )
 
         self.assertIn("selected.flv", info.flv_url or "")

@@ -16,9 +16,9 @@ _DIRECT_HOST = "live.bilibili.com"
 _SHORT_HOSTS = frozenset({"b23.tv", "www.b23.tv"})
 _QUALITY_QN = {
     "OD": 10000,
-    "UHD": 250,
-    "HD": 150,
-    "SD": 80,
+    "UHD": 400,
+    "HD": 250,
+    "SD": 150,
     "LD": 80,
 }
 _CODEC_RANK = {"avc": 3, "h264": 3, "hevc": 2, "h265": 2, "av1": 1}
