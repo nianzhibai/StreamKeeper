@@ -10,7 +10,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260831";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };
@@ -128,10 +128,12 @@ function renderList() {
   toggle(headNode, entries.length > 0);
   toggle(emptyNode, entries.length === 0);
   if (entries.length === 0) {
+    // The title covers the plain empty directory; the hint below it only earns its
+    // place when a search term is what hid the files.
     document.querySelector("#recording-empty-title").textContent = searchTerm ? "没有匹配的文件" : "这个目录里还没有录像";
-    document.querySelector("#recording-empty-detail").textContent = searchTerm
-      ? "换一个关键词再试试"
-      : "录制完成后，视频会自动出现在这里";
+    const detail = document.querySelector("#recording-empty-detail");
+    detail.textContent = searchTerm ? "换一个关键词再试试" : "";
+    toggle(detail, Boolean(searchTerm));
   }
 }
 

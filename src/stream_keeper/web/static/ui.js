@@ -27,6 +27,17 @@ export const SOURCE_LABELS = {
   hls: "HLS",
 };
 
+// Logo paths for every logo a script renders, so the archive run targets and the
+// overview card cannot drift apart. The static provider buttons in archive.html
+// still carry their own copies; markup cannot import from here.
+const PROVIDER_ICONS = {
+  quark: "/static/provider-quark.png?v=20260823",
+  wopan: "/static/provider-wopan.png?v=20260823",
+  baidu: "/static/provider-baidu.png?v=20260824",
+  pan115: "/static/provider-pan115.png?v=20260823",
+  guangya: "/static/provider-guangya.png?v=20260823",
+};
+
 export function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -375,12 +386,25 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
   }
 }
 
-export function providerStatus(provider, _kind) {
-  const configured = Boolean(
+export function providerIcon(kind) {
+  return PROVIDER_ICONS[kind] || "";
+}
+
+export function providerLogoHtml(kind) {
+  const src = PROVIDER_ICONS[kind];
+  if (!src) return `<span class="provider-logo neutral" aria-hidden="true">?</span>`;
+  return `<span class="provider-logo ${escapeHtml(kind)} has-image" aria-hidden="true"><img class="provider-logo-image" src="${escapeHtml(src)}" alt="" /></span>`;
+}
+
+export function providerConfigured(provider) {
+  return Boolean(
     provider?.credential_configured || provider?.access_token_configured || provider?.refresh_token_configured,
   );
+}
+
+export function providerStatus(provider, _kind) {
   if (provider?.enabled) return { label: "已启用", tone: "ok" };
-  return configured ? { label: "未启用", tone: "idle" } : { label: "未配置", tone: "idle" };
+  return providerConfigured(provider) ? { label: "未启用", tone: "idle" } : { label: "未配置", tone: "idle" };
 }
 
 export function archiveStatus(cloud) {

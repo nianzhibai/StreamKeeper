@@ -9,10 +9,10 @@
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/artplayer.css?v=5.4.1" />
-    <link rel="stylesheet" href="/static/style.css?v=20260829" />
+    <link rel="stylesheet" href="/static/style.css?v=20260842" />
   </head>
   <body data-page="recordings">
-    <script src="/static/sprite.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260836"></script>
     <script src="/static/shell.js?v=20260821"></script>
     <div class="app" id="app">
       <main class="main" id="main">
@@ -73,7 +73,7 @@
           <div id="recording-empty" class="empty hidden">
             <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-folder" /></svg></span>
             <strong id="recording-empty-title">这个目录里还没有录像</strong>
-            <small id="recording-empty-detail">录制完成后，视频会自动出现在这里</small>
+            <small id="recording-empty-detail" class="hidden"></small>
           </div>
         </section>
       </main>
@@ -115,6 +115,6 @@
     </dialog>
 
     <script src="/static/artplayer.js?v=5.4.1"></script>
-    <script type="module" src="/static/recordings.js?v=20260828"></script>
+    <script type="module" src="/static/recordings.js?v=20260832"></script>
   </body>
 </html>

@@ -8,10 +8,10 @@
     <title>运行日志 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260829" />
+    <link rel="stylesheet" href="/static/style.css?v=20260842" />
   </head>
   <body data-page="logs">
-    <script src="/static/sprite.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260836"></script>
     <script src="/static/shell.js?v=20260821"></script>
     <div class="app" id="app">
       <main class="main" id="main">
@@ -34,26 +34,20 @@
           <span data-error-text></span>
         </div>
 
-        <section class="card hero" aria-label="运行摘要">
-          <div class="hero-state">
-            <span id="log-status" class="pill pill-lg tone-idle"><i class="dot"></i>读取中</span>
-            <strong id="log-status-time">—</strong>
+        <dl class="hero-facts" aria-label="运行摘要">
+          <div>
+            <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>24 小时异常</dt>
+            <dd id="log-errors">—</dd>
           </div>
-          <dl class="hero-facts">
-            <div>
-              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>24 小时异常</dt>
-              <dd id="log-errors">—</dd>
-            </div>
-            <div>
-              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-shield" /></svg>24 小时警告</dt>
-              <dd id="log-warnings">—</dd>
-            </div>
-            <div>
-              <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-layers" /></svg>累计记录</dt>
-              <dd id="log-total">—</dd>
-            </div>
-          </dl>
-        </section>
+          <div>
+            <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-shield" /></svg>24 小时警告</dt>
+            <dd id="log-warnings">—</dd>
+          </div>
+          <div>
+            <dt><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-layers" /></svg>累计记录</dt>
+            <dd id="log-total">—</dd>
+          </div>
+        </dl>
 
         <section class="card">
           <div class="log-filters">
@@ -140,6 +134,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/logs.js?v=20260828"></script>
+    <script type="module" src="/static/logs.js?v=20260839"></script>
   </body>
 </html>

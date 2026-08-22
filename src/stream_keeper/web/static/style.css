@@ -1691,26 +1691,8 @@ select.input {
   height: 8px;
 }
 
-.tone-live .dot,
-.mini-item.is-recording .avatar::after {
+.tone-live .dot {
   animation: pulse 1.4s ease-in-out infinite;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px var(--s3);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-full);
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-}
-
-.chip.is-ok {
-  border-color: var(--ok-line);
-  background: var(--ok-soft);
-  color: var(--ok);
 }
 
 .tag {
@@ -1803,6 +1785,7 @@ select.input {
   gap: var(--s5);
 }
 
+
 .stat {
   position: relative;
   padding: var(--s6) var(--s7) var(--s7);
@@ -1845,25 +1828,6 @@ select.input {
   color: var(--text-3);
 }
 
-.stat.is-live {
-  border-color: var(--brand-line);
-}
-
-.stat.is-live::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--brand), var(--brand-2));
-  content: "";
-}
-
-.stat.is-live .stat-icon {
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
 .stat-value {
   display: block;
   margin-top: var(--s4);
@@ -1889,8 +1853,18 @@ select.input {
 }
 
 .card-runtime {
+  display: flex;
+  flex-direction: column;
   grid-row: span 2;
   min-height: 428px;
+}
+
+/* The card is taller than the list or the empty state needs, so the body region
+   claims the leftover height. That is what centres the empty state in the card
+   instead of leaving it parked below the header. */
+.card-runtime > .mini-list,
+.card-runtime > .empty {
+  flex: 1;
 }
 
 .mini-list {
@@ -1918,29 +1892,6 @@ select.input {
 .mini-item:hover + .mini-item,
 .mini-item:hover {
   box-shadow: none;
-}
-
-.mini-item .avatar {
-  position: relative;
-  margin-top: 1px;
-}
-
-.mini-item.is-recording .avatar {
-  border-color: var(--brand-line);
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
-.mini-item.is-recording .avatar::after {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid var(--surface);
-  border-radius: 50%;
-  background: var(--brand);
-  content: "";
 }
 
 .mini-body {
@@ -2201,18 +2152,6 @@ select.input {
   min-width: 0;
   align-items: center;
   gap: var(--s5);
-}
-
-.task[data-status="recording"] .avatar {
-  border-color: var(--brand-line);
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
-.task[data-status="error"] .avatar {
-  border-color: var(--bad-line);
-  background: var(--bad-soft);
-  color: var(--bad);
 }
 
 .task-name {
@@ -2745,6 +2684,7 @@ select.input {
   background: var(--surface-2);
 }
 
+
 .hero-facts > div {
   padding: var(--s5) var(--s6);
   border-left: 1px solid var(--line);
@@ -2785,7 +2725,7 @@ select.input {
 .provider-row {
   display: grid;
   width: 100%;
-  grid-template-columns: 38px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--s5);
   padding: var(--s5) var(--s5);
@@ -4076,8 +4016,6 @@ select.input {
   .hero-facts { grid-template-columns: 1fr; }
   .hero-facts > div { border-left: 0; border-top: 1px solid var(--line); }
   .hero-facts > div:first-child { border-top: 0; }
-  .provider-row { grid-template-columns: 38px minmax(0, 1fr) auto auto; }
-  .provider-row .chip { display: none; }
   .provider-row-action > span { display: none; }
   .run-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 

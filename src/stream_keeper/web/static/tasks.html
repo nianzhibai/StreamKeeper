@@ -8,10 +8,10 @@
     <title>录制任务 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260829" />
+    <link rel="stylesheet" href="/static/style.css?v=20260842" />
   </head>
   <body data-page="tasks">
-    <script src="/static/sprite.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260836"></script>
     <script src="/static/shell.js?v=20260821"></script>
     <div class="app" id="app">
       <main class="main" id="main">
@@ -58,10 +58,7 @@
         <section id="task-empty" class="card empty hidden">
           <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-record" /></svg></span>
           <strong id="task-empty-title">还没有录制任务</strong>
-          <small id="task-empty-detail">粘贴直播间链接或分享文案，创建第一个任务</small>
-          <button class="btn btn-primary" type="button" data-open-create>
-            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-plus" /></svg>新建任务
-          </button>
+          <small id="task-empty-detail" class="hidden"></small>
         </section>
       </main>
     </div>
@@ -169,6 +166,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/static/tasks.js?v=20260828"></script>
+    <script type="module" src="/static/tasks.js?v=20260835"></script>
   </body>
 </html>

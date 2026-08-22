@@ -43,6 +43,26 @@ TRIGGER_LABELS = {
 _SEGMENT_PLACEHOLDER = re.compile(r"%(?:0(?P<width>[1-9]\d*))?d")
 
 
+def pending_upload_bytes(recordings_dir: Path) -> int:
+    """Total size of the recordings that still have to be archived.
+
+    A recording is deleted locally as soon as every enabled target confirms it
+    (see ``RecordingUploadService._archive_candidate``), so whatever is still on
+    disk has not reached the cloud yet. Blocking call: run it in a thread.
+    """
+    if not recordings_dir.is_dir():
+        return 0
+    total = 0
+    for path in recordings_dir.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            total += path.stat().st_size
+        except OSError:
+            logger.warning("统计待归档体积时跳过不可用路径：%s", path)
+    return total
+
+
 @dataclass(frozen=True, slots=True)
 class UploadTarget:
     name: str

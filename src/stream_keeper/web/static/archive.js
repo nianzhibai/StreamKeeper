@@ -1,6 +1,5 @@
 import {
   api,
-  archiveStatus,
   bootstrap,
   clearPageError,
   confirmAction,
@@ -9,12 +8,15 @@ import {
   formatRelative,
   formatTime,
   icon,
+  providerIcon,
+  providerLogoHtml,
   providerStatus,
   setHealth,
   setTextIfChanged,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260820";
+  toggle,
+} from "/static/ui.js?v=20260831";
 
 const runButton = document.querySelector("#cloud-run-button");
 const providerDialog = document.querySelector("#provider-config-dialog");
@@ -39,7 +41,6 @@ const loginClose = document.querySelector("#cloud-login-close");
 const providerMeta = {
   quark: {
     name: "夸克网盘",
-    icon: "/static/provider-quark.png?v=20260823",
     app: "夸克 App",
     description: "配置夸克账号、上传根目录和启用状态",
     loginDescription: "使用夸克 App 扫码，无需手动复制 Cookie",
@@ -50,7 +51,6 @@ const providerMeta = {
   },
   wopan: {
     name: "联通云盘",
-    icon: "/static/provider-wopan.png?v=20260823",
     app: "联通云盘 App",
     description: "配置联通云盘账号、上传根目录和启用状态",
     loginDescription: "使用联通云盘 App 扫码获取 Token",
@@ -61,7 +61,6 @@ const providerMeta = {
   },
   baidu: {
     name: "百度网盘",
-    icon: "/static/provider-baidu.png?v=20260824",
     app: "百度网盘 App",
     description: "配置百度网盘账号、上传根目录和启用状态",
     loginDescription: "使用百度网盘 App 扫码，无需手动填写 Token",
@@ -72,7 +71,6 @@ const providerMeta = {
   },
   pan115: {
     name: "115网盘",
-    icon: "/static/provider-pan115.png?v=20260823",
     app: "115 App",
     description: "配置 115 Cookie 或 Open Token",
     loginDescription: "使用 115 App 扫码，或填写 Cookie / Open Token",
@@ -83,7 +81,6 @@ const providerMeta = {
   },
   guangya: {
     name: "光鸭网盘",
-    icon: "/static/provider-guangya.png?v=20260823",
     app: "光鸭云盘 App",
     description: "配置光鸭网盘账号、上传根目录和启用状态",
     loginDescription: "使用光鸭云盘 App 扫码，无需手动填写 Token",
@@ -106,12 +103,6 @@ const targetStatusMeta = {
   cancelled: { label: "已取消", tone: "bad" },
 };
 
-function providerLogoHtml(kind) {
-  const meta = providerMeta[kind];
-  if (!meta?.icon) return `<span class="provider-logo neutral" aria-hidden="true">?</span>`;
-  return `<span class="provider-logo ${escapeHtml(kind)} has-image" aria-hidden="true"><img class="provider-logo-image" src="${escapeHtml(meta.icon)}" alt="" /></span>`;
-}
-
 let cloud = null;
 let loading = false;
 let activeProvider = null;
@@ -128,16 +119,12 @@ function credentialConfigured(_kind, provider) {
 }
 
 function renderProvider(kind, provider) {
+  // The pill covers all three states on its own: 未配置 already means "no credentials",
+  // so a separate credential chip would only restate it.
   const status = providerStatus(provider, kind);
   const statusNode = document.querySelector(`#${kind}-status`);
   statusNode.className = `pill tone-${status.tone}`;
   statusNode.innerHTML = `<i class="dot"></i>${escapeHtml(status.label)}`;
-  setTextIfChanged(document.querySelector(`#${kind}-path`), provider.upload_path || "—");
-
-  const credential = credentialConfigured(kind, provider);
-  const credentialNode = document.querySelector(`#${kind}-credential`);
-  setTextIfChanged(credentialNode, credential ? "凭据已保存" : "未保存凭据");
-  credentialNode.className = `chip${credential ? " is-ok" : ""}`;
 
   document.querySelector(`#${kind}-configure`)?.classList.toggle("is-enabled", provider.enabled);
 }
@@ -196,15 +183,17 @@ function renderLastRun(lastRun) {
   const time = document.querySelector("#last-run-time");
   const detail = document.querySelector("#last-run-detail");
   if (!lastRun) {
-    setTextIfChanged(time, "暂无执行记录");
-    setTextIfChanged(
-      detail,
-      cloud?.schedule?.mode === "recording_completed"
-        ? "启用网盘后会在每场录制完成时自动执行"
-        : "启用网盘后会在计划时间自动执行",
-    );
+    // Before the first run there is nothing to report, so both lines stay hidden
+    // rather than restating that archiving has not happened yet.
+    setTextIfChanged(time, "");
+    setTextIfChanged(detail, "");
+    detail.classList.remove("is-bad");
+    toggle(time, false);
+    toggle(detail, false);
     return;
   }
+  toggle(time, true);
+  toggle(detail, true);
   const trigger = {
     manual: "手动触发",
     scheduled: "定时执行",
@@ -229,10 +218,6 @@ function renderLastRun(lastRun) {
 
 function render(value) {
   cloud = value;
-  const status = archiveStatus(cloud);
-  const badge = document.querySelector("#archive-status");
-  badge.className = `pill pill-lg tone-${status.tone}`;
-  badge.innerHTML = `<i class="dot"></i>${escapeHtml(status.label)}`;
 
   runButton.disabled = cloud.running || !cloud.enabled;
   runButton.innerHTML = cloud.running
@@ -304,7 +289,7 @@ function populateProviderForm(kind) {
   });
 
   providerLogo.className = `provider-logo ${kind} has-image`;
-  providerLogo.innerHTML = `<img class="provider-logo-image" src="${escapeHtml(meta.icon)}" alt="" />`;
+  providerLogo.innerHTML = `<img class="provider-logo-image" src="${escapeHtml(providerIcon(kind))}" alt="" />`;
   providerTitle.textContent = `配置${meta.name}`;
   providerDescription.textContent = meta.description;
   providerLoginDescription.textContent = meta.loginDescription;

@@ -8,10 +8,10 @@
     <title>网盘归档 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260816"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260829" />
+    <link rel="stylesheet" href="/static/style.css?v=20260842" />
   </head>
   <body data-page="archive">
-    <script src="/static/sprite.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260836"></script>
     <script src="/static/shell.js?v=20260821"></script>
     <div class="app" id="app">
       <main class="main" id="main">
@@ -34,7 +34,6 @@
 
         <section class="card hero" aria-label="归档状态">
           <div class="hero-state">
-            <span id="archive-status" class="pill pill-lg tone-idle"><i class="dot"></i>读取中</span>
             <strong id="archive-status-time">—</strong>
           </div>
           <dl class="hero-facts">
@@ -61,7 +60,6 @@
               </span>
               <div class="card-heading">
                 <h2>存储目标</h2>
-                <p>点击网盘配置凭据、上传根目录和启用状态</p>
               </div>
             </header>
             <div class="card-body">
@@ -78,9 +76,7 @@
                 </span>
                 <span class="provider-info">
                   <strong>夸克网盘</strong>
-                  <small id="quark-path" class="mono">—</small>
                 </span>
-                <span id="quark-credential" class="chip">—</span>
                 <span id="quark-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
@@ -99,9 +95,7 @@
                 </span>
                 <span class="provider-info">
                   <strong>联通云盘</strong>
-                  <small id="wopan-path" class="mono">—</small>
                 </span>
-                <span id="wopan-credential" class="chip">—</span>
                 <span id="wopan-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
@@ -120,9 +114,7 @@
                 </span>
                 <span class="provider-info">
                   <strong>百度网盘</strong>
-                  <small id="baidu-path" class="mono">—</small>
                 </span>
-                <span id="baidu-credential" class="chip">—</span>
                 <span id="baidu-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
@@ -141,9 +133,7 @@
                 </span>
                 <span class="provider-info">
                   <strong>115网盘</strong>
-                  <small id="pan115-path" class="mono">—</small>
                 </span>
-                <span id="pan115-credential" class="chip">—</span>
                 <span id="pan115-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
@@ -162,9 +152,7 @@
                 </span>
                 <span class="provider-info">
                   <strong>光鸭网盘</strong>
-                  <small id="guangya-path" class="mono">—</small>
                 </span>
-                <span id="guangya-credential" class="chip">—</span>
                 <span id="guangya-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
@@ -385,6 +373,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260828"></script>
+    <script type="module" src="/static/archive.js?v=20260838"></script>
   </body>
 </html>

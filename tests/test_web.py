@@ -493,8 +493,8 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260829', page.text)
-                self.assertIn('/static/sprite.js?v=20260821', page.text)
+                self.assertIn('/static/style.css?v=20260842', page.text)
+                self.assertIn('/static/sprite.js?v=20260836', page.text)
                 self.assertIn('/static/shell.js?v=20260821', page.text)
                 self.assertNotIn('class="page-eyebrow"', page.text)
                 self.assertNotIn('id="refresh-button"', page.text)
@@ -541,7 +541,7 @@ class WebTests(TestCase):
         self.assertIn('name="recording_output_format"', settings_page)
         self.assertIn('name="recording_segment_seconds"', settings_page)
         self.assertIn('name="recording_segment_count"', settings_page)
-        self.assertIn("/static/settings.js?v=20260830", settings_page)
+        self.assertIn("/static/settings.js?v=20260831", settings_page)
         self.assertIn("/api/settings/account", settings_script)
         self.assertIn('window.location.replace("/login")', settings_script)
         self.assertIn("new_password_confirmation", settings_script)
@@ -551,7 +551,7 @@ class WebTests(TestCase):
         self.assertIn("form.elements.recording_output_format.value", settings_script)
 
         self.assertIn("仅覆盖当前任务", task_page)
-        self.assertIn("/static/tasks.js?v=20260828", task_page)
+        self.assertIn("/static/tasks.js?v=20260835", task_page)
         self.assertIn("form.output_format.value = state.recordingDefaults.output_format", tasks_script)
         self.assertIn("form.segment_seconds.value = String(state.recordingDefaults.segment_seconds)", tasks_script)
         self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", tasks_script)
@@ -889,6 +889,24 @@ class WebTests(TestCase):
             2,
         )
 
+    def test_system_reports_the_size_of_recordings_still_waiting_to_be_archived(self) -> None:
+        self.login()
+        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 0)
+
+        recording_dir = self.settings.recordings_dir / "主播" / "2026-08-22"
+        recording_dir.mkdir(parents=True)
+        (recording_dir / "a.mp4").write_bytes(b"0" * 1024)
+        (recording_dir / "b.ts").write_bytes(b"0" * 512)
+        # Neither a non-video sidecar nor an empty file adds to the pending total.
+        (recording_dir / "notes.txt").write_text("ignored", encoding="utf-8")
+        (recording_dir / "empty.flv").touch()
+
+        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 1536)
+
+        # An archived recording is deleted locally, so the pending total drops with it.
+        (recording_dir / "a.mp4").unlink()
+        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 512)
+
     def test_create_task_accepts_share_text_and_stores_clean_url(self) -> None:
         self.login()
         response = self.client.post(
@@ -1045,7 +1063,7 @@ class WebTests(TestCase):
         self.assertIn("payload.inspection_token = inspection.token", tasks_script)
         self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
         self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
-        self.assertIn("/static/tasks.js?v=20260828", self.client.get("/tasks").text)
+        self.assertIn("/static/tasks.js?v=20260835", self.client.get("/tasks").text)
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
         self.login()
@@ -1249,9 +1267,11 @@ class WebTests(TestCase):
         archive_page = self.client.get("/archive")
         settings_page = self.client.get("/settings")
         self.assertNotIn('id="cloud-run-button"', overview_page.text)
-        self.assertIn('id="overview-baidu-status"', overview_page.text)
-        self.assertIn('id="overview-pan115-status"', overview_page.text)
-        self.assertIn('id="overview-guangya-status"', overview_page.text)
+        # The overview card reports the last run and the configured drives; the drive
+        # rows themselves are rendered from /api/cloud/archive rather than hard-coded.
+        self.assertIn('id="overview-archive-status"', overview_page.text)
+        self.assertIn('id="overview-last-run"', overview_page.text)
+        self.assertIn('id="overview-archive-providers"', overview_page.text)
         self.assertIn('id="cloud-run-button"', archive_page.text)
         self.assertIn('data-provider-configure="quark"', archive_page.text)
         self.assertIn('data-provider-configure="wopan"', archive_page.text)

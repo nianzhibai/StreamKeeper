@@ -8,10 +8,10 @@
     <title>概览 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260829" />
+    <link rel="stylesheet" href="/static/style.css?v=20260842" />
   </head>
   <body data-page="dashboard">
-    <script src="/static/sprite.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260836"></script>
     <script src="/static/shell.js?v=20260821"></script>
     <div class="app" id="app">
       <main class="main" id="main">
@@ -32,13 +32,12 @@
         </div>
 
         <section class="stat-grid" aria-label="运行摘要">
-          <article class="stat is-live">
+          <article class="stat">
             <header>
               <p class="stat-label">录制中</p>
               <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-record" /></svg></span>
             </header>
             <strong class="stat-value" id="stat-recording">—</strong>
-            <p class="stat-note" id="stat-recording-note">读取中</p>
           </article>
 
           <article class="stat">
@@ -47,7 +46,6 @@
               <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-pulse" /></svg></span>
             </header>
             <strong class="stat-value" id="stat-waiting">—</strong>
-            <p class="stat-note" id="stat-waiting-note">等待开播</p>
           </article>
 
           <article class="stat">
@@ -56,7 +54,6 @@
               <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-layers" /></svg></span>
             </header>
             <strong class="stat-value" id="stat-total">—</strong>
-            <p class="stat-note" id="stat-total-note">读取中</p>
           </article>
 
           <article class="stat">
@@ -65,19 +62,17 @@
               <span class="stat-icon"><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-disk" /></svg></span>
             </header>
             <strong class="stat-value" id="stat-disk">—</strong>
-            <p class="stat-note" id="stat-disk-note">录像存储盘</p>
           </article>
         </section>
 
         <div class="dash-grid">
           <section class="card card-runtime">
             <header class="card-head">
-              <span class="card-glyph tone-live" aria-hidden="true">
+              <span class="card-glyph" aria-hidden="true">
                 <svg class="ic ic-sm"><use href="#ic-record" /></svg>
               </span>
               <div class="card-heading">
                 <h2>当前任务</h2>
-                <p>正在录制或等待开播的直播间</p>
               </div>
               <a class="link" href="/tasks">全部任务<svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronRight" /></svg></a>
             </header>
@@ -89,19 +84,16 @@
             <div id="active-task-empty" class="empty empty-sm hidden">
               <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-checkCircle" /></svg></span>
               <strong>当前没有运行中的任务</strong>
-              <small>启用任务后，开播会自动开始录制</small>
-              <a class="btn btn-soft btn-sm" href="/tasks">前往任务列表</a>
             </div>
           </section>
 
           <section class="card">
             <header class="card-head">
-              <span class="card-glyph tone-info" aria-hidden="true">
+              <span class="card-glyph" aria-hidden="true">
                 <svg class="ic ic-sm"><use href="#ic-cloud" /></svg>
               </span>
               <div class="card-heading">
                 <h2>网盘归档</h2>
-                <p id="overview-archive-time">读取中</p>
               </div>
               <a class="link" href="/archive">详情<svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronRight" /></svg></a>
             </header>
@@ -109,47 +101,11 @@
               <div class="archive-brief">
                 <span id="overview-archive-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <div class="kv">
-                  <small>下次执行</small>
-                  <strong id="overview-next-run">—</strong>
+                  <small>最近归档</small>
+                  <strong id="overview-last-run">—</strong>
                 </div>
               </div>
-              <ul class="provider-mini">
-                <li>
-                  <span class="provider-logo quark has-image" aria-hidden="true">
-                    <img class="provider-logo-image" src="/static/provider-quark.png?v=20260823" alt="" />
-                  </span>
-                  <strong>夸克网盘</strong>
-                  <span id="overview-quark-status" class="mini-state">—</span>
-                </li>
-                <li>
-                  <span class="provider-logo wopan has-image" aria-hidden="true">
-                    <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260823" alt="" />
-                  </span>
-                  <strong>联通云盘</strong>
-                  <span id="overview-wopan-status" class="mini-state">—</span>
-                </li>
-                <li>
-                  <span class="provider-logo baidu has-image" aria-hidden="true">
-                    <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260824" alt="" />
-                  </span>
-                  <strong>百度网盘</strong>
-                  <span id="overview-baidu-status" class="mini-state">—</span>
-                </li>
-                <li>
-                  <span class="provider-logo pan115 has-image" aria-hidden="true">
-                    <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260823" alt="" />
-                  </span>
-                  <strong>115网盘</strong>
-                  <span id="overview-pan115-status" class="mini-state">—</span>
-                </li>
-                <li>
-                  <span class="provider-logo guangya has-image" aria-hidden="true">
-                    <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260823" alt="" />
-                  </span>
-                  <strong>光鸭网盘</strong>
-                  <span id="overview-guangya-status" class="mini-state">—</span>
-                </li>
-              </ul>
+              <ul id="overview-archive-providers" class="provider-mini hidden" aria-live="polite"></ul>
             </div>
           </section>
 
@@ -160,13 +116,12 @@
               </span>
               <div class="card-heading">
                 <h2>系统</h2>
-                <p>录制环境自检</p>
               </div>
             </header>
             <dl class="spec-list">
               <div><dt>并发录制</dt><dd id="system-recording-limit">—</dd></div>
               <div><dt>FFmpeg</dt><dd id="system-ffmpeg">—</dd></div>
-              <div><dt>Node.js</dt><dd id="system-node">—</dd></div>
+              <div><dt>本地视频</dt><dd id="system-pending-upload">—</dd></div>
               <div><dt>录像目录</dt><dd id="system-directory" class="mono">—</dd></div>
             </dl>
           </section>
@@ -174,6 +129,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/dashboard.js?v=20260828"></script>
+    <script type="module" src="/static/dashboard.js?v=20260833"></script>
   </body>
 </html>

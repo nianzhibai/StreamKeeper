@@ -275,9 +275,10 @@ class InspectResponse(StrictModel):
 
 class SystemInfo(StrictModel):
     ffmpeg_available: bool
-    node_available: bool
     recordings_dir: str
     free_space_gb: float
+    # Recordings are deleted once archived, so what is left is what still has to go up.
+    pending_upload_bytes: int = Field(ge=0)
     active_tasks: int
     recording_tasks: int
     max_concurrent_recordings: int

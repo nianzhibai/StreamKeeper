@@ -20,7 +20,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260831";
 
 const state = {
   tasks: [],
@@ -109,19 +109,21 @@ function renderTask(task) {
   const message = task.status_message && task.status_message !== statusLabel
     ? task.status_message
     : "";
+  // 录制中 is carried by the progress bar and the red spine, 已停止 is the resting
+  // state; the rest (值守中/检查中/排队中/异常) still need their pill to be readable.
+  const hideStatusPill = task.status === "stopped" || (task.status === "recording" && Boolean(progress));
   return `
     <article class="task" data-status="${escapeHtml(task.status)}">
       <div class="task-main">
-        <span class="avatar" aria-hidden="true">${escapeHtml([...title][0] || "录")}</span>
         <span class="task-name">
           <strong title="${escapeHtml(title)}">${escapeHtml(title)}</strong>
           <a class="task-link" href="${escapeHtml(task.url)}" target="_blank" rel="noreferrer" title="${escapeHtml(task.url)}">
-            ${icon("link", "ic-xs")}<span>${escapeHtml(subtitle)}</span>
+            <span>${escapeHtml(subtitle)}</span>
           </a>
         </span>
       </div>
       <div class="task-state">
-        ${statusPill(task.status)}
+        ${hideStatusPill ? "" : statusPill(task.status)}
         ${progress || (message ? `<small title="${escapeHtml(message)}">${escapeHtml(message)}</small>` : "")}
       </div>
       <div class="task-tags">${taskTags(task)}</div>
@@ -180,13 +182,12 @@ function render() {
   toggle(elements.list, visible.length > 0);
   toggle(elements.head, visible.length > 0);
   toggle(elements.empty, visible.length === 0);
-  if (state.tasks.length === 0) {
-    setTextIfChanged(elements.emptyTitle, "还没有录制任务");
-    setTextIfChanged(elements.emptyDetail, "粘贴直播间链接或分享文案，创建第一个任务");
-  } else {
-    setTextIfChanged(elements.emptyTitle, "没有符合条件的任务");
-    setTextIfChanged(elements.emptyDetail, "换一个筛选条件或清空搜索关键词再试试");
-  }
+  // The title alone carries the first-run case; the hint below it only earns its
+  // place when a filter or search is what hid everything.
+  const filtered = state.tasks.length > 0;
+  setTextIfChanged(elements.emptyTitle, filtered ? "没有符合条件的任务" : "还没有录制任务");
+  setTextIfChanged(elements.emptyDetail, filtered ? "换一个筛选条件或清空搜索关键词再试试" : "");
+  toggle(elements.emptyDetail, filtered);
   updateFilterCounts();
   ensureProgressTicker();
 }

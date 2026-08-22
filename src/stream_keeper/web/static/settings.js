@@ -6,7 +6,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260831";
 
 const form = document.querySelector("#archive-schedule-form");
 const accountCard = document.querySelector("#account-settings-card");

@@ -14,7 +14,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260814";
+} from "/static/ui.js?v=20260831";
 
 const PAGE_SIZE = 100;
 /** Rows kept in the DOM. Beyond this the oldest are dropped and "load earlier" comes back. */
@@ -141,21 +141,6 @@ function renderChips(container, key, counts) {
 }
 
 function renderSummary(summary) {
-  const badge = document.querySelector("#log-status");
-  const status = summary.errors
-    ? { tone: "bad", label: "近 24 小时有异常" }
-    : summary.warnings
-      ? { tone: "warn", label: "近 24 小时有警告" }
-      : summary.total
-        ? { tone: "ok", label: "运行正常" }
-        : { tone: "idle", label: "暂无记录" };
-  badge.className = `pill pill-lg tone-${status.tone}`;
-  badge.innerHTML = `<i class="dot"></i>${escapeHtml(status.label)}`;
-
-  setTextIfChanged(
-    document.querySelector("#log-status-time"),
-    summary.latest_at ? `最近事件 ${formatRelative(summary.latest_at)}` : "服务还没有产生事件",
-  );
   setTextIfChanged(document.querySelector("#log-errors"), String(summary.errors));
   setTextIfChanged(document.querySelector("#log-warnings"), String(summary.warnings));
   setTextIfChanged(document.querySelector("#log-total"), String(summary.total));

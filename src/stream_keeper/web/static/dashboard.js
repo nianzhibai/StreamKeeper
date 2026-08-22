@@ -4,9 +4,12 @@ import {
   bootstrap,
   clearPageError,
   escapeHtml,
+  formatBytes,
   formatRelative,
   formatTime,
   paintProgress,
+  providerConfigured,
+  providerLogoHtml,
   providerStatus,
   recordingProgressMarkup,
   setHealth,
@@ -18,7 +21,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260820";
+} from "/static/ui.js?v=20260831";
 
 const MAX_VISIBLE_TASKS = 6;
 const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
@@ -34,19 +37,21 @@ let progressTimer = 0;
 
 function taskItem(task) {
   const title = task.label || task.anchor_name || "未命名任务";
+  // While recording, the pill and the progress bar already say so; the scheduler's
+  // "正在录制" message would only repeat them.
+  const recording = task.status === "recording";
   const checkedAt = task.last_checked_at ? `最近检查 ${formatRelative(task.last_checked_at)}` : "等待首次检查";
   const detail = task.status_message && task.status_message !== TASK_STATUS[task.status]?.label
     ? task.status_message
     : checkedAt;
   return `
-    <a class="mini-item${task.status === "recording" ? " is-recording" : ""}" href="/tasks">
-      <span class="avatar avatar-sm" aria-hidden="true">${escapeHtml([...title][0] || "录")}</span>
+    <a class="mini-item" href="/tasks">
       <span class="mini-body">
         <span class="mini-top">
           <strong>${escapeHtml(title)}</strong>
           ${statusPill(task.status)}
         </span>
-        <small>${escapeHtml(detail)}</small>
+        ${recording ? "" : `<small>${escapeHtml(detail)}</small>`}
         ${recordingProgressMarkup(task)}
       </span>
     </a>`;
@@ -83,7 +88,19 @@ function renderTasks(tasks, { tick = false } = {}) {
   ensureProgressTicker();
 }
 
+function archiveProviderItem(provider) {
+  const state = providerStatus(provider, provider.name);
+  return `
+    <li>
+      ${providerLogoHtml(provider.name)}
+      <strong>${escapeHtml(provider.label)}</strong>
+      <span class="mini-state tone-${escapeHtml(state.tone)}">${escapeHtml(state.label)}</span>
+    </li>`;
+}
+
 function renderArchive(cloud) {
+  // The badge already carries the outcome of the last run (执行成功 / 部分失败 / …),
+  // so the card only needs to add when it ran and which drives are set up.
   const status = archiveStatus(cloud);
   const badge = document.querySelector("#overview-archive-status");
   badge.className = `pill tone-${status.tone}`;
@@ -91,51 +108,34 @@ function renderArchive(cloud) {
 
   const lastRun = cloud.last_run;
   setTextIfChanged(
-    document.querySelector("#overview-archive-time"),
-    cloud.running
-      ? "任务正在后台执行"
-      : lastRun
-        ? `最近执行 ${formatRelative(lastRun.finished_at || lastRun.started_at)}`
-        : "暂无执行记录",
-  );
-  setTextIfChanged(
-    document.querySelector("#overview-next-run"),
-    cloud.schedule.next_run_at
-      ? formatTime(cloud.schedule.next_run_at)
-      : cloud.enabled && cloud.schedule.mode === "recording_completed"
-        ? "录制完成后"
-        : "—",
+    document.querySelector("#overview-last-run"),
+    lastRun ? formatTime(lastRun.finished_at || lastRun.started_at) : "—",
   );
 
-  const providers = new Map((cloud.providers || []).map((provider) => [provider.name, provider]));
-  for (const kind of ["quark", "wopan", "baidu", "pan115", "guangya"]) {
-    const state = providerStatus(providers.get(kind) || cloud[kind], kind);
-    const node = document.querySelector(`#overview-${kind}-status`);
-    setTextIfChanged(node, state.label);
-    node.className = `mini-state tone-${state.tone}`;
-  }
+  // Only drives that actually hold credentials; the badge says 未配置 when none do.
+  // `providers` is the generic list, so the legacy per-provider fields are not read here.
+  const configured = (cloud.providers || []).filter(providerConfigured);
+  const list = document.querySelector("#overview-archive-providers");
+  setHtmlIfChanged(list, configured.map(archiveProviderItem).join(""));
+  toggle(list, configured.length > 0);
 }
 
-function renderSystem(system, tasks) {
-  const enabled = tasks.filter((task) => task.enabled).length;
+function renderSystem(system) {
   setTextIfChanged(document.querySelector("#stat-disk"), `${system.free_space_gb} GB`);
-  setTextIfChanged(
-    document.querySelector("#stat-recording-note"),
-    `并发上限 ${system.max_concurrent_recordings}`,
-  );
-  setTextIfChanged(document.querySelector("#stat-total-note"), `${enabled} 个已启用`);
   setTextIfChanged(
     document.querySelector("#system-recording-limit"),
     `${system.recording_tasks} / ${system.max_concurrent_recordings}`,
   );
   setTextIfChanged(document.querySelector("#system-ffmpeg"), system.ffmpeg_available ? "可用" : "未安装");
-  setTextIfChanged(document.querySelector("#system-node"), system.node_available ? "可用" : "未安装");
+  setTextIfChanged(
+    document.querySelector("#system-pending-upload"),
+    system.pending_upload_bytes > 0 ? formatBytes(system.pending_upload_bytes) : "已全部归档",
+  );
   const directory = document.querySelector("#system-directory");
   setTextIfChanged(directory, system.recordings_dir);
   directory.title = system.recordings_dir;
 
   document.querySelector("#system-ffmpeg").classList.toggle("is-bad", !system.ffmpeg_available);
-  document.querySelector("#system-node").classList.toggle("is-bad", !system.node_available);
 }
 
 async function load({ quiet = false } = {}) {
@@ -158,7 +158,7 @@ async function load({ quiet = false } = {}) {
     );
     renderTasks(syncProgressClock(tasks));
     renderArchive(cloud);
-    renderSystem(system, tasks);
+    renderSystem(system);
     clearPageError();
     setHealth(true);
   } catch (error) {

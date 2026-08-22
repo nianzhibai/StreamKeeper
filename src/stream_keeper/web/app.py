@@ -82,7 +82,7 @@ from .schemas import (
     WebAccountUpdateResult,
 )
 from .store import CloudCredentialSnapshot, CredentialUpdateStatus, TaskStore, WebSession, utc_now
-from .uploader import RecordingUploadService
+from .uploader import RecordingUploadService, pending_upload_bytes
 
 # The activity-log page judges "is everything fine" over the last day.
 EVENT_SUMMARY_WINDOW_HOURS = 24
@@ -1128,11 +1128,12 @@ def create_app(
     @app.get("/api/system", response_model=SystemInfo)
     async def system_info() -> SystemInfo:
         usage = shutil.disk_usage(settings.recordings_dir)
+        pending_bytes = await asyncio.to_thread(pending_upload_bytes, settings.recordings_dir)
         return SystemInfo(
             ffmpeg_available=bool(shutil.which(settings.ffmpeg)),
-            node_available=bool(shutil.which("node")),
             recordings_dir=str(settings.recordings_dir),
             free_space_gb=round(usage.free / (1024**3), 2),
+            pending_upload_bytes=pending_bytes,
             active_tasks=scheduler.active_task_count,
             recording_tasks=scheduler.recording_task_count,
             max_concurrent_recordings=scheduler.max_concurrent_recordings,
