@@ -106,6 +106,15 @@ class FakeCloudLoginFlow:
             return CloudLoginPoll("success", {"cookie": f"qr-{self.provider}-secret-cookie"})
         if self.provider == "pan115":
             return CloudLoginPoll("success", {"cookie": "UID=qr-uid; CID=qr-cid; SEID=qr-seid"})
+        if self.provider == "guangya":
+            return CloudLoginPoll(
+                "success",
+                {
+                    "access_token": "qr-guangya-access-token-123456",
+                    "refresh_token": "qr-guangya-refresh-token-123456",
+                    "client_id": "aMe-8VSlkrbQXpUR",
+                },
+            )
         return CloudLoginPoll(
             "success",
             {
@@ -1564,7 +1573,7 @@ class WebTests(TestCase):
         rejected = self.client.post("/api/cloud/login/quark")
         self.assertEqual(rejected.status_code, 403)
 
-        for provider in ("quark", "wopan", "pan115", "baidu"):
+        for provider in ("quark", "wopan", "pan115", "baidu", "guangya"):
             created = self.client.post(
                 f"/api/cloud/login/{provider}",
                 headers=self.csrf_headers,
@@ -1598,4 +1607,5 @@ class WebTests(TestCase):
         self.assertEqual(archive["pan115"]["configured_credentials"], ["cookie"])
         self.assertTrue(archive["baidu"]["credential_configured"])
         self.assertEqual(archive["baidu"]["configured_credentials"], ["cookie"])
+        self.assertTrue(archive["guangya"]["credential_configured"])
         self.assertNotIn("qr-seid", json.dumps(archive))

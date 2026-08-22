@@ -459,7 +459,7 @@ class CloudArchiveView(StrictModel):
 
 class CloudLoginView(StrictModel):
     session_id: str
-    provider: Literal["quark", "wopan", "pan115", "baidu"]
+    provider: Literal["quark", "wopan", "pan115", "baidu", "guangya"]
     state: Literal["waiting", "scanned", "success", "expired", "error", "cancelled"]
     message: str
     qr_image: str | None

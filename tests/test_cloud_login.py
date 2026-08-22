@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 from unittest import IsolatedAsyncioTestCase
 
 import httpx
@@ -8,6 +9,7 @@ from stream_keeper.web.cloud_login import (
     BaiduQrLoginFlow,
     CloudLoginManager,
     CloudLoginPoll,
+    GuangYaQrLoginFlow,
     Pan115QrLoginFlow,
     QuarkQrLoginFlow,
     WoPanQrLoginFlow,
@@ -228,6 +230,93 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
         finally:
             await flow.aclose()
 
+    async def test_guangya_qr_login_returns_tokens(self) -> None:
+        poll_calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal poll_calls
+            if request.url.path.endswith("/device/code"):
+                body = json.loads(request.content)
+                self.assertEqual(body, {"scope": "user", "client_id": "aMe-8VSlkrbQXpUR"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "device-code",
+                        "user_code": "user-code",
+                        "expires_in": 120,
+                        "interval": 2,
+                        "verification_uri_complete": "https://account.guangyapan.com/__/auth/device/?client_id=x&user_code=user-code",
+                    },
+                )
+            if request.url.path.endswith("/token"):
+                body = json.loads(request.content)
+                self.assertEqual(body["grant_type"], "urn:ietf:params:oauth:grant-type:device_code")
+                self.assertEqual(body["device_code"], "device-code")
+                poll_calls += 1
+                if poll_calls == 1:
+                    return httpx.Response(400, json={"error": "authorization_pending", "error_code": 4050})
+                return httpx.Response(
+                    200,
+                    json={
+                        "token_type": "Bearer",
+                        "access_token": "access-token",
+                        "refresh_token": "refresh-token",
+                        "sub": "user-1",
+                        "expires_in": 7200,
+                    },
+                )
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        flow = GuangYaQrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            qr_image = await flow.start()
+            self.assertTrue(qr_image.startswith("data:image/svg+xml;base64,"))
+            self.assertEqual((await flow.poll()).state, "waiting")
+            completed = await flow.poll()
+            self.assertEqual(completed.state, "success")
+            self.assertEqual(
+                completed.credentials,
+                {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "client_id": "aMe-8VSlkrbQXpUR",
+                },
+            )
+        finally:
+            await flow.aclose()
+
+    async def test_guangya_qr_login_maps_expired_and_error_states(self) -> None:
+        responses = iter(
+            (
+                {"error": "expired_token", "error_code": 4052},
+                {"error": "access_denied"},
+            )
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/device/code"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "device_code": "device-code",
+                        "verification_uri_complete": "https://account.guangyapan.com/__/auth/device/",
+                    },
+                )
+            if request.url.path.endswith("/token"):
+                payload = next(responses)
+                code = 400 if payload.get("error") == "expired_token" else 403
+                return httpx.Response(code, json=payload)
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        flow = GuangYaQrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            await flow.start()
+            self.assertEqual((await flow.poll()).state, "expired")
+            with self.assertRaisesRegex(Exception, "扫码确认失败"):
+                await flow.poll()
+        finally:
+            await flow.aclose()
+
     async def test_wopan_tracks_scanned_state_and_returns_both_tokens(self) -> None:
         query_calls = 0
         png = base64.b64encode(b"\x89PNG\r\n\x1a\nvalid-enough-for-protocol-test").decode()
@@ -286,6 +375,11 @@ class _SuccessfulFlow:
     async def poll(self) -> CloudLoginPoll:
         if self.provider in {"quark", "baidu"}:
             return CloudLoginPoll("success", {"cookie": "cookie-secret"})
+        if self.provider == "guangya":
+            return CloudLoginPoll(
+                "success",
+                {"access_token": "access-token-123456", "refresh_token": "refresh-token", "client_id": "client-id"},
+            )
         return CloudLoginPoll(
             "success",
             {"access_token": "access-token-123456", "refresh_token": "refresh-token"},
@@ -335,5 +429,29 @@ class CloudLoginManagerTests(IsolatedAsyncioTestCase):
                 self.fail("Baidu QR login did not complete")
             self.assertEqual(saved, [("baidu", {"cookie": "cookie-secret"})])
             self.assertTrue(flows[1].closed)
+
+            saved.clear()
+            created = await manager.start("guangya")
+            for _ in range(100):
+                current = await manager.get("guangya", created.session_id)
+                if current and current.state == "success":
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                self.fail("GuangYa QR login did not complete")
+            self.assertEqual(
+                saved,
+                [
+                    (
+                        "guangya",
+                        {
+                            "access_token": "access-token-123456",
+                            "refresh_token": "refresh-token",
+                            "client_id": "client-id",
+                        },
+                    )
+                ],
+            )
+            self.assertTrue(flows[2].closed)
         finally:
             await manager.shutdown()

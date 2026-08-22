@@ -84,9 +84,10 @@ const providerMeta = {
   guangya: {
     name: "光鸭网盘",
     icon: "/static/provider-guangya.png?v=20260823",
-    description: "配置光鸭网盘 API 凭据",
-    loginDescription: "请填写光鸭 Client ID 与 Access/Refresh Token",
-    supportsQr: false,
+    app: "光鸭云盘 App",
+    description: "配置光鸭网盘账号、上传根目录和启用状态",
+    loginDescription: "使用光鸭云盘 App 扫码，无需手动填写 Token",
+    supportsQr: true,
     credentials: ["client_id", "device_id", "access_token", "refresh_token"],
     options: ["root_id"],
     clearField: "guangya_clear_credentials",

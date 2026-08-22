@@ -33,6 +33,10 @@ _BAIDU_QR_TOKEN_URL = "https://passport.baidu.com/v2/api/getqrcode"
 _BAIDU_QR_POLL_URL = "https://passport.baidu.com/channel/unicast"
 _BAIDU_QR_LOGIN_URL = "https://passport.baidu.com/v3/login/main/qrbdusslogin"
 _BAIDU_NETDISK_HOME = "https://pan.baidu.com/disk/home"
+_GUANGYA_ACCOUNT_URL = "https://account.guangyapan.com/v1/auth"
+_GUANGYA_CLIENT_ID = "aMe-8VSlkrbQXpUR"
+_GUANGYA_DEVICE_CODE_URL = f"{_GUANGYA_ACCOUNT_URL}/device/code"
+_GUANGYA_TOKEN_URL = f"{_GUANGYA_ACCOUNT_URL}/token"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
@@ -545,6 +549,101 @@ class BaiduQrLoginFlow:
         await self._client.aclose()
 
 
+class GuangYaQrLoginFlow:
+    # The server grants the device code for 120 seconds.
+    qr_ttl_seconds = 120
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 15,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._device_code = ""
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+            transport=transport,
+            headers={
+                "Accept": "*/*",
+                "Origin": "https://www.guangyapan.com",
+                "Referer": "https://www.guangyapan.com/",
+                "User-Agent": _USER_AGENT,
+            },
+        )
+
+    async def _post(self, path: str, body: dict[str, object]) -> httpx.Response:
+        try:
+            return await self._client.post(path, json=body)
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("光鸭网盘扫码服务连接失败") from exc
+
+    async def start(self) -> str:
+        payload = _json_object(
+            await self._post(
+                _GUANGYA_DEVICE_CODE_URL,
+                {"scope": "user", "client_id": _GUANGYA_CLIENT_ID},
+            ),
+            "光鸭网盘",
+        )
+        device_code = payload.get("device_code")
+        verification_uri = payload.get("verification_uri_complete") or payload.get("verification_url")
+        if (
+            not isinstance(device_code, str)
+            or not device_code
+            or not isinstance(verification_uri, str)
+            or not verification_uri
+        ):
+            raise CloudLoginError("光鸭网盘二维码响应缺少必要数据")
+        self._device_code = device_code
+        return _qr_svg_data_uri(verification_uri)
+
+    async def poll(self) -> CloudLoginPoll:
+        if not self._device_code:
+            raise CloudLoginError("光鸭网盘扫码会话尚未初始化")
+        response = await self._post(
+            _GUANGYA_TOKEN_URL,
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": self._device_code,
+                "client_id": _GUANGYA_CLIENT_ID,
+            },
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CloudLoginError("光鸭网盘扫码服务返回格式错误") from exc
+        if not isinstance(payload, dict):
+            raise CloudLoginError("光鸭网盘扫码服务返回格式错误")
+        error = payload.get("error")
+        if error == "authorization_pending" or payload.get("error_code") == 4050:
+            return CloudLoginPoll("waiting")
+        if error == "expired_token" or payload.get("error_code") == 4052:
+            return CloudLoginPoll("expired")
+        if error is not None or response.is_error:
+            raise CloudLoginError("光鸭网盘扫码确认失败，请刷新二维码重试")
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token")
+        if (
+            not isinstance(access_token, str)
+            or not access_token
+            or not isinstance(refresh_token, str)
+            or not refresh_token
+        ):
+            raise CloudLoginError("光鸭网盘扫码响应缺少登录令牌")
+        return CloudLoginPoll(
+            "success",
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "client_id": _GUANGYA_CLIENT_ID,
+            },
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
 def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
     if provider == "quark":
         return QuarkQrLoginFlow()
@@ -554,6 +653,8 @@ def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
         return Pan115QrLoginFlow()
     if provider == "baidu":
         return BaiduQrLoginFlow()
+    if provider == "guangya":
+        return GuangYaQrLoginFlow()
     raise ValueError(f"不支持的扫码登录类型: {provider}")
 
 
@@ -605,10 +706,10 @@ class CloudLoginManager:
         self._sessions: dict[str, _CloudLoginSession] = {}
         self._provider_sessions: dict[str, str] = {}
         self._lock = asyncio.Lock()
-        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115", "baidu")}
+        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115", "baidu", "guangya")}
 
     async def start(self, provider: str) -> CloudLoginSnapshot:
-        if provider not in {"quark", "wopan", "pan115", "baidu"}:
+        if provider not in {"quark", "wopan", "pan115", "baidu", "guangya"}:
             raise ValueError(f"不支持的扫码登录类型: {provider}")
         async with self._start_locks[provider]:
             return await self._start(provider)

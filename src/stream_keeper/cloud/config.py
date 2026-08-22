@@ -6,7 +6,7 @@ from typing import Any
 from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
 CLOUD_PROVIDER_ORDER = ("quark", "wopan", "baidu", "pan115", "guangya")
-QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "baidu"})
+QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "baidu", "guangya"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,7 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
         label="光鸭网盘",
         credential_keys=("access_token", "refresh_token", "client_id", "device_id"),
         option_defaults=(("root_id", ""),),
+        supports_qr_login=True,
     ),
 }
 
