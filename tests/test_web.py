@@ -1458,7 +1458,7 @@ class WebTests(TestCase):
         for secret in secrets:
             self.assertNotIn(secret, overview.text)
 
-        with sqlite3.connect(self.settings.database_path) as connection:
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
             stored = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
         for secret in secrets:
             self.assertIn(secret, stored)
@@ -1499,7 +1499,7 @@ class WebTests(TestCase):
         )
         self.assertEqual(configured.status_code, 200)
 
-        with sqlite3.connect(self.settings.database_path) as connection:
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
             raw = json.loads(
                 connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
             )
@@ -1532,7 +1532,7 @@ class WebTests(TestCase):
             },
         )
         self.assertEqual(updated.status_code, 200)
-        with sqlite3.connect(self.settings.database_path) as connection:
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
             raw = json.loads(
                 connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
             )

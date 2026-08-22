@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
@@ -128,7 +129,7 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def test_initialize_migrates_legacy_tasks_with_unlimited_segments(self) -> None:
         database_path = Path(self.temp_dir.name) / "legacy.db"
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             connection.execute(
                 """
                 CREATE TABLE recording_tasks (
@@ -177,7 +178,7 @@ class StoreTests(IsolatedAsyncioTestCase):
                     "2026-07-12T00:00:00+00:00",
                 ),
             )
-        connection.close()
+            connection.commit()
 
         legacy_store = TaskStore(database_path)
         await legacy_store.initialize()
@@ -188,15 +189,16 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def test_initialize_normalizes_legacy_limited_monitoring_tasks(self) -> None:
         created = await self.store.create(task_config())
-        with sqlite3.connect(self.store.database_path) as connection:
+        with closing(sqlite3.connect(self.store.database_path)) as connection:
             connection.execute(
                 "UPDATE recording_tasks SET segment_count = 4, monitor = 1 WHERE id = ?",
                 (created.id,),
             )
+            connection.commit()
 
         await self.store.initialize()
         normalized = await self.store.get(created.id)
-        with sqlite3.connect(self.store.database_path) as connection:
+        with closing(sqlite3.connect(self.store.database_path)) as connection:
             stored_monitor = connection.execute(
                 "SELECT monitor FROM recording_tasks WHERE id = ?",
                 (created.id,),
@@ -214,7 +216,7 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def test_initialize_migrates_legacy_web_credentials_to_source_tracking(self) -> None:
         legacy_path = Path(self.temp_dir.name) / "legacy-auth.db"
-        with sqlite3.connect(legacy_path) as connection:
+        with closing(sqlite3.connect(legacy_path)) as connection:
             connection.execute(
                 """
                 CREATE TABLE web_auth_state (
@@ -234,10 +236,11 @@ class StoreTests(IsolatedAsyncioTestCase):
                 """,
                 (bytes(16), bytes(32), "2026-01-01T00:00:00+00:00"),
             )
+            connection.commit()
 
         legacy_store = TaskStore(legacy_path)
         await legacy_store.initialize()
-        with sqlite3.connect(legacy_path) as connection:
+        with closing(sqlite3.connect(legacy_path)) as connection:
             source = connection.execute(
                 "SELECT credential_source FROM web_auth_state WHERE id = 1"
             ).fetchone()[0]
@@ -446,7 +449,7 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def test_initialize_adds_revisions_to_legacy_cloud_credentials(self) -> None:
         database_path = Path(self.temp_dir.name) / "legacy-cloud.db"
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             connection.execute(
                 """
                 CREATE TABLE cloud_credentials (
@@ -468,6 +471,7 @@ class StoreTests(IsolatedAsyncioTestCase):
                     "2026-01-01T00:00:00+00:00",
                 ),
             )
+            connection.commit()
 
         legacy_store = TaskStore(database_path)
         await legacy_store.initialize()
@@ -476,7 +480,7 @@ class StoreTests(IsolatedAsyncioTestCase):
             "fingerprint",
             {"access_token": "access", "refresh_token": "refresh"},
         )
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(cloud_credentials)")}
 
         self.assertIn("revision", columns)
