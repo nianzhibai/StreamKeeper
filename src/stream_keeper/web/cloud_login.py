@@ -33,6 +33,9 @@ _BAIDU_QR_TOKEN_URL = "https://passport.baidu.com/v2/api/getqrcode"
 _BAIDU_QR_POLL_URL = "https://passport.baidu.com/channel/unicast"
 _BAIDU_QR_LOGIN_URL = "https://passport.baidu.com/v3/login/main/qrbdusslogin"
 _BAIDU_NETDISK_HOME = "https://pan.baidu.com/disk/home"
+# `imgurl` arrives inside a remote response, so the host it names is untrusted input
+# for the server-side fetch in BaiduQrLoginFlow._fetch_qr_image.
+_BAIDU_QR_IMAGE_HOSTS = frozenset({"passport.baidu.com", "wappass.baidu.com"})
 _GUANGYA_ACCOUNT_URL = "https://account.guangyapan.com/v1/auth"
 _GUANGYA_CLIENT_ID = "aMe-8VSlkrbQXpUR"
 _GUANGYA_DEVICE_CODE_URL = f"{_GUANGYA_ACCOUNT_URL}/device/code"
@@ -40,6 +43,9 @@ _GUANGYA_TOKEN_URL = f"{_GUANGYA_ACCOUNT_URL}/token"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
+
+
+_QR_IMAGE_MAX_BYTES = 1024 * 1024
 
 
 class CloudLoginError(RuntimeError):
@@ -55,7 +61,13 @@ class CloudLoginPoll:
 class CloudLoginFlow(Protocol):
     qr_ttl_seconds: int
 
-    async def start(self) -> str: ...
+    async def start(self) -> str:
+        """Return the QR code as a `data:` URI.
+
+        The page CSP is `img-src 'self' data:`, so a remote image URL would reach the
+        browser and render as a broken image. CloudLoginManager enforces this.
+        """
+        ...
 
     async def poll(self) -> CloudLoginPoll: ...
 
@@ -91,6 +103,14 @@ def _qr_svg_data_uri(content: str) -> str:
     image.save(output)
     encoded = base64.b64encode(output.getvalue()).decode("ascii")
     return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _png_data_uri(payload: bytes, provider_name: str) -> str:
+    """Wrap PNG bytes for a provider that renders the QR code itself instead of exposing its payload."""
+    if not payload.startswith(b"\x89PNG\r\n\x1a\n") or len(payload) > _QR_IMAGE_MAX_BYTES:
+        raise CloudLoginError(f"{provider_name}返回了无效二维码")
+    encoded = base64.b64encode(payload).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 class QuarkQrLoginFlow:
@@ -357,10 +377,9 @@ class WoPanQrLoginFlow:
             decoded = base64.b64decode(image, validate=True)
         except ValueError as exc:
             raise CloudLoginError("联通云盘返回了无效二维码") from exc
-        if not decoded.startswith(b"\x89PNG\r\n\x1a\n") or len(decoded) > 1024 * 1024:
-            raise CloudLoginError("联通云盘返回了无效二维码")
+        data_uri = _png_data_uri(decoded, "联通云盘")
         self._uuid = session_uuid
-        return f"data:image/png;base64,{image}"
+        return data_uri
 
     async def poll(self) -> CloudLoginPoll:
         if not self._uuid:
@@ -445,8 +464,27 @@ class BaiduQrLoginFlow:
         imgurl = payload.get("imgurl")
         if not isinstance(sign, str) or not sign or not isinstance(imgurl, str) or not imgurl:
             raise CloudLoginError("百度网盘二维码响应缺少必要数据")
+        data_uri = await self._fetch_qr_image(imgurl)
         self._sign = sign
-        return f"https://{imgurl}" if not imgurl.startswith("http") else imgurl
+        return data_uri
+
+    async def _fetch_qr_image(self, imgurl: str) -> str:
+        """Inline the rendered QR code.
+
+        Baidu only hands back a URL to a server-rendered image, never the payload the
+        QR code encodes, so the image has to be fetched here rather than drawn locally
+        like the other providers do.
+        """
+        url = httpx.URL(imgurl if imgurl.startswith(("http://", "https://")) else f"https://{imgurl}")
+        if url.scheme != "https" or url.host not in _BAIDU_QR_IMAGE_HOSTS:
+            raise CloudLoginError("百度网盘返回了不可信的二维码地址")
+        try:
+            response = await self._client.get(url)
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("百度网盘二维码图片下载失败") from exc
+        if response.is_error:
+            raise CloudLoginError(f"百度网盘二维码图片下载失败（HTTP {response.status_code}）")
+        return _png_data_uri(response.content, "百度网盘")
 
     @staticmethod
     def _channel_state(payload: dict[str, object]) -> int | None:
@@ -719,6 +757,8 @@ class CloudLoginManager:
         flow = self._flow_factory(provider)
         try:
             qr_image = await flow.start()
+            if not qr_image.startswith("data:image/"):
+                raise CloudLoginError(f"{provider}扫码流程返回了无法在页面内渲染的二维码")
         except BaseException:
             await flow.aclose()
             raise

@@ -7,6 +7,7 @@ import httpx
 
 from stream_keeper.web.cloud_login import (
     BaiduQrLoginFlow,
+    CloudLoginError,
     CloudLoginManager,
     CloudLoginPoll,
     GuangYaQrLoginFlow,
@@ -14,6 +15,8 @@ from stream_keeper.web.cloud_login import (
     QuarkQrLoginFlow,
     WoPanQrLoginFlow,
 )
+
+_PNG_BYTES = b"\x89PNG\r\n\x1a\nvalid-enough-for-protocol-test"
 
 
 class CloudLoginFlowTests(IsolatedAsyncioTestCase):
@@ -160,6 +163,8 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
                         "imgurl": "passport.baidu.com/v2/api/qrcode?sign=qr-sign&lp=pc",
                     },
                 )
+            if request.url.path == "/v2/api/qrcode":
+                return httpx.Response(200, content=_PNG_BYTES, headers={"content-type": "image/png"})
             if request.url.path.endswith("/channel/unicast"):
                 poll_calls += 1
                 if poll_calls == 1:
@@ -195,7 +200,8 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
         flow = BaiduQrLoginFlow(transport=httpx.MockTransport(handler))
         try:
             qr_image = await flow.start()
-            self.assertEqual(qr_image, "https://passport.baidu.com/v2/api/qrcode?sign=qr-sign&lp=pc")
+            # A remote URL here would be blocked by the page CSP (`img-src 'self' data:`).
+            self.assertEqual(qr_image, f"data:image/png;base64,{base64.b64encode(_PNG_BYTES).decode()}")
             self.assertEqual((await flow.poll()).state, "waiting")
             self.assertEqual((await flow.poll()).state, "waiting")
             completed = await flow.poll()
@@ -218,6 +224,8 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
                     200,
                     json={"errno": 0, "sign": "qr-sign", "imgurl": "passport.baidu.com/v2/api/qrcode"},
                 )
+            if request.url.path == "/v2/api/qrcode":
+                return httpx.Response(200, content=_PNG_BYTES, headers={"content-type": "image/png"})
             if request.url.path.endswith("/channel/unicast"):
                 return httpx.Response(200, json={"errno": 0, "channel_v": next(statuses)})
             raise AssertionError(f"unexpected request: {request.url}")
@@ -319,7 +327,7 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
 
     async def test_wopan_tracks_scanned_state_and_returns_both_tokens(self) -> None:
         query_calls = 0
-        png = base64.b64encode(b"\x89PNG\r\n\x1a\nvalid-enough-for-protocol-test").decode()
+        png = base64.b64encode(_PNG_BYTES).decode()
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal query_calls
@@ -362,6 +370,66 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
             await flow.aclose()
 
 
+class BaiduQrImageTests(IsolatedAsyncioTestCase):
+    async def _start_with_imgurl(self, imgurl: str, image: httpx.Response | None = None) -> str:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/v2/api/getqrcode"):
+                return httpx.Response(200, json={"errno": 0, "sign": "qr-sign", "imgurl": imgurl})
+            if image is not None:
+                return image
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        flow = BaiduQrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            return await flow.start()
+        finally:
+            await flow.aclose()
+
+    async def test_baidu_refuses_to_fetch_qr_image_from_an_unexpected_host(self) -> None:
+        # `imgurl` comes from a remote response, so it must not steer the server-side fetch.
+        with self.assertRaises(CloudLoginError) as caught:
+            await self._start_with_imgurl("127.0.0.1:8000/api/tasks")
+        self.assertIn("不可信", str(caught.exception))
+
+    async def test_baidu_refuses_plain_http_qr_image(self) -> None:
+        with self.assertRaises(CloudLoginError) as caught:
+            await self._start_with_imgurl("http://passport.baidu.com/v2/api/qrcode")
+        self.assertIn("不可信", str(caught.exception))
+
+    async def test_baidu_rejects_a_qr_image_that_is_not_a_png(self) -> None:
+        with self.assertRaises(CloudLoginError) as caught:
+            await self._start_with_imgurl(
+                "passport.baidu.com/v2/api/qrcode",
+                httpx.Response(200, content=b"<html>login</html>"),
+            )
+        self.assertIn("无效二维码", str(caught.exception))
+
+    async def test_baidu_inlines_the_rendered_qr_image(self) -> None:
+        qr_image = await self._start_with_imgurl(
+            "passport.baidu.com/v2/api/qrcode",
+            httpx.Response(200, content=_PNG_BYTES, headers={"content-type": "image/png"}),
+        )
+        self.assertEqual(qr_image, f"data:image/png;base64,{base64.b64encode(_PNG_BYTES).decode()}")
+
+
+class _RemoteUrlFlow:
+    """A flow that regressed to returning a remote image URL instead of a data URI."""
+
+    qr_ttl_seconds = 30
+
+    def __init__(self, provider: str) -> None:
+        self.closed = False
+
+    async def start(self) -> str:
+        return "https://passport.baidu.com/v2/api/qrcode?sign=qr-sign"
+
+    async def poll(self) -> CloudLoginPoll:
+        raise AssertionError("poll must not run when start() breaks the data URI contract")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class _SuccessfulFlow:
     qr_ttl_seconds = 30
 
@@ -390,6 +458,26 @@ class _SuccessfulFlow:
 
 
 class CloudLoginManagerTests(IsolatedAsyncioTestCase):
+    async def test_manager_rejects_a_flow_that_returns_a_remote_qr_url(self) -> None:
+        """The page CSP only renders `data:` images, so a remote URL must fail loudly here."""
+        flows: list[_RemoteUrlFlow] = []
+
+        async def save(provider: str, credentials: dict[str, str]) -> None:
+            self.fail("credentials must not be saved")
+
+        def create_flow(provider: str) -> _RemoteUrlFlow:
+            flow = _RemoteUrlFlow(provider)
+            flows.append(flow)
+            return flow
+
+        manager = CloudLoginManager(save, flow_factory=create_flow, poll_interval=0.01)
+        try:
+            with self.assertRaises(CloudLoginError):
+                await manager.start("baidu")
+            self.assertTrue(flows[0].closed)
+        finally:
+            await manager.shutdown()
+
     async def test_manager_saves_credentials_in_background_and_hides_them_from_status(self) -> None:
         saved: list[tuple[str, dict[str, str]]] = []
         flows: list[_SuccessfulFlow] = []
