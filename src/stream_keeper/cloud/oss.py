@@ -6,19 +6,66 @@ import hashlib
 import hmac
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 import httpx
 
-from .base import CloudUploadError, UploadProgress
+from .base import CloudUploadError, CredentialRefreshCoordinator, UploadProgress
 
 logger = logging.getLogger(__name__)
 
 _Sleep = Callable[[float], Awaitable[None]]
+_OSS_REFRESH_BEFORE = timedelta(minutes=10)
+
+
+@dataclass(frozen=True, slots=True)
+class OssCredentials:
+    access_key_id: str
+    access_key_secret: str
+    security_token: str = ""
+    expires_at: datetime | None = None
+    endpoint: str = ""
+
+
+def parse_oss_expiration(value: Any) -> datetime | None:
+    """Parse the ISO or Unix expiration shapes returned by provider APIs."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        try:
+            return datetime.fromtimestamp(timestamp, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        timestamp = float(text)
+    except ValueError:
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    return parse_oss_expiration(timestamp)
+
+
+OssCredentialProvider = Callable[[], Awaitable[OssCredentials]]
+
+
+class OssCredentialRefreshError(CloudUploadError):
+    pass
 
 
 class AliyunOssUploader:
@@ -38,6 +85,8 @@ class AliyunOssUploader:
         access_key_id: str,
         access_key_secret: str,
         security_token: str = "",
+        expires_at: datetime | None = None,
+        credential_provider: OssCredentialProvider | None = None,
         sleep: _Sleep = asyncio.sleep,
     ) -> None:
         self._client = client
@@ -45,6 +94,9 @@ class AliyunOssUploader:
         self.access_key_id = access_key_id.strip()
         self.access_key_secret = access_key_secret
         self.security_token = security_token.strip()
+        self.expires_at = expires_at
+        self._credential_provider = credential_provider
+        self._credential_state = CredentialRefreshCoordinator()
         self._sleep = sleep
         if not self.bucket or not self.access_key_id or not self.access_key_secret:
             raise CloudUploadError("OSS 上传凭据不完整")
@@ -92,6 +144,40 @@ class AliyunOssUploader:
             encoded_key = quote(key, safe="")
             values.append(encoded_key if value is None else f"{encoded_key}={quote(str(value), safe='')}")
         return "&".join(values)
+
+    def _credentials_need_refresh(self) -> bool:
+        if self.expires_at is None:
+            return False
+        expiration = self.expires_at
+        if expiration.tzinfo is None:
+            expiration = expiration.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) + _OSS_REFRESH_BEFORE >= expiration.astimezone(timezone.utc)
+
+    async def _refresh_credentials(self, rejected_generation: int) -> bool:
+        if self._credential_provider is None:
+            return False
+
+        async def refresh() -> None:
+            credentials = await self._credential_provider()
+            access_key_id = credentials.access_key_id.strip()
+            access_key_secret = credentials.access_key_secret
+            if not access_key_id or not access_key_secret:
+                raise CloudUploadError("OSS 刷新凭据不完整")
+            self.access_key_id = access_key_id
+            self.access_key_secret = access_key_secret
+            self.security_token = credentials.security_token.strip()
+            self.expires_at = credentials.expires_at
+            if credentials.endpoint:
+                self._base_url = self._normalize_endpoint(credentials.endpoint, self.bucket)
+
+        try:
+            return await self._credential_state.refresh(rejected_generation, refresh)
+        except CloudUploadError as exc:
+            raise OssCredentialRefreshError(f"OSS 临时凭据续期失败：{exc}") from exc
+
+    async def _ensure_fresh_credentials(self) -> None:
+        if self._credential_provider is not None and self._credentials_need_refresh():
+            await self._refresh_credentials(self._credential_state.generation)
 
     def _signed_headers(
         self,
@@ -145,7 +231,9 @@ class AliyunOssUploader:
         content_type: str = "",
         content_md5: str = "",
         extra_headers: Mapping[str, str] | None = None,
-    ) -> httpx.Response:
+    ) -> tuple[httpx.Response, int]:
+        await self._ensure_fresh_credentials()
+        credential_generation = self._credential_state.generation
         headers = self._signed_headers(
             method,
             object_key,
@@ -167,9 +255,39 @@ class AliyunOssUploader:
             content=content,
         )
         try:
-            return await self._client.send(request)
+            response = await self._client.send(request)
         except httpx.HTTPError as exc:
             raise CloudUploadError(f"OSS 请求失败：{exc}") from exc
+        return response, credential_generation
+
+    @staticmethod
+    def _is_credential_error(response: httpx.Response) -> bool:
+        if response.status_code == 401:
+            return True
+        if response.status_code != 403:
+            return False
+        code = ""
+        message = ""
+        try:
+            root = ElementTree.fromstring(response.content)
+        except ElementTree.ParseError:
+            message = response.text.lower()
+        else:
+            for element in root.iter():
+                name = element.tag.rsplit("}", 1)[-1]
+                if name == "Code" and element.text:
+                    code = element.text.strip().lower()
+                elif name == "Message" and element.text:
+                    message = element.text.strip().lower()
+        if code in {
+            "accesskeyidnotexist",
+            "invalidaccesskeyid",
+            "invalidsecuritytoken",
+            "securitytokenexpired",
+            "tokenrefreshrequired",
+        }:
+            return True
+        return "security token expired" in message or "securitytokenexpired" in message
 
     @staticmethod
     def _xml_value(payload: bytes, name: str) -> str:
@@ -205,10 +323,21 @@ class AliyunOssUploader:
             stream.close()
 
     async def _initiate(self, object_key: str) -> str:
-        response = await self._request("POST", object_key, {"uploads": None})
-        if response.status_code != 200:
-            raise CloudUploadError(f"OSS 初始化分片上传失败（HTTP {response.status_code}）：{self._detail(response)}")
-        return self._xml_value(response.content, "UploadId")
+        response: httpx.Response | None = None
+        for auth_attempt in range(2):
+            response, generation = await self._request("POST", object_key, {"uploads": None})
+            if response.status_code == 200:
+                return self._xml_value(response.content, "UploadId")
+            if (
+                auth_attempt == 0
+                and self._credential_provider is not None
+                and self._is_credential_error(response)
+            ):
+                await self._refresh_credentials(generation)
+                continue
+            break
+        assert response is not None
+        raise CloudUploadError(f"OSS 初始化分片上传失败（HTTP {response.status_code}）：{self._detail(response)}")
 
     async def _upload_part(
         self,
@@ -231,7 +360,7 @@ class AliyunOssUploader:
                     progress("uploading", offset + streamed)
 
             try:
-                response = await self._request(
+                response, generation = await self._request(
                     "PUT",
                     object_key,
                     query,
@@ -240,6 +369,13 @@ class AliyunOssUploader:
                     content_type="application/octet-stream",
                 )
                 if response.status_code != 200:
+                    if (
+                        attempt < 2
+                        and self._credential_provider is not None
+                        and self._is_credential_error(response)
+                    ):
+                        await self._refresh_credentials(generation)
+                        continue
                     raise CloudUploadError(
                         f"OSS 第 {number} 片上传失败（HTTP {response.status_code}）：{self._detail(response)}"
                     )
@@ -247,6 +383,8 @@ class AliyunOssUploader:
                 if not etag:
                     raise CloudUploadError(f"OSS 第 {number} 片响应缺少 ETag")
                 return etag
+            except OssCredentialRefreshError:
+                raise
             except CloudUploadError as exc:
                 last_error = exc
                 if attempt < 2:
@@ -273,22 +411,34 @@ class AliyunOssUploader:
             callback_body, callback_vars = callback
             extra_headers["x-oss-callback"] = base64.b64encode(callback_body.encode()).decode()
             extra_headers["x-oss-callback-var"] = base64.b64encode(callback_vars.encode()).decode()
-        response = await self._request(
-            "POST",
-            object_key,
-            {"uploadId": upload_id},
-            content=body,
-            content_length=len(body),
-            content_type="application/xml",
-            content_md5=content_md5,
-            extra_headers=extra_headers,
-        )
-        if response.status_code != 200:
-            raise CloudUploadError(f"OSS 合并分片失败（HTTP {response.status_code}）：{self._detail(response)}")
+        response: httpx.Response | None = None
+        for auth_attempt in range(2):
+            response, generation = await self._request(
+                "POST",
+                object_key,
+                {"uploadId": upload_id},
+                content=body,
+                content_length=len(body),
+                content_type="application/xml",
+                content_md5=content_md5,
+                extra_headers=extra_headers,
+            )
+            if response.status_code == 200:
+                return
+            if (
+                auth_attempt == 0
+                and self._credential_provider is not None
+                and self._is_credential_error(response)
+            ):
+                await self._refresh_credentials(generation)
+                continue
+            break
+        assert response is not None
+        raise CloudUploadError(f"OSS 合并分片失败（HTTP {response.status_code}）：{self._detail(response)}")
 
     async def _abort(self, object_key: str, upload_id: str) -> None:
         try:
-            response = await self._request("DELETE", object_key, {"uploadId": upload_id})
+            response, _generation = await self._request("DELETE", object_key, {"uploadId": upload_id})
         except CloudUploadError as exc:
             logger.warning("中止 OSS 分片上传失败：%s", exc)
             return

@@ -9,8 +9,15 @@ from pathlib import Path
 
 import httpx
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
-from .oss import AliyunOssUploader
+from .base import (
+    CloudUploadError,
+    CredentialRefreshCoordinator,
+    CredentialUpdate,
+    RemoteEntry,
+    UploadProgress,
+    split_remote_file,
+)
+from .oss import AliyunOssUploader, OssCredentials, parse_oss_expiration
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,8 @@ class GuangYaPanClient:
         self._timeout_seconds = max(30, timeout_seconds)
         self._on_credential_update = on_credential_update
         self._sleep = sleep
-        self._refresh_lock = asyncio.Lock()
+        self._refresh_state = CredentialRefreshCoordinator()
+        self._device_save_lock = asyncio.Lock()
         self._device_saved = False
         self._last_api_request: dict[str, float] = {}
         self._api_rate_lock = asyncio.Lock()
@@ -108,29 +116,16 @@ class GuangYaPanClient:
             )
 
     async def _ensure_device_saved(self) -> None:
-        if not self._device_saved:
+        if self._device_saved:
+            return
+        async with self._device_save_lock:
+            if self._device_saved:
+                return
             await self._save_credentials()
             self._device_saved = True
 
-    async def _validate_token(self) -> bool:
-        if not self.access_token:
-            return False
-        try:
-            response = await self._client.get(
-                f"{self._account_base_url}/v1/user/me",
-                headers={"Authorization": f"Bearer {self.access_token}"},
-            )
-        except httpx.HTTPError:
-            return False
-        if response.is_error:
-            return False
-        payload = self._json_object(response, "Token 校验")
-        return bool(payload.get("sub"))
-
-    async def _refresh_access_token(self, *, force: bool = False) -> None:
-        async with self._refresh_lock:
-            if not force and self.access_token and await self._validate_token():
-                return
+    async def _refresh_access_token(self, *, rejected_generation: int | None = None) -> None:
+        async def refresh() -> None:
             if not self.refresh_token:
                 raise CloudUploadError("光鸭网盘没有可用的 Access Token 或 Refresh Token")
             try:
@@ -155,10 +150,12 @@ class GuangYaPanClient:
                 self.refresh_token = refresh_token.strip()
             await self._save_credentials()
 
-    async def _ensure_access_token(self, *, force_refresh: bool = False) -> None:
+        await self._refresh_state.refresh(rejected_generation, refresh)
+
+    async def _ensure_access_token(self) -> None:
         await self._ensure_device_saved()
-        if force_refresh or not self.access_token:
-            await self._refresh_access_token(force=force_refresh)
+        if not self.access_token:
+            await self._refresh_access_token(rejected_generation=self._refresh_state.generation)
 
     async def _throttle(self, path: str) -> None:
         async with self._api_rate_lock:
@@ -190,8 +187,10 @@ class GuangYaPanClient:
         await self._ensure_access_token()
         for auth_attempt in range(2):
             await self._throttle(path)
+            access_token = self.access_token
+            token_generation = self._refresh_state.generation
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {access_token}",
                 "Did": self.device_id,
                 "Dt": "4",
             }
@@ -205,7 +204,7 @@ class GuangYaPanClient:
                 raise CloudUploadError(f"光鸭网盘接口 {path} 请求失败：{exc}") from exc
             payload = self._json_object(response, f"接口 {path}")
             if response.status_code in {401, 403} and auth_attempt == 0 and self.refresh_token:
-                await self._refresh_access_token(force=True)
+                await self._refresh_access_token(rejected_generation=token_generation)
                 continue
             try:
                 response_code = int(payload.get("code", 0))
@@ -348,6 +347,26 @@ class GuangYaPanClient:
             data["endPoint"] = data["fullEndPoint"]
         return data, already_done
 
+    @staticmethod
+    def _oss_credentials(token: dict[str, object]) -> OssCredentials:
+        nested = token.get("creds") if isinstance(token.get("creds"), dict) else {}
+        expiration = next(
+            (
+                source.get(key)
+                for source in (token, nested)
+                for key in ("Expiration", "expiration", "expiresAt", "expires_at", "expireTime", "expire_time")
+                if source.get(key) is not None
+            ),
+            None,
+        )
+        return OssCredentials(
+            access_key_id=str(token.get("accessKeyID") or ""),
+            access_key_secret=str(token.get("secretAccessKey") or ""),
+            security_token=str(token.get("sessionToken") or ""),
+            expires_at=parse_oss_expiration(expiration),
+            endpoint=str(token.get("endPoint") or ""),
+        )
+
     async def _wait_upload_task(self, task_id: str) -> None:
         deadline = time.monotonic() + self._timeout_seconds
         while time.monotonic() < deadline:
@@ -387,21 +406,47 @@ class GuangYaPanClient:
         if already_done:
             await self._wait_upload_task(task_id)
             return
-        endpoint = str(token.get("endPoint") or "")
+        credentials = self._oss_credentials(token)
         bucket = str(token.get("bucketName") or "")
-        access_key_id = str(token.get("accessKeyID") or "")
-        access_key_secret = str(token.get("secretAccessKey") or "")
-        session_token = str(token.get("sessionToken") or "")
         object_path = str(token.get("objectPath") or "")
-        if not all((endpoint, bucket, access_key_id, access_key_secret, object_path)):
+        if not all(
+            (
+                credentials.endpoint,
+                bucket,
+                credentials.access_key_id,
+                credentials.access_key_secret,
+                object_path,
+            )
+        ):
             raise CloudUploadError("光鸭网盘上传 Token 缺少 OSS 参数")
+
+        async def refresh_oss_credentials() -> OssCredentials:
+            refreshed, refreshed_done = await self._get_upload_token(parent_id, filename, size)
+            if refreshed_done:
+                raise CloudUploadError("光鸭网盘在 OSS 续期时将上传任务标记为已完成")
+            stable_fields = {
+                "taskId": task_id,
+                "bucketName": bucket,
+                "objectPath": object_path,
+            }
+            changed = [
+                key for key, expected in stable_fields.items() if str(refreshed.get(key) or "") != expected
+            ]
+            if changed:
+                raise CloudUploadError(
+                    f"光鸭网盘 OSS 续期返回了不同上传任务，无法安全续传：{', '.join(changed)}"
+                )
+            return self._oss_credentials(refreshed)
+
         oss = AliyunOssUploader(
             self._client,
-            endpoint=endpoint,
+            endpoint=credentials.endpoint,
             bucket=bucket,
-            access_key_id=access_key_id,
-            access_key_secret=access_key_secret,
-            security_token=session_token,
+            access_key_id=credentials.access_key_id,
+            access_key_secret=credentials.access_key_secret,
+            security_token=credentials.security_token,
+            expires_at=credentials.expires_at,
+            credential_provider=refresh_oss_credentials,
             sleep=self._sleep,
         )
         await oss.upload(local_path, object_path, part_size=self._part_size(size), progress=progress)

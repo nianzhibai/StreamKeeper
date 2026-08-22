@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import sqlite3
 import time
@@ -1481,6 +1482,76 @@ class WebTests(TestCase):
         )
         self.assertEqual(cleared.status_code, 200)
         self.assertFalse(cleared.json()["baidu"]["credential_configured"])
+
+    def test_partial_cloud_credential_edit_uses_latest_runtime_tokens_as_baseline(self) -> None:
+        self.login()
+        configured = self.client.put(
+            "/api/cloud/archive/providers/wopan",
+            headers=self.csrf_headers,
+            json={
+                "enabled": True,
+                "access_token": "configured-access-token-123456",
+                "refresh_token": "configured-refresh-token",
+                "clear_tokens": False,
+                "root_id": "0",
+                "family_id": "",
+            },
+        )
+        self.assertEqual(configured.status_code, 200)
+
+        with sqlite3.connect(self.settings.database_path) as connection:
+            raw = json.loads(
+                connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
+            )
+        defaults = raw["providers"]["wopan"]["credentials"]
+        fingerprint = hashlib.sha256(
+            json.dumps(defaults, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        asyncio.run(self.store.resolve_cloud_credentials("wopan", fingerprint, defaults))
+        asyncio.run(
+            self.store.patch_cloud_credentials(
+                "wopan",
+                fingerprint,
+                {
+                    "access_token": "runtime-access-token-123456",
+                    "refresh_token": "runtime-refresh-token-rotated",
+                },
+            )
+        )
+
+        updated = self.client.put(
+            "/api/cloud/archive/providers/wopan",
+            headers=self.csrf_headers,
+            json={
+                "enabled": True,
+                "access_token": "manually-replaced-access-123456",
+                "refresh_token": None,
+                "clear_tokens": False,
+                "root_id": "0",
+                "family_id": "",
+            },
+        )
+        self.assertEqual(updated.status_code, 200)
+        with sqlite3.connect(self.settings.database_path) as connection:
+            raw = json.loads(
+                connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
+            )
+        self.assertEqual(
+            raw["providers"]["wopan"]["credentials"],
+            {
+                "access_token": "manually-replaced-access-123456",
+                "refresh_token": "runtime-refresh-token-rotated",
+            },
+        )
+        self.assertIsNone(
+            asyncio.run(
+                self.store.patch_cloud_credentials(
+                    "wopan",
+                    fingerprint,
+                    {"refresh_token": "late-stale-refresh-token"},
+                )
+            )
+        )
 
     def test_cloud_qr_login_saves_credentials_without_returning_secrets(self) -> None:
         self.login()

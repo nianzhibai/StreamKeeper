@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -47,7 +48,14 @@ class QuarkClientTests(IsolatedAsyncioTestCase):
             self.assertEqual(request.url.params["fr"], "pc")
             self.assertIn("old-cookie", request.headers["cookie"])
             path = request.url.path.removeprefix("/1/clouddrive")
-            headers = {"Set-Cookie": "__puus=rotated-cookie; Path=/; Secure"} if path == "/file/sort" else None
+            headers = (
+                [
+                    ("Set-Cookie", "__puus=rotated-cookie; Path=/; Secure"),
+                    ("Set-Cookie", "__pus=rotated-pus; Path=/; Secure"),
+                ]
+                if path == "/file/sort"
+                else None
+            )
             if path == "/file/sort":
                 parent = request.url.params["pdir_fid"]
                 entries = directories.get(parent, [])
@@ -148,4 +156,60 @@ class QuarkClientTests(IsolatedAsyncioTestCase):
         self.assertEqual([entry["file_name"] for entry in directories["0"]], ["DouYinStreamKeeper"])
         self.assertEqual(upload_name, "remote.ts")
         self.assertEqual(uploaded_parts, {1: b"abcd", 2: b"ef"})
-        self.assertEqual(credential_updates, [{"cookie": "session=old-cookie; __puus=rotated-cookie"}])
+        self.assertEqual(
+            credential_updates,
+            [{"cookie": "session=old-cookie; __puus=rotated-cookie; __pus=rotated-pus"}],
+        )
+
+    async def test_api_requests_apply_rotated_cookies_in_request_order(self) -> None:
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        request_cookies: list[str] = []
+        credential_updates: list[dict[str, str]] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            request_cookies.append(request.headers["cookie"])
+            request_number = len(request_cookies)
+            if request_number == 1:
+                first_started.set()
+                await release_first.wait()
+            suffix = str(request_number)
+            return httpx.Response(
+                200,
+                headers=[
+                    ("Set-Cookie", f"__pus=pus-{suffix}; Path=/; Secure"),
+                    ("Set-Cookie", f"__puus=puus-{suffix}; Path=/; Secure"),
+                ],
+                json={"status": 200, "code": 0, "data": {}},
+            )
+
+        async def save_credentials(state: dict[str, str]) -> None:
+            credential_updates.append(state)
+
+        client = QuarkClient(
+            "session=value; __pus=pus-0; __puus=puus-0",
+            on_credential_update=save_credentials,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            first = asyncio.create_task(client._api_request("GET", "/config"))
+            await first_started.wait()
+            second = asyncio.create_task(client._api_request("GET", "/config"))
+            await asyncio.sleep(0)
+            self.assertEqual(len(request_cookies), 1)
+            release_first.set()
+            await asyncio.gather(first, second)
+        finally:
+            await client.aclose()
+
+        self.assertIn("__pus=pus-0", request_cookies[0])
+        self.assertIn("__puus=puus-0", request_cookies[0])
+        self.assertIn("__pus=pus-1", request_cookies[1])
+        self.assertIn("__puus=puus-1", request_cookies[1])
+        self.assertEqual(
+            credential_updates,
+            [
+                {"cookie": "session=value; __pus=pus-1; __puus=puus-1"},
+                {"cookie": "session=value; __pus=pus-2; __puus=puus-2"},
+            ],
+        )

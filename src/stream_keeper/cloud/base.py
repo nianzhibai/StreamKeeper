@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import posixpath
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -12,6 +13,37 @@ class CloudUploadError(RuntimeError):
 
 
 CredentialUpdate = Callable[[dict[str, str]], Awaitable[None]]
+
+
+class CredentialRefreshCoordinator:
+    """Collapse concurrent refreshes by the credential generation they rejected.
+
+    Comparing token strings is insufficient because some providers can renew a
+    token while returning the same value. A monotonically increasing local
+    generation lets every waiter tell whether another request already renewed
+    the credentials it used.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    async def refresh(
+        self,
+        rejected_generation: int | None,
+        operation: Callable[[], Awaitable[None]],
+    ) -> bool:
+        async with self._lock:
+            if rejected_generation is not None and rejected_generation != self._generation:
+                return False
+            await operation()
+            self._generation += 1
+            return True
+
 
 UploadStage = Literal["preparing", "uploading", "verifying"]
 # Called with the current stage and the absolute number of bytes handed to the

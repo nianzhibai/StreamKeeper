@@ -13,7 +13,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
+from .base import (
+    CloudUploadError,
+    CredentialRefreshCoordinator,
+    CredentialUpdate,
+    RemoteEntry,
+    UploadProgress,
+    split_remote_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +58,7 @@ class BaiduNetdiskClient:
         self._api_base_url = api_base_url.rstrip("/")
         self._token_url = token_url
         self._upload_base_url = upload_base_url.rstrip("/")
-        self._refresh_lock = asyncio.Lock()
+        self._refresh_state = CredentialRefreshCoordinator()
         self._vip_type: int | None = None
         self._client = httpx.AsyncClient(
             follow_redirects=False,
@@ -100,10 +107,8 @@ class BaiduNetdiskClient:
                 }
             )
 
-    async def _refresh_access_token(self, *, force: bool = True) -> None:
-        async with self._refresh_lock:
-            if not force and self.access_token:
-                return
+    async def _refresh_access_token(self, *, rejected_generation: int | None = None) -> None:
+        async def refresh() -> None:
             if not self.refresh_token or not self.client_id or not self.client_secret:
                 raise CloudUploadError("百度网盘 Access Token 已失效，且没有可用的客户端刷新凭据")
             try:
@@ -129,6 +134,8 @@ class BaiduNetdiskClient:
                 self.refresh_token = refresh_token
             await self._save_credentials()
 
+        await self._refresh_state.refresh(rejected_generation, refresh)
+
     async def _api_request(
         self,
         method: str,
@@ -138,9 +145,11 @@ class BaiduNetdiskClient:
         form: dict[str, str] | None = None,
     ) -> dict[str, object]:
         if not self.access_token:
-            await self._refresh_access_token(force=False)
+            await self._refresh_access_token(rejected_generation=self._refresh_state.generation)
         for auth_attempt in range(2):
-            query: dict[str, str | int] = {"access_token": self.access_token}
+            access_token = self.access_token
+            token_generation = self._refresh_state.generation
+            query: dict[str, str | int] = {"access_token": access_token}
             if params:
                 query.update(params)
             try:
@@ -158,7 +167,7 @@ class BaiduNetdiskClient:
             except (TypeError, ValueError):
                 errno = -1
             if self._is_auth_expired(payload) and auth_attempt == 0:
-                await self._refresh_access_token()
+                await self._refresh_access_token(rejected_generation=token_generation)
                 continue
             if response.is_error or errno != 0:
                 message = payload.get("errmsg") or payload.get("error_msg") or payload.get("error") or ""
@@ -285,32 +294,39 @@ class BaiduNetdiskClient:
         return urlunsplit(("https", parsed.netloc, "", "", ""))
 
     async def _locate_upload(self, remote_path: str, upload_id: str) -> str:
-        try:
-            response = await self._client.get(
-                f"{self._upload_base_url}/rest/2.0/pcs/file",
-                params={
-                    "method": "locateupload",
-                    "appid": "250528",
-                    "path": remote_path,
-                    "uploadid": upload_id,
-                    "upload_version": "2.0",
-                    "access_token": self.access_token,
-                },
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("百度网盘动态上传地址获取失败，使用默认地址：%s", exc)
+        for auth_attempt in range(2):
+            access_token = self.access_token
+            token_generation = self._refresh_state.generation
+            try:
+                response = await self._client.get(
+                    f"{self._upload_base_url}/rest/2.0/pcs/file",
+                    params={
+                        "method": "locateupload",
+                        "appid": "250528",
+                        "path": remote_path,
+                        "uploadid": upload_id,
+                        "upload_version": "2.0",
+                        "access_token": access_token,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.warning("百度网盘动态上传地址获取失败，使用默认地址：%s", exc)
+                return self._upload_base_url
+            try:
+                payload = self._json_object(response, "获取上传地址")
+            except CloudUploadError as exc:
+                logger.warning("百度网盘动态上传地址响应无效，使用默认地址：%s", exc)
+                return self._upload_base_url
+            if self._is_auth_expired(payload) and auth_attempt == 0:
+                await self._refresh_access_token(rejected_generation=token_generation)
+                continue
+            candidates = payload.get("servers") or payload.get("bak_servers")
+            if not response.is_error and isinstance(candidates, list) and candidates:
+                first = candidates[0]
+                server = first.get("server") if isinstance(first, dict) else None
+                if isinstance(server, str) and server:
+                    return self._safe_upload_base(server)
             return self._upload_base_url
-        try:
-            payload = self._json_object(response, "获取上传地址")
-        except CloudUploadError as exc:
-            logger.warning("百度网盘动态上传地址响应无效，使用默认地址：%s", exc)
-            return self._upload_base_url
-        candidates = payload.get("servers") or payload.get("bak_servers")
-        if not response.is_error and isinstance(candidates, list) and candidates:
-            first = candidates[0]
-            server = first.get("server") if isinstance(first, dict) else None
-            if isinstance(server, str) and server:
-                return self._safe_upload_base(server)
         return self._upload_base_url
 
     @staticmethod
@@ -374,11 +390,13 @@ class BaiduNetdiskClient:
                     progress("uploading", offset + streamed)
 
             try:
+                access_token = self.access_token
+                token_generation = self._refresh_state.generation
                 response = await self._client.post(
                     f"{upload_base}/rest/2.0/pcs/superfile2",
                     params={
                         "method": "upload",
-                        "access_token": self.access_token,
+                        "access_token": access_token,
                         "type": "tmpfile",
                         "path": remote_path,
                         "uploadid": upload_id,
@@ -391,7 +409,13 @@ class BaiduNetdiskClient:
                     content=self._multipart_content(local_path, offset, size, prefix, suffix, on_streamed),
                 )
                 payload = self._json_object(response, f"上传第 {part_number + 1} 片")
-                error_code = int(payload.get("error_code", payload.get("errno", 0)))
+                if self._is_auth_expired(payload) and attempt < 2:
+                    await self._refresh_access_token(rejected_generation=token_generation)
+                    continue
+                try:
+                    error_code = int(payload.get("error_code", payload.get("errno", 0)))
+                except (TypeError, ValueError):
+                    error_code = -1
                 if response.is_error or error_code != 0:
                     raise CloudUploadError(
                         f"百度网盘第 {part_number + 1} 片上传失败（HTTP {response.status_code}，code={error_code}）"

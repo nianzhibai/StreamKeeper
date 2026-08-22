@@ -17,6 +17,7 @@ from pathlib import Path
 from ..cloud import (
     CLOUD_PROVIDER_LABELS,
     CloudArchiveConfig,
+    CloudProviderConfig,
     CloudUploadClient,
     CloudUploadError,
     UploadStage,
@@ -27,7 +28,7 @@ from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, UPLOAD_MODE_SCHEDULED, S
 from .events import EventLog
 from .recordings import RecordingPreviewCache
 from .schemas import TaskStatus
-from .store import TaskStore
+from .store import CloudCredentialSnapshot, TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -444,24 +445,40 @@ class RecordingUploadService:
         else:
             await self.events.success("upload", f"{label}归档完成", detail)
 
-    async def _create_client(self, target: UploadTarget, config: CloudArchiveConfig) -> CloudUploadClient:
-        provider = config.provider(target.name)
+    async def resolve_provider_credentials(
+        self,
+        provider: CloudProviderConfig,
+    ) -> CloudCredentialSnapshot:
         defaults = dict(provider.credentials)
         fingerprint = self._fingerprint(defaults)
-        credentials = await self.store.resolve_cloud_credentials(target.name, fingerprint, defaults)
+        return await self.store.resolve_cloud_credential_snapshot(provider.name, fingerprint, defaults)
 
-        credential_state = dict(credentials)
+    async def _create_client(self, target: UploadTarget, config: CloudArchiveConfig) -> CloudUploadClient:
+        provider = config.provider(target.name)
+        current_config = await self.get_config()
+        current_provider = current_config.provider(target.name)
+        if current_provider != provider:
+            if not current_provider.enabled:
+                raise CloudUploadError(
+                    f"{CLOUD_PROVIDER_LABELS.get(target.name, target.name)}配置已更新并停用，跳过旧归档请求"
+                )
+            provider = current_provider
+        snapshot = await self.resolve_provider_credentials(provider)
+        credentials = dict(snapshot.state)
 
-        async def save_credentials(state: dict[str, str]) -> None:
-            # Refresh callbacks may only return rotated fields. Keep the latest
-            # complete state across multiple refreshes by this client.
-            credential_state.update(state)
-            await self.store.save_cloud_credentials(target.name, fingerprint, dict(credential_state))
+        async def save_credentials(updates: dict[str, str]) -> None:
+            saved = await self.store.patch_cloud_credentials(
+                target.name,
+                snapshot.source_fingerprint,
+                updates,
+            )
+            if saved is None:
+                logger.info("忽略已被新配置替代的%s凭据更新", CLOUD_PROVIDER_LABELS.get(target.name, target.name))
 
         return create_cloud_client(
             provider,
             credentials,
-            timeout_seconds=config.upload_timeout_seconds,
+            timeout_seconds=current_config.upload_timeout_seconds,
             on_credential_update=save_credentials,
         )
 

@@ -8,8 +8,15 @@ from pathlib import Path
 
 import httpx
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
-from .oss import AliyunOssUploader
+from .base import (
+    CloudUploadError,
+    CredentialRefreshCoordinator,
+    CredentialUpdate,
+    RemoteEntry,
+    UploadProgress,
+    split_remote_file,
+)
+from .oss import AliyunOssUploader, OssCredentials, parse_oss_expiration
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +49,7 @@ class Pan115Client:
         self._passport_base_url = passport_base_url.rstrip("/")
         self._on_credential_update = on_credential_update
         self._sleep = sleep
-        self._refresh_lock = asyncio.Lock()
+        self._refresh_state = CredentialRefreshCoordinator()
         self._client = httpx.AsyncClient(
             follow_redirects=False,
             timeout=httpx.Timeout(float(timeout_seconds)),
@@ -76,8 +83,8 @@ class Pan115Client:
             return False
         return code == 99 or str(code).startswith("401")
 
-    async def _refresh_access_token(self) -> None:
-        async with self._refresh_lock:
+    async def _refresh_access_token(self, *, rejected_generation: int | None = None) -> None:
+        async def refresh() -> None:
             if not self.refresh_token:
                 raise CloudUploadError("115 Access Token 已失效，且没有 Refresh Token")
             try:
@@ -104,6 +111,8 @@ class Pan115Client:
                 self.refresh_token = refresh_token
             await self._save_credentials()
 
+        await self._refresh_state.refresh(rejected_generation, refresh)
+
     async def _request(
         self,
         method: str,
@@ -114,15 +123,17 @@ class Pan115Client:
         raw: bool = False,
     ) -> dict[str, object]:
         if not self.access_token:
-            await self._refresh_access_token()
+            await self._refresh_access_token(rejected_generation=self._refresh_state.generation)
         for auth_attempt in range(2):
+            access_token = self.access_token
+            token_generation = self._refresh_state.generation
             try:
                 response = await self._client.request(
                     method,
                     f"{self._api_base_url}{path}",
                     params=params,
                     data=form,
-                    headers={"Authorization": f"Bearer {self.access_token}"},
+                    headers={"Authorization": f"Bearer {access_token}"},
                 )
             except httpx.HTTPError as exc:
                 raise CloudUploadError(f"115 接口 {path} 请求失败：{exc}") from exc
@@ -132,7 +143,7 @@ class Pan115Client:
             except (TypeError, ValueError):
                 state = 0
             if (response.is_error or state != 1) and auth_attempt == 0 and self._is_auth_expired(payload):
-                await self._refresh_access_token()
+                await self._refresh_access_token(rejected_generation=token_generation)
                 continue
             if response.is_error or state != 1:
                 message = payload.get("message") or payload.get("error") or ""
@@ -259,6 +270,33 @@ class Pan115Client:
             return body, variables
         return None
 
+    async def _get_oss_credentials(self) -> OssCredentials:
+        token_payload = await self._request("GET", "/open/upload/get_token")
+        token = token_payload.get("data")
+        if not isinstance(token, dict):
+            raise CloudUploadError("115 上传 Token 响应缺少 data")
+        endpoint = str(token.get("endpoint") or "")
+        access_key_id = str(token.get("AccessKeyId") or token.get("AccessKeyID") or "")
+        access_key_secret = str(token.get("AccessKeySecret") or "")
+        security_token = str(token.get("SecurityToken") or "")
+        if not all((endpoint, access_key_id, access_key_secret)):
+            raise CloudUploadError("115 上传响应缺少 OSS 凭据")
+        expiration = next(
+            (
+                token.get(key)
+                for key in ("Expiration", "expiration", "expires_at", "expire_time")
+                if token.get(key) is not None
+            ),
+            None,
+        )
+        return OssCredentials(
+            access_key_id=access_key_id,
+            access_key_secret=access_key_secret,
+            security_token=security_token,
+            expires_at=parse_oss_expiration(expiration),
+            endpoint=endpoint,
+        )
+
     async def _upload(self, local_path: Path, parent_id: str, filename: str, progress: UploadProgress | None) -> None:
         size = local_path.stat().st_size
         full_hash, prefix_hash = await asyncio.to_thread(self._hash_file, local_path)
@@ -330,25 +368,20 @@ class Pan115Client:
         if status != 1:
             raise CloudUploadError(f"115 上传初始化返回了未知状态：{status}")
 
-        token_payload = await self._request("GET", "/open/upload/get_token")
-        token = token_payload.get("data")
-        if not isinstance(token, dict):
-            raise CloudUploadError("115 上传 Token 响应缺少 data")
-        endpoint = str(token.get("endpoint") or "")
-        access_key_id = str(token.get("AccessKeyId") or token.get("AccessKeyID") or "")
-        access_key_secret = str(token.get("AccessKeySecret") or "")
-        security_token = str(token.get("SecurityToken") or "")
+        credentials = await self._get_oss_credentials()
         bucket = str(data.get("bucket") or "")
         object_key = str(data.get("object") or "")
-        if not all((endpoint, access_key_id, access_key_secret, bucket, object_key)):
+        if not all((bucket, object_key)):
             raise CloudUploadError("115 上传响应缺少 OSS 参数")
         oss = AliyunOssUploader(
             self._client,
-            endpoint=endpoint,
+            endpoint=credentials.endpoint,
             bucket=bucket,
-            access_key_id=access_key_id,
-            access_key_secret=access_key_secret,
-            security_token=security_token,
+            access_key_id=credentials.access_key_id,
+            access_key_secret=credentials.access_key_secret,
+            security_token=credentials.security_token,
+            expires_at=credentials.expires_at,
+            credential_provider=self._get_oss_credentials,
             sleep=self._sleep,
         )
         await oss.upload(

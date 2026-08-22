@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
-from stream_keeper.cloud import CloudUploadError, UploadProgress
+from stream_keeper.cloud import CloudProviderConfig, CloudUploadError, UploadProgress
 from stream_keeper.models import RecordingResult, SelectedSource
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 from stream_keeper.web.recordings import RecordingPreviewCache
@@ -484,6 +485,45 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         # The failed upload kept its recording, so its preview stays usable.
         self.assertTrue(kept.exists())
         self.assertTrue(other.exists())
+
+    async def test_stale_queued_config_uses_current_provider_credentials(self) -> None:
+        service = RecordingUploadService(self.settings, self.store, clock=lambda: self.now)
+        queued_config = await service.get_config()
+        current_provider = CloudProviderConfig(
+            name="wopan",
+            enabled=True,
+            credentials={
+                "access_token": "current-access-token-123456",
+                "refresh_token": "current-refresh-token",
+            },
+            options={"root_id": "current-root", "family_id": ""},
+        )
+        service._config = queued_config.with_provider(current_provider)
+        captured: dict[str, object] = {}
+
+        def create_client(provider, credentials, **kwargs):
+            captured["provider"] = provider
+            captured["credentials"] = credentials
+            captured["timeout_seconds"] = kwargs["timeout_seconds"]
+            return FakeUploadClient()
+
+        with patch("stream_keeper.web.uploader.create_cloud_client", side_effect=create_client):
+            client = await service._create_client(
+                UploadTarget(name="wopan", remote_root=CLOUD_ARCHIVE_ROOT),
+                queued_config,
+            )
+            await client.aclose()
+
+        self.assertEqual(captured["provider"], current_provider)
+        self.assertEqual(captured["credentials"], current_provider.credentials)
+        stale_fingerprint = service._fingerprint(queued_config.provider("wopan").credentials)
+        self.assertIsNone(
+            await self.store.patch_cloud_credentials(
+                "wopan",
+                stale_fingerprint,
+                {"refresh_token": "late-stale-refresh"},
+            )
+        )
 
     async def test_archive_run_reports_start_and_outcome_to_the_activity_log(self) -> None:
         make_old_file(self.settings.recordings_dir / "主播" / "ok.ts", b"video", self.now)

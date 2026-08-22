@@ -1,8 +1,10 @@
+import asyncio
 import base64
 import hashlib
 import json
 import struct
 import zlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -23,7 +25,7 @@ from stream_keeper.cloud import (
     Pan115CookieClient,
     create_cloud_client,
 )
-from stream_keeper.cloud.oss import AliyunOssUploader
+from stream_keeper.cloud.oss import AliyunOssUploader, OssCredentials, parse_oss_expiration
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT
 
 
@@ -32,6 +34,13 @@ async def no_sleep(_seconds: float) -> None:
 
 
 class AliyunOssUploaderTests(IsolatedAsyncioTestCase):
+    def test_sts_expiration_parser_accepts_provider_timestamp_shapes(self) -> None:
+        expected = datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(parse_oss_expiration("2026-08-01T00:00:00Z"), expected)
+        self.assertEqual(parse_oss_expiration(expected.timestamp()), expected)
+        self.assertEqual(parse_oss_expiration(expected.timestamp() * 1000), expected)
+        self.assertIsNone(parse_oss_expiration("not-a-date"))
+
     async def test_provider_default_headers_are_not_sent_to_oss(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -80,6 +89,111 @@ class AliyunOssUploaderTests(IsolatedAsyncioTestCase):
         self.assertNotIn("content-type", requests[0].headers)
         self.assertEqual(requests[1].headers["content-type"], "application/octet-stream")
         self.assertEqual(requests[2].headers["content-type"], "application/xml")
+
+    async def test_expired_sts_is_refreshed_and_the_same_part_is_replayed(self) -> None:
+        refreshes = 0
+        part_bodies: list[bytes] = []
+        access_keys: list[str] = []
+
+        async def credentials() -> OssCredentials:
+            nonlocal refreshes
+            refreshes += 1
+            return OssCredentials(
+                access_key_id="new-key",
+                access_key_secret="new-secret",
+                security_token="new-security-token",
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            access_key = request.headers["authorization"].split(" ", 1)[1].split(":", 1)[0]
+            access_keys.append(access_key)
+            if "uploads" in request.url.params:
+                return httpx.Response(
+                    200,
+                    content=b"<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+                )
+            if "partNumber" in request.url.params:
+                part_bodies.append(await request.aread())
+                if access_key == "old-key":
+                    return httpx.Response(
+                        403,
+                        content=b"<Error><Code>SecurityTokenExpired</Code></Error>",
+                    )
+                return httpx.Response(200, headers={"ETag": '"etag-1"'})
+            return httpx.Response(200, content=b"<CompleteMultipartUploadResult/>")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            uploader = AliyunOssUploader(
+                client,
+                endpoint="https://oss.test",
+                bucket="bucket",
+                access_key_id="old-key",
+                access_key_secret="old-secret",
+                security_token="old-security-token",
+                credential_provider=credentials,
+                sleep=no_sleep,
+            )
+            with TemporaryDirectory() as tmp:
+                path = Path(tmp) / "recording.ts"
+                path.write_bytes(b"recording")
+                await uploader.upload(path, "archive/recording.ts", part_size=100 * 1024)
+        finally:
+            await client.aclose()
+
+        self.assertEqual(refreshes, 1)
+        self.assertEqual(part_bodies, [b"recording", b"recording"])
+        self.assertEqual(access_keys, ["old-key", "old-key", "new-key", "new-key"])
+
+    async def test_sts_is_refreshed_before_the_expiration_window(self) -> None:
+        refreshes = 0
+        access_keys: list[str] = []
+
+        async def credentials() -> OssCredentials:
+            nonlocal refreshes
+            refreshes += 1
+            return OssCredentials(
+                access_key_id="fresh-key",
+                access_key_secret="fresh-secret",
+                security_token="fresh-security-token",
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            access_keys.append(request.headers["authorization"].split(" ", 1)[1].split(":", 1)[0])
+            if "uploads" in request.url.params:
+                return httpx.Response(
+                    200,
+                    content=b"<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+                )
+            if "partNumber" in request.url.params:
+                await request.aread()
+                return httpx.Response(200, headers={"ETag": '"etag-1"'})
+            return httpx.Response(200, content=b"<CompleteMultipartUploadResult/>")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            uploader = AliyunOssUploader(
+                client,
+                endpoint="https://oss.test",
+                bucket="bucket",
+                access_key_id="expiring-key",
+                access_key_secret="expiring-secret",
+                security_token="expiring-token",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+                credential_provider=credentials,
+                sleep=no_sleep,
+            )
+            with TemporaryDirectory() as tmp:
+                path = Path(tmp) / "recording.ts"
+                path.write_bytes(b"recording")
+                await uploader.upload(path, "archive/recording.ts", part_size=100 * 1024)
+        finally:
+            await client.aclose()
+
+        self.assertEqual(refreshes, 1)
+        self.assertEqual(access_keys, ["fresh-key", "fresh-key", "fresh-key"])
 
 
 class BaiduNetdiskClientTests(IsolatedAsyncioTestCase):
@@ -173,6 +287,59 @@ class BaiduNetdiskClientTests(IsolatedAsyncioTestCase):
         self.assertTrue(created)
         self.assertEqual(upload_meta["path"], remote)
 
+    async def test_concurrent_rejections_share_one_refresh_even_when_access_token_is_unchanged(self) -> None:
+        expired_requests = 0
+        refresh_requests = 0
+        both_expired = asyncio.Event()
+        updates: list[dict[str, str]] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal expired_requests, refresh_requests
+            if request.url.host == "openapi.baidu.com":
+                refresh_requests += 1
+                return httpx.Response(
+                    200,
+                    json={
+                        # Some providers renew validity without changing the token string.
+                        "access_token": "same-access-token",
+                        "refresh_token": "rotated-refresh-token",
+                    },
+                )
+            self.assertEqual(request.url.host, "pan.baidu.com")
+            if refresh_requests == 0:
+                expired_requests += 1
+                if expired_requests == 2:
+                    both_expired.set()
+                await both_expired.wait()
+                return httpx.Response(200, json={"errno": 111, "errmsg": "expired"})
+            return httpx.Response(200, json={"errno": 0, "vip_type": 0})
+
+        async def save_credentials(state: dict[str, str]) -> None:
+            updates.append(state)
+
+        client = BaiduNetdiskClient(
+            access_token="same-access-token",
+            refresh_token="initial-refresh-token",
+            client_id="client-id",
+            client_secret="client-secret",
+            on_credential_update=save_credentials,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            first, second = await asyncio.gather(
+                client._api_request("GET", "/xpan/nas", params={"method": "uinfo"}),
+                client._api_request("GET", "/xpan/nas", params={"method": "uinfo"}),
+            )
+        finally:
+            await client.aclose()
+
+        self.assertEqual(first["errno"], 0)
+        self.assertEqual(second["errno"], 0)
+        self.assertEqual(expired_requests, 2)
+        self.assertEqual(refresh_requests, 1)
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["refresh_token"], "rotated-refresh-token")
+
 
 class Pan115ClientTests(IsolatedAsyncioTestCase):
     async def test_open_api_upload_uses_oss_callback_and_verifies(self) -> None:
@@ -181,9 +348,10 @@ class Pan115ClientTests(IsolatedAsyncioTestCase):
         upload_name = ""
         upload_size = 0
         completed = False
+        token_requests = 0
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal upload_parent, upload_name, upload_size, completed
+            nonlocal upload_parent, upload_name, upload_size, completed, token_requests
             if request.url.host == "bucket.oss.test":
                 if "uploads" in request.url.params:
                     return httpx.Response(
@@ -192,6 +360,11 @@ class Pan115ClientTests(IsolatedAsyncioTestCase):
                     )
                 if "partNumber" in request.url.params:
                     await request.aread()
+                    if "OSS ak-1:" in request.headers["authorization"]:
+                        return httpx.Response(
+                            403,
+                            content=b"<Error><Code>SecurityTokenExpired</Code></Error>",
+                        )
                     return httpx.Response(200, headers={"ETag": '"etag-1"'})
                 if "uploadId" in request.url.params:
                     body = await request.aread()
@@ -244,15 +417,16 @@ class Pan115ClientTests(IsolatedAsyncioTestCase):
                     },
                 )
             if path == "/upload/get_token":
+                token_requests += 1
                 return httpx.Response(
                     200,
                     json={
                         "state": True,
                         "data": {
                             "endpoint": "https://oss.test",
-                            "AccessKeyId": "ak",
-                            "AccessKeySecret": "secret",
-                            "SecurityToken": "sts",
+                            "AccessKeyId": f"ak-{token_requests}",
+                            "AccessKeySecret": f"secret-{token_requests}",
+                            "SecurityToken": f"sts-{token_requests}",
                         },
                     },
                 )
@@ -277,6 +451,7 @@ class Pan115ClientTests(IsolatedAsyncioTestCase):
             finally:
                 await client.aclose()
         self.assertTrue(completed)
+        self.assertEqual(token_requests, 2)
 
 
 class Pan115CookieCryptoTests(TestCase):
@@ -510,9 +685,10 @@ class GuangYaPanClientTests(IsolatedAsyncioTestCase):
         upload_name = ""
         upload_size = 0
         task_checks = 0
+        upload_token_requests = 0
 
         async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal parent_id, upload_name, upload_size, task_checks
+            nonlocal parent_id, upload_name, upload_size, task_checks, upload_token_requests
             if request.url.host == "bucket.oss.test":
                 if "uploads" in request.url.params:
                     return httpx.Response(
@@ -521,6 +697,11 @@ class GuangYaPanClientTests(IsolatedAsyncioTestCase):
                     )
                 if "partNumber" in request.url.params:
                     await request.aread()
+                    if "OSS ak-1:" in request.headers["authorization"]:
+                        return httpx.Response(
+                            403,
+                            content=b"<Error><Code>SecurityTokenExpired</Code></Error>",
+                        )
                     return httpx.Response(200, headers={"ETag": '"g-etag"'})
                 if "uploadId" in request.url.params:
                     await request.aread()
@@ -553,6 +734,7 @@ class GuangYaPanClientTests(IsolatedAsyncioTestCase):
                 )
                 return httpx.Response(200, json={"code": 0, "msg": "success", "data": {"fileId": folder_id}})
             if path.endswith("/get_res_center_token"):
+                upload_token_requests += 1
                 parent_id = payload["parentId"]
                 upload_name = payload["name"]
                 upload_size = int(payload["res"]["fileSize"])
@@ -567,9 +749,9 @@ class GuangYaPanClientTests(IsolatedAsyncioTestCase):
                             "bucketName": "bucket",
                             "endPoint": "https://oss.test",
                             "creds": {
-                                "accessKeyID": "ak",
-                                "secretAccessKey": "secret",
-                                "sessionToken": "sts",
+                                "accessKeyID": f"ak-{upload_token_requests}",
+                                "secretAccessKey": f"secret-{upload_token_requests}",
+                                "sessionToken": f"sts-{upload_token_requests}",
                             },
                         },
                     },
@@ -605,6 +787,7 @@ class GuangYaPanClientTests(IsolatedAsyncioTestCase):
         self.assertTrue(updates)
         self.assertEqual(len(client.device_id), 32)
         self.assertEqual(task_checks, 2)
+        self.assertEqual(upload_token_requests, 2)
 
 
 class CloudRegistryTests(IsolatedAsyncioTestCase):

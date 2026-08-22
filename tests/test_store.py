@@ -422,7 +422,9 @@ class StoreTests(IsolatedAsyncioTestCase):
         )
 
         refreshed = {"access_token": "new-access", "refresh_token": "new-refresh"}
-        await self.store.save_cloud_credentials("wopan", "fingerprint-1", refreshed)
+        self.assertIsNotNone(
+            await self.store.patch_cloud_credentials("wopan", "fingerprint-1", refreshed)
+        )
         await self.store.initialize()
         self.assertEqual(
             await self.store.resolve_cloud_credentials("wopan", "fingerprint-1", defaults),
@@ -433,6 +435,140 @@ class StoreTests(IsolatedAsyncioTestCase):
         self.assertEqual(
             await self.store.resolve_cloud_credentials("wopan", "fingerprint-2", replacement),
             replacement,
+        )
+        self.assertIsNone(
+            await self.store.patch_cloud_credentials(
+                "wopan",
+                "fingerprint-1",
+                {"access_token": "late-old-access"},
+            )
+        )
+
+    async def test_initialize_adds_revisions_to_legacy_cloud_credentials(self) -> None:
+        database_path = Path(self.temp_dir.name) / "legacy-cloud.db"
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE cloud_credentials (
+                    provider TEXT PRIMARY KEY,
+                    source_fingerprint TEXT NOT NULL,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO cloud_credentials (
+                    provider, source_fingerprint, state_json, updated_at
+                ) VALUES ('wopan', 'fingerprint', ?, ?)
+                """,
+                (
+                    '{"access_token":"access","refresh_token":"refresh"}',
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+
+        legacy_store = TaskStore(database_path)
+        await legacy_store.initialize()
+        snapshot = await legacy_store.resolve_cloud_credential_snapshot(
+            "wopan",
+            "fingerprint",
+            {"access_token": "access", "refresh_token": "refresh"},
+        )
+        with sqlite3.connect(database_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(cloud_credentials)")}
+
+        self.assertIn("revision", columns)
+        self.assertEqual(snapshot.revision, 0)
+        self.assertEqual(snapshot.state["refresh_token"], "refresh")
+
+    async def test_cloud_credential_patches_atomically_merge_partial_updates(self) -> None:
+        defaults = {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+        }
+        snapshot = await self.store.resolve_cloud_credential_snapshot(
+            "wopan",
+            "fingerprint",
+            defaults,
+        )
+
+        access_result, refresh_result = await asyncio.gather(
+            self.store.patch_cloud_credentials(
+                "wopan",
+                snapshot.source_fingerprint,
+                {"access_token": "access-2"},
+            ),
+            self.store.patch_cloud_credentials(
+                "wopan",
+                snapshot.source_fingerprint,
+                {"refresh_token": "refresh-2"},
+            ),
+        )
+
+        self.assertIsNotNone(access_result)
+        self.assertIsNotNone(refresh_result)
+        current = await self.store.resolve_cloud_credential_snapshot(
+            "wopan",
+            "fingerprint",
+            defaults,
+        )
+        self.assertEqual(
+            current.state,
+            {"access_token": "access-2", "refresh_token": "refresh-2"},
+        )
+        self.assertEqual(current.revision, 2)
+        with self.assertRaisesRegex(ValueError, "不支持凭据字段"):
+            await self.store.patch_cloud_credentials(
+                "wopan",
+                "fingerprint",
+                {"unexpected": "value"},
+            )
+
+    async def test_cloud_config_save_detects_refresh_race_and_invalidates_atomically(self) -> None:
+        self.assertTrue(await self.store.save_cloud_upload_config({"version": "old"}))
+        defaults = {"access_token": "access-1", "refresh_token": "refresh-1"}
+        stale = await self.store.resolve_cloud_credential_snapshot(
+            "wopan",
+            "fingerprint",
+            defaults,
+        )
+        await self.store.patch_cloud_credentials(
+            "wopan",
+            "fingerprint",
+            {"refresh_token": "refresh-2"},
+        )
+
+        self.assertFalse(
+            await self.store.save_cloud_upload_config(
+                {"version": "must-not-win"},
+                invalidate_credentials=("wopan",),
+                expected_credentials=(stale,),
+            )
+        )
+        self.assertEqual(await self.store.get_cloud_upload_config(), {"version": "old"})
+        current = await self.store.resolve_cloud_credential_snapshot(
+            "wopan",
+            "fingerprint",
+            defaults,
+        )
+        self.assertEqual(current.state["refresh_token"], "refresh-2")
+
+        self.assertTrue(
+            await self.store.save_cloud_upload_config(
+                {"version": "new"},
+                invalidate_credentials=("wopan",),
+                expected_credentials=(current,),
+            )
+        )
+        self.assertEqual(await self.store.get_cloud_upload_config(), {"version": "new"})
+        self.assertIsNone(
+            await self.store.patch_cloud_credentials(
+                "wopan",
+                "fingerprint",
+                {"refresh_token": "late-refresh"},
+            )
         )
 
     async def test_web_cloud_config_overrides_later_environment_changes(self) -> None:

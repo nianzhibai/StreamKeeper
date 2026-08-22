@@ -17,7 +17,7 @@ from Crypto.Cipher import AES
 from Crypto.PublicKey import ECC
 
 from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
-from .oss import AliyunOssUploader
+from .oss import AliyunOssUploader, OssCredentials, parse_oss_expiration
 
 logger = logging.getLogger(__name__)
 
@@ -478,6 +478,30 @@ class Pan115CookieClient:
             value = await asyncio.to_thread(stream.read, end - start + 1)
         return hashlib.sha1(value).hexdigest().upper()
 
+    async def _get_oss_credentials(self) -> OssCredentials:
+        token_payload = await self._request("GET", _API_OSS_TOKEN)
+        token = token_payload.get("data") if isinstance(token_payload.get("data"), dict) else token_payload
+        if not isinstance(token, dict):
+            raise CloudUploadError("115 OSS Token 响应格式错误")
+        token_status = token.get("StatusCode") or token_payload.get("StatusCode")
+        if token_status is not None and str(token_status) != "200":
+            raise CloudUploadError(f"115 OSS Token 获取失败：{token_status}")
+        expiration = next(
+            (
+                token.get(key)
+                for key in ("Expiration", "expiration", "expires_at", "expire_time")
+                if token.get(key) is not None
+            ),
+            None,
+        )
+        return OssCredentials(
+            access_key_id=str(token.get("AccessKeyID") or token.get("AccessKeyId") or ""),
+            access_key_secret=str(token.get("AccessKeySecret") or ""),
+            security_token=str(token.get("SecurityToken") or ""),
+            expires_at=parse_oss_expiration(expiration),
+            endpoint=_OSS_ENDPOINT,
+        )
+
     async def _upload(self, local_path: Path, parent_id: str, filename: str, progress: UploadProgress | None) -> None:
         await self._ensure_upload_info()
         size = local_path.stat().st_size
@@ -519,13 +543,7 @@ class Pan115CookieClient:
         else:
             raise CloudUploadError("115 上传二次校验次数过多")
 
-        token_payload = await self._request("GET", _API_OSS_TOKEN)
-        token = token_payload.get("data") if isinstance(token_payload.get("data"), dict) else token_payload
-        if not isinstance(token, dict):
-            raise CloudUploadError("115 OSS Token 响应格式错误")
-        token_status = token.get("StatusCode") or token_payload.get("StatusCode")
-        if token_status is not None and str(token_status) != "200":
-            raise CloudUploadError(f"115 OSS Token 获取失败：{token_status}")
+        credentials = await self._get_oss_credentials()
         data = payload
         bucket = str(data.get("bucket") or "")
         object_key = str(data.get("object") or "")
@@ -539,18 +557,17 @@ class Pan115CookieClient:
             and isinstance(callback.get("callback_var"), str)
         ):
             callback_pair = (callback["callback"], callback["callback_var"])
-        access_key = str(token.get("AccessKeyID") or token.get("AccessKeyId") or "")
-        access_secret = str(token.get("AccessKeySecret") or "")
-        security_token = str(token.get("SecurityToken") or "")
-        if not all((bucket, object_key, access_key, access_secret)):
+        if not all((bucket, object_key, credentials.access_key_id, credentials.access_key_secret)):
             raise CloudUploadError("115 OSS 上传参数不完整")
         oss = AliyunOssUploader(
             self._client,
-            endpoint=_OSS_ENDPOINT,
+            endpoint=credentials.endpoint,
             bucket=bucket,
-            access_key_id=access_key,
-            access_key_secret=access_secret,
-            security_token=security_token,
+            access_key_id=credentials.access_key_id,
+            access_key_secret=credentials.access_key_secret,
+            security_token=credentials.security_token,
+            expires_at=credentials.expires_at,
+            credential_provider=self._get_oss_credentials,
             sleep=self._sleep,
         )
         await oss.upload(local_path, object_key, part_size=20 * 1024 * 1024, callback=callback_pair, progress=progress)

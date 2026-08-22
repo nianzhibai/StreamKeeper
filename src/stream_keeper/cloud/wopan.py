@@ -18,7 +18,14 @@ from pathlib import Path
 import httpx
 from Crypto.Cipher import AES
 
-from .base import CloudUploadError, CredentialUpdate, RemoteEntry, UploadProgress, split_remote_file
+from .base import (
+    CloudUploadError,
+    CredentialRefreshCoordinator,
+    CredentialUpdate,
+    RemoteEntry,
+    UploadProgress,
+    split_remote_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +72,7 @@ class WoPanClient:
         self._on_credential_update = on_credential_update
         self._sleep = sleep
         self._zone_url: str | None = None
-        self._refresh_lock = asyncio.Lock()
+        self._refresh_state = CredentialRefreshCoordinator()
         self._client = httpx.AsyncClient(
             follow_redirects=False,
             headers={"User-Agent": _USER_AGENT},
@@ -77,25 +84,25 @@ class WoPanClient:
     def _space_type(self) -> str:
         return "1" if self.family_id else "0"
 
-    def _aes_key(self, channel: str) -> bytes:
+    def _aes_key(self, channel: str, access_token: str | None = None) -> bytes:
         if channel == "api-user":
             return _CLIENT_SECRET.encode()
-        token = self.access_token.encode()
+        token = (self.access_token if access_token is None else access_token).encode()
         if len(token) < 16:
             raise CloudUploadError("联通云盘 access token 无效，且无法加密请求")
         return token[:16]
 
-    def _encrypt(self, value: object, channel: str) -> str:
+    def _encrypt(self, value: object, channel: str, *, access_token: str | None = None) -> str:
         raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
         padding = AES.block_size - len(raw) % AES.block_size
         padded = raw + bytes([padding]) * padding
-        encrypted = AES.new(self._aes_key(channel), AES.MODE_CBC, iv=_IV).encrypt(padded)
+        encrypted = AES.new(self._aes_key(channel, access_token), AES.MODE_CBC, iv=_IV).encrypt(padded)
         return base64.b64encode(encrypted).decode()
 
-    def _decrypt(self, value: str, channel: str) -> object:
+    def _decrypt(self, value: str, channel: str, *, access_token: str | None = None) -> object:
         try:
             encrypted = base64.b64decode(value, validate=True)
-            padded = AES.new(self._aes_key(channel), AES.MODE_CBC, iv=_IV).decrypt(encrypted)
+            padded = AES.new(self._aes_key(channel, access_token), AES.MODE_CBC, iv=_IV).decrypt(encrypted)
             padding = padded[-1]
             if padding < 1 or padding > AES.block_size or padded[-padding:] != bytes([padding]) * padding:
                 raise ValueError("invalid PKCS#7 padding")
@@ -112,12 +119,10 @@ class WoPanClient:
             return
         if not self.refresh_token:
             raise CloudUploadError("联通云盘没有可用的 access token 或 refresh token")
-        await self._refresh_access_token(force=False)
+        await self._refresh_access_token(rejected_generation=self._refresh_state.generation)
 
-    async def _refresh_access_token(self, *, force: bool = True) -> None:
-        async with self._refresh_lock:
-            if not force and len(self.access_token.encode()) >= 16:
-                return
+    async def _refresh_access_token(self, *, rejected_generation: int | None = None) -> None:
+        async def refresh() -> None:
             if not self.refresh_token:
                 raise CloudUploadError("联通云盘 access token 已失效，但未配置 refresh token")
             data = await self._dispatcher(
@@ -140,6 +145,8 @@ class WoPanClient:
                     {"access_token": self.access_token, "refresh_token": self.refresh_token}
                 )
 
+        await self._refresh_state.refresh(rejected_generation, refresh)
+
     async def _dispatcher(
         self,
         channel: str,
@@ -151,18 +158,20 @@ class WoPanClient:
     ) -> object:
         if channel != "api-user":
             await self._ensure_access_token()
+        access_token = self.access_token
+        token_generation = self._refresh_state.generation
         timestamp = int(time.time() * 1000)
         request_sequence = random.randint(100000, 108998)
         version = ""
         sign_input = f"{key}{timestamp}{request_sequence}{channel}{version}".encode()
         body = dict(other)
-        body["param"] = self._encrypt(param, channel)
+        body["param"] = self._encrypt(param, channel, access_token=access_token)
         headers = {
             "Origin": "https://pan.wo.cn",
             "Referer": "https://pan.wo.cn/",
         }
-        if self.access_token:
-            headers["Accesstoken"] = self.access_token
+        if access_token:
+            headers["Accesstoken"] = access_token
         request_body = {
             "header": {
                 "key": key,
@@ -194,7 +203,7 @@ class WoPanClient:
             raise CloudUploadError(f"联通云盘接口 {key} 响应缺少 RSP")
         response_code = str(result.get("RSP_CODE") or "")
         if channel != "api-user" and allow_refresh and response_code == "9999":
-            await self._refresh_access_token()
+            await self._refresh_access_token(rejected_generation=token_generation)
             return await self._dispatcher(channel, key, param, other, allow_refresh=False)
         if response_code != "0000":
             raise CloudUploadError(f"联通云盘接口 {key} 失败（code={response_code}）：{result.get('RSP_DESC') or ''}")
@@ -202,7 +211,7 @@ class WoPanClient:
         if isinstance(data, str):
             if not data:
                 return None
-            return self._decrypt(data, channel)
+            return self._decrypt(data, channel, access_token=access_token)
         return data
 
     async def _list_directory(self, parent_id: str) -> list[RemoteEntry]:
@@ -380,6 +389,7 @@ class WoPanClient:
         local_path: Path,
         *,
         fields: dict[str, str],
+        file_info: dict[str, object],
         filename: str,
         content_type: str,
         offset: int,
@@ -395,8 +405,17 @@ class WoPanClient:
 
         last_error: Exception | None = None
         for attempt in range(3):
+            access_token = self.access_token
+            token_generation = self._refresh_state.generation
+            attempt_fields = dict(fields)
+            attempt_fields["accessToken"] = access_token
+            attempt_fields["fileInfo"] = self._encrypt(
+                file_info,
+                "wohome",
+                access_token=access_token,
+            )
             boundary = f"----DouYinStreamKeeper{secrets.token_hex(12)}"
-            prefix = self._multipart_prefix(fields, boundary, filename, content_type)
+            prefix = self._multipart_prefix(attempt_fields, boundary, filename, content_type)
             suffix = f"\r\n--{boundary}--\r\n".encode()
             try:
                 response = await self._client.post(
@@ -415,7 +434,11 @@ class WoPanClient:
                     raise CloudUploadError(
                         f"联通云盘第 {part_index} 片返回无效 JSON：{self._response_detail(response)}"
                     ) from exc
-                if response.is_error or not isinstance(payload, dict) or str(payload.get("code")) != "0000":
+                response_code = str(payload.get("code")) if isinstance(payload, dict) else ""
+                if response_code == "9999" and attempt < 2:
+                    await self._refresh_access_token(rejected_generation=token_generation)
+                    continue
+                if response.is_error or not isinstance(payload, dict) or response_code != "0000":
                     message = payload.get("msg") if isinstance(payload, dict) else self._response_detail(response)
                     raise CloudUploadError(
                         f"联通云盘第 {part_index} 片上传失败（HTTP {response.status_code}）：{message}"
@@ -455,19 +478,16 @@ class WoPanClient:
         }
         if self.family_id:
             file_info["familyId"] = self.family_id
-        encrypted_file_info = self._encrypt(file_info, "wohome")
         total_parts = max(size // _PART_SIZE, 1)
         unique_id = f"{int(time.time() * 1000)}_{''.join(secrets.choice(string.ascii_letters) for _ in range(6))}"
         base_fields = {
             "uniqueId": unique_id,
-            "accessToken": self.access_token,
             "fileName": filename,
             "psToken": "undefined",
             "fileSize": str(size),
             "totalPart": str(total_parts),
             "channel": "wocloud",
             "directoryId": parent_id,
-            "fileInfo": encrypted_file_info,
         }
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         upload_url = f"{await self._get_zone_url()}/openapi/client/upload2C"
@@ -481,6 +501,7 @@ class WoPanClient:
                 upload_url,
                 local_path,
                 fields=fields,
+                file_info=file_info,
                 filename=filename,
                 content_type=content_type,
                 offset=offset,

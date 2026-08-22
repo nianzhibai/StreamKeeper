@@ -47,6 +47,9 @@ class QuarkClient:
         self.root_id = root_id
         self._on_credential_update = on_credential_update
         self._sleep = sleep
+        # Quark rotates cookies in ordinary responses. Serializing API calls
+        # prevents a slower, older response from overwriting a newer rotation.
+        self._api_request_lock = asyncio.Lock()
         timeout = httpx.Timeout(float(timeout_seconds))
         self._api_client = httpx.AsyncClient(
             base_url=_API_BASE_URL,
@@ -81,7 +84,7 @@ class QuarkClient:
     async def _accept_response_cookies(self, response: httpx.Response) -> None:
         updated = self.cookie
         for item in response.cookies.jar:
-            if item.name == "__puus" and item.value:
+            if item.name in {"__pus", "__puus"} and item.value:
                 updated = self._replace_cookie(updated, item.name, item.value)
         if updated == self.cookie:
             return
@@ -95,6 +98,22 @@ class QuarkClient:
         return " ".join(response.text.split())[:300]
 
     async def _api_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str | int] | None = None,
+        json_body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        async with self._api_request_lock:
+            return await self._api_request_unlocked(
+                method,
+                path,
+                params=params,
+                json_body=json_body,
+            )
+
+    async def _api_request_unlocked(
         self,
         method: str,
         path: str,

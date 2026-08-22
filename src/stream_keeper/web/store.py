@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from ..cloud.config import CLOUD_PROVIDER_ORDER
+from ..cloud.config import CLOUD_PROVIDER_ORDER, CLOUD_PROVIDER_SPECS
 from ..settings import MAX_RECORDING_CONCURRENCY, WEB_SETUP_PASSWORD
 from .schemas import (
     EventCategory,
@@ -67,6 +67,14 @@ class WebSession:
     csrf_token: str
     created_at: datetime
     expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CloudCredentialSnapshot:
+    provider: str
+    source_fingerprint: str
+    state: dict[str, str]
+    revision: int
 
 
 class CredentialUpdateStatus(str, Enum):
@@ -261,10 +269,18 @@ class TaskStore:
                     provider TEXT PRIMARY KEY,
                     source_fingerprint TEXT NOT NULL,
                     state_json TEXT NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            credential_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(cloud_credentials)").fetchall()
+            }
+            if "revision" not in credential_columns:
+                connection.execute(
+                    "ALTER TABLE cloud_credentials ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cloud_upload_config (
@@ -478,12 +494,60 @@ class TaskStore:
             row = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()
         return self._decode_json_object(row["config_json"]) if row is not None else None
 
-    async def save_cloud_upload_config(self, config: dict[str, object]) -> None:
-        await self._run_sync(self._save_cloud_upload_config_sync, config)
+    async def save_cloud_upload_config(
+        self,
+        config: dict[str, object],
+        *,
+        invalidate_credentials: Sequence[str] = (),
+        expected_credentials: Sequence[CloudCredentialSnapshot] = (),
+    ) -> bool:
+        """Save config and invalidate credential snapshots in one transaction.
 
-    def _save_cloud_upload_config_sync(self, config: dict[str, object]) -> None:
+        A credential refresh can race an administrator editing one token field.
+        The expected revisions turn that race into a retry instead of silently
+        replacing a newly rotated sibling token with the form's older value.
+        """
+
+        invalidated = tuple(dict.fromkeys(invalidate_credentials))
+        expected = tuple(expected_credentials)
+        for provider in invalidated:
+            self._validate_cloud_state(provider, {})
+        if len({snapshot.provider for snapshot in expected}) != len(expected):
+            raise ValueError("网盘凭据快照不能重复")
+        if set(invalidated) != {snapshot.provider for snapshot in expected}:
+            if invalidated or expected:
+                raise ValueError("每个失效的网盘凭据都必须提供对应快照")
+        return await self._run_sync(
+            self._save_cloud_upload_config_sync,
+            config,
+            invalidated,
+            expected,
+        )
+
+    def _save_cloud_upload_config_sync(
+        self,
+        config: dict[str, object],
+        invalidate_credentials: tuple[str, ...],
+        expected_credentials: tuple[CloudCredentialSnapshot, ...],
+    ) -> bool:
         config_json = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for snapshot in expected_credentials:
+                row = connection.execute(
+                    """
+                    SELECT source_fingerprint, revision
+                    FROM cloud_credentials
+                    WHERE provider = ?
+                    """,
+                    (snapshot.provider,),
+                ).fetchone()
+                if (
+                    row is None
+                    or int(row["revision"]) != snapshot.revision
+                    or not secrets.compare_digest(row["source_fingerprint"], snapshot.source_fingerprint)
+                ):
+                    return False
             connection.execute(
                 """
                 INSERT INTO cloud_upload_config (id, source_fingerprint, config_json, updated_at)
@@ -495,6 +559,9 @@ class TaskStore:
                 """,
                 (config_json, utc_now().isoformat()),
             )
+            for provider in invalidate_credentials:
+                connection.execute("DELETE FROM cloud_credentials WHERE provider = ?", (provider,))
+        return True
 
     @staticmethod
     def _validate_cloud_state(provider: str, state: dict[str, str]) -> None:
@@ -502,6 +569,9 @@ class TaskStore:
             raise ValueError(f"不支持的网盘凭据类型: {provider}")
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in state.items()):
             raise ValueError("网盘凭据必须是字符串字典")
+        unknown = set(state) - set(CLOUD_PROVIDER_SPECS[provider].credential_keys)
+        if unknown:
+            raise ValueError(f"{provider} 不支持凭据字段: {', '.join(sorted(unknown))}")
 
     async def resolve_cloud_credentials(
         self,
@@ -509,92 +579,137 @@ class TaskStore:
         source_fingerprint: str,
         defaults: dict[str, str],
     ) -> dict[str, str]:
-        """Use refreshed credentials until the source environment values change."""
+        """Use refreshed credentials until the source values change."""
 
+        snapshot = await self.resolve_cloud_credential_snapshot(provider, source_fingerprint, defaults)
+        return dict(snapshot.state)
+
+    async def resolve_cloud_credential_snapshot(
+        self,
+        provider: str,
+        source_fingerprint: str,
+        defaults: dict[str, str],
+    ) -> CloudCredentialSnapshot:
         self._validate_cloud_state(provider, defaults)
         return await self._run_sync(
-            self._resolve_cloud_credentials_sync,
+            self._resolve_cloud_credential_snapshot_sync,
             provider,
             source_fingerprint,
             defaults,
         )
 
-    def _resolve_cloud_credentials_sync(
+    def _resolve_cloud_credential_snapshot_sync(
         self,
         provider: str,
         source_fingerprint: str,
         defaults: dict[str, str],
-    ) -> dict[str, str]:
+    ) -> CloudCredentialSnapshot:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT source_fingerprint, state_json FROM cloud_credentials WHERE provider = ?",
+                """
+                SELECT source_fingerprint, state_json, revision
+                FROM cloud_credentials
+                WHERE provider = ?
+                """,
                 (provider,),
             ).fetchone()
             if row is not None and secrets.compare_digest(row["source_fingerprint"], source_fingerprint):
-                try:
-                    state = json.loads(row["state_json"])
-                except (TypeError, json.JSONDecodeError):
-                    state = None
-                if isinstance(state, dict) and all(
-                    isinstance(key, str) and isinstance(value, str) for key, value in state.items()
-                ):
-                    return state
+                state = self._decode_json_object(row["state_json"])
+                if state is not None:
+                    try:
+                        self._validate_cloud_state(provider, state)
+                    except ValueError:
+                        state = None
+                if state is not None:
+                    return CloudCredentialSnapshot(
+                        provider=provider,
+                        source_fingerprint=source_fingerprint,
+                        state=dict(state),
+                        revision=int(row["revision"]),
+                    )
+
+            revision = int(row["revision"]) + 1 if row is not None else 0
             state_json = json.dumps(defaults, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             connection.execute(
                 """
-                INSERT INTO cloud_credentials (provider, source_fingerprint, state_json, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO cloud_credentials (
+                    provider, source_fingerprint, state_json, revision, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(provider) DO UPDATE SET
                     source_fingerprint = excluded.source_fingerprint,
                     state_json = excluded.state_json,
+                    revision = excluded.revision,
                     updated_at = excluded.updated_at
                 """,
-                (provider, source_fingerprint, state_json, utc_now().isoformat()),
+                (provider, source_fingerprint, state_json, revision, utc_now().isoformat()),
             )
-        return dict(defaults)
-
-    async def save_cloud_credentials(
-        self,
-        provider: str,
-        source_fingerprint: str,
-        state: dict[str, str],
-    ) -> None:
-        self._validate_cloud_state(provider, state)
-        await self._run_sync(
-            self._save_cloud_credentials_sync,
-            provider,
-            source_fingerprint,
-            state,
+        return CloudCredentialSnapshot(
+            provider=provider,
+            source_fingerprint=source_fingerprint,
+            state=dict(defaults),
+            revision=revision,
         )
 
-    def _save_cloud_credentials_sync(
+    async def patch_cloud_credentials(
         self,
         provider: str,
-        source_fingerprint: str,
-        state: dict[str, str],
-    ) -> None:
-        state_json = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        expected_fingerprint: str,
+        updates: dict[str, str],
+    ) -> CloudCredentialSnapshot | None:
+        """Atomically merge rotated fields if the source is still current.
+
+        Missing rows and fingerprint mismatches mean that an administrator has
+        replaced or cleared the credentials; a callback from the old client is
+        then deliberately ignored rather than recreating stale state.
+        """
+
+        self._validate_cloud_state(provider, updates)
+        return await self._run_sync(
+            self._patch_cloud_credentials_sync,
+            provider,
+            expected_fingerprint,
+            updates,
+        )
+
+    def _patch_cloud_credentials_sync(
+        self,
+        provider: str,
+        expected_fingerprint: str,
+        updates: dict[str, str],
+    ) -> CloudCredentialSnapshot | None:
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT source_fingerprint, state_json, revision
+                FROM cloud_credentials
+                WHERE provider = ?
+                """,
+                (provider,),
+            ).fetchone()
+            if row is None or not secrets.compare_digest(row["source_fingerprint"], expected_fingerprint):
+                return None
+            state = self._decode_json_object(row["state_json"])
+            if state is None:
+                raise ValueError(f"{provider} 运行时凭据已损坏")
+            self._validate_cloud_state(provider, state)
+            merged = dict(state)
+            merged.update(updates)
+            revision = int(row["revision"])
+            if merged == state:
+                return CloudCredentialSnapshot(provider, expected_fingerprint, merged, revision)
+            revision += 1
+            state_json = json.dumps(merged, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             connection.execute(
                 """
-                INSERT INTO cloud_credentials (provider, source_fingerprint, state_json, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(provider) DO UPDATE SET
-                    source_fingerprint = excluded.source_fingerprint,
-                    state_json = excluded.state_json,
-                    updated_at = excluded.updated_at
+                UPDATE cloud_credentials
+                SET state_json = ?, revision = ?, updated_at = ?
+                WHERE provider = ? AND source_fingerprint = ?
                 """,
-                (provider, source_fingerprint, state_json, utc_now().isoformat()),
+                (state_json, revision, utc_now().isoformat(), provider, expected_fingerprint),
             )
-
-    async def delete_cloud_credentials(self, provider: str) -> bool:
-        self._validate_cloud_state(provider, {})
-        return await self._run_sync(self._delete_cloud_credentials_sync, provider)
-
-    def _delete_cloud_credentials_sync(self, provider: str) -> bool:
-        with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM cloud_credentials WHERE provider = ?", (provider,))
-        return cursor.rowcount > 0
+        return CloudCredentialSnapshot(provider, expected_fingerprint, merged, revision)
 
     @staticmethod
     def _credential_digest(password: str, salt: bytes) -> bytes:
