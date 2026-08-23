@@ -11,7 +11,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260873";
+} from "/static/ui.js?v=20260874";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };
@@ -28,9 +28,7 @@ const searchNode = document.querySelector("#recording-search");
 const sortNode = document.querySelector("#recording-sort");
 const playerDialog = document.querySelector("#recording-player-dialog");
 const playerContainer = document.querySelector("#recording-player");
-const playerLoading = document.querySelector("#recording-player-loading");
 const playerError = document.querySelector("#recording-player-error");
-const playerLoadingDetail = document.querySelector("#recording-player-loading-detail");
 const Artplayer = window.Artplayer;
 
 if (Artplayer) {
@@ -179,11 +177,6 @@ function navigate(path) {
   load({ path, history: "push" });
 }
 
-function showPlayerMessage(kind) {
-  toggle(playerLoading, kind === "loading");
-  toggle(playerError, kind === "error");
-}
-
 function destroyPlayer() {
   const instance = playerInstance;
   playerInstance = null;
@@ -199,14 +192,11 @@ function destroyPlayer() {
 function setPlayerSource(entry) {
   if (!entry) return;
   const remux = entry.playback_mode === "remux";
-  playerLoadingDetail.textContent = remux
-    ? "首次播放会无损封装为 MP4，完成后可直接拖动进度"
-    : "正在加载视频";
-  showPlayerMessage("loading");
+  toggle(playerError, false);
   destroyPlayer();
 
   if (!Artplayer) {
-    showPlayerMessage("error");
+    toggle(playerError, true);
     toast("ArtPlayer 加载失败，请刷新页面重试", "error");
     return;
   }
@@ -237,14 +227,8 @@ function setPlayerSource(entry) {
     });
     playerInstance = instance;
 
-    const clearPreparingState = () => {
-      if (playerInstance === instance) showPlayerMessage(null);
-    };
-    instance.on("video:loadedmetadata", clearPreparingState);
-    instance.on("video:canplay", clearPreparingState);
-    instance.on("video:playing", clearPreparingState);
     instance.on("video:error", () => {
-      if (playerInstance === instance) showPlayerMessage("error");
+      if (playerInstance === instance) toggle(playerError, true);
     });
     instance.on("fullscreenError", () => {
       toast("浏览器拒绝了全屏请求", "error");
@@ -276,21 +260,19 @@ function setPlayerSource(entry) {
   } catch (_error) {
     playerInstance = null;
     playerContainer.replaceChildren();
-    showPlayerMessage("error");
+    toggle(playerError, true);
     toast("播放器初始化失败，请刷新页面重试", "error");
   }
 }
 
 function openPlayer(entry) {
   if (!entry.playable) return;
-  document.querySelector("#recording-player-title").textContent = entry.name;
   document.querySelector("#recording-player-path").textContent = `/${entry.path}`;
   document.querySelector("#recording-player-meta").textContent = [
     String(entry.extension).toUpperCase(),
     formatBytes(entry.size),
     formatTime(entry.modified_at),
   ].join(" · ");
-  document.querySelector("#recording-download").href = fileUrl(entry.path, { download: true });
   playerDialog.showModal();
   setPlayerSource(entry);
 }
@@ -299,7 +281,7 @@ function closePlayer() {
   if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
   destroyPlayer();
   if (playerDialog.open) playerDialog.close();
-  showPlayerMessage("loading");
+  toggle(playerError, false);
 }
 
 async function deleteRecording(entry, button) {

@@ -2577,6 +2577,11 @@ select.input {
   transform: none;
 }
 
+.modal-player > .modal-head {
+  justify-content: flex-end;
+  padding: var(--s4) var(--s5);
+}
+
 .modal-player.is-web-fullscreen > .modal-head,
 .modal-player.is-web-fullscreen > .player-foot {
   display: none;
@@ -2605,7 +2610,7 @@ select.input {
   display: grid;
   width: 100%;
   min-height: 240px;
-  max-height: calc(100dvh - 230px);
+  max-height: calc(100dvh - 200px);
   place-items: center;
   overflow: hidden;
   background: var(--player-bg);
@@ -2652,11 +2657,6 @@ select.input {
   font-size: var(--t-sm);
 }
 
-.player-msg .spinner {
-  width: 22px;
-  height: 22px;
-}
-
 .player-msg.is-error {
   pointer-events: auto;
 }
@@ -2688,6 +2688,11 @@ select.input {
   color: var(--text-4);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.player-foot .player-meta {
+  flex: none;
+  margin-left: auto;
 }
 
 /* --- Hero band (archive + logs) --------------------------------------- */
@@ -4078,9 +4083,8 @@ select.input {
   .account-actions .btn { width: 100%; }
   .save-actions .btn { flex: 1; }
 
-  .modal-player .player-stage { max-height: calc(100dvh - 280px); aspect-ratio: auto; }
-  .player-foot { align-items: stretch; flex-direction: column; gap: var(--s4); }
-  .player-foot .btn { width: 100%; }
+  .modal-player .player-stage { max-height: calc(100dvh - 250px); aspect-ratio: auto; }
+  .player-foot { gap: var(--s4); padding: var(--s4) var(--s5); }
 
   .toasts { right: var(--s5); bottom: calc(var(--tab-h) + var(--s5)); left: var(--s5); width: auto; }
   .login-page { padding: var(--s6); }

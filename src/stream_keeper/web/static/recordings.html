@@ -6,14 +6,14 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="description" content="浏览、播放并下载服务器上已保存的直播录像" />
     <title>本地录像 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260873"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260873" type="image/svg+xml" />
+    <script src="/static/theme.js?v=20260874"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260874" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/artplayer.css?v=5.4.1" />
-    <link rel="stylesheet" href="/static/style.css?v=20260873" />
+    <link rel="stylesheet" href="/static/style.css?v=20260874" />
   </head>
   <body data-page="recordings">
-    <script src="/static/sprite.js?v=20260873"></script>
-    <script src="/static/shell.js?v=20260873"></script>
+    <script src="/static/sprite.js?v=20260874"></script>
+    <script src="/static/shell.js?v=20260874"></script>
     <div class="app" id="app">
       <main class="main" id="main">
         <header class="page-head">
@@ -79,12 +79,8 @@
       </main>
     </div>
 
-    <dialog id="recording-player-dialog" class="modal modal-player" aria-labelledby="recording-player-title">
+    <dialog id="recording-player-dialog" class="modal modal-player" aria-label="播放录像">
       <header class="modal-head">
-        <div class="modal-heading is-truncated">
-          <h2 id="recording-player-title">播放录像</h2>
-          <p id="recording-player-meta">—</p>
-        </div>
         <button id="recording-player-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭播放器">
           <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
         </button>
@@ -93,11 +89,6 @@
       <div class="player-shell">
         <div class="player-stage">
           <div id="recording-player" class="recording-artplayer" aria-label="录像播放器"></div>
-          <div id="recording-player-loading" class="player-msg">
-            <span class="spinner"></span>
-            <strong>正在准备视频</strong>
-            <small id="recording-player-loading-detail">首次播放会无损封装为 MP4</small>
-          </div>
           <div id="recording-player-error" class="player-msg is-error hidden">
             <span class="empty-glyph"><svg class="ic" aria-hidden="true"><use href="#ic-alert" /></svg></span>
             <strong>浏览器无法播放这段录像</strong>
@@ -108,13 +99,11 @@
 
       <footer class="player-foot">
         <small id="recording-player-path" class="mono">—</small>
-        <a id="recording-download" class="btn btn-soft btn-sm" href="#" download>
-          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-download" /></svg>下载原文件
-        </a>
+        <small id="recording-player-meta" class="player-meta">—</small>
       </footer>
     </dialog>
 
     <script src="/static/artplayer.js?v=5.4.1"></script>
-    <script type="module" src="/static/recordings.js?v=20260873"></script>
+    <script type="module" src="/static/recordings.js?v=20260874"></script>
   </body>
 </html>

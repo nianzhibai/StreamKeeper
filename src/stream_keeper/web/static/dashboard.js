@@ -21,7 +21,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260873";
+} from "/static/ui.js?v=20260874";
 
 const MAX_VISIBLE_TASKS = 6;
 const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
