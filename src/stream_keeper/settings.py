@@ -63,7 +63,7 @@ class Settings:
     guangya_root_id: str = ""
     upload_mode: str = UPLOAD_MODE_SCHEDULED
     upload_hour: int = 1
-    upload_min_age_minutes: int = 10
+    upload_min_age_minutes: int = 5
     upload_timeout_seconds: int = 300
     max_concurrent_recordings: int = DEFAULT_MAX_CONCURRENT_RECORDINGS
     fetch_timeout_seconds: int = 45
@@ -118,7 +118,7 @@ class Settings:
             guangya_root_id=_env("GUANGYA_ROOT_ID"),
             upload_mode=_env("UPLOAD_MODE", UPLOAD_MODE_SCHEDULED).strip().lower(),
             upload_hour=int(_env("UPLOAD_HOUR", "1")),
-            upload_min_age_minutes=int(_env("UPLOAD_MIN_AGE_MINUTES", "10")),
+            upload_min_age_minutes=int(_env("UPLOAD_MIN_AGE_MINUTES", "5")),
             upload_timeout_seconds=int(_env("UPLOAD_TIMEOUT_SECONDS", "300")),
             max_concurrent_recordings=int(
                 _env("MAX_CONCURRENT_RECORDINGS", str(DEFAULT_MAX_CONCURRENT_RECORDINGS))

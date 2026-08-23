@@ -317,7 +317,7 @@ class CloudWoPanUpdate(StrictModel):
 class CloudScheduleUpdate(StrictModel):
     mode: UploadMode = "scheduled"
     hour: int = Field(default=1, ge=0, le=23)
-    min_age_minutes: int = Field(default=10, ge=0, le=1440)
+    min_age_minutes: int = Field(default=5, ge=0, le=1440)
     timeout_seconds: int = Field(default=300, ge=30, le=86400)
 
 

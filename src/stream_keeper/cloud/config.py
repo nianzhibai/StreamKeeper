@@ -165,7 +165,7 @@ class CloudArchiveConfig:
     providers: tuple[CloudProviderConfig, ...] = field(default_factory=default_provider_configs)
     upload_mode: str = UPLOAD_MODE_SCHEDULED
     upload_hour: int = 1
-    upload_min_age_minutes: int = 10
+    upload_min_age_minutes: int = 5
     upload_timeout_seconds: int = 300
 
     def __post_init__(self) -> None:
@@ -301,7 +301,7 @@ class CloudArchiveConfig:
             providers=tuple(providers),
             upload_mode=str(value.get("upload_mode", UPLOAD_MODE_SCHEDULED)),
             upload_hour=int(value.get("upload_hour", 1)),
-            upload_min_age_minutes=int(value.get("upload_min_age_minutes", 10)),
+            upload_min_age_minutes=int(value.get("upload_min_age_minutes", 5)),
             upload_timeout_seconds=int(value.get("upload_timeout_seconds", 300)),
         )
 
