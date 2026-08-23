@@ -2578,8 +2578,28 @@ select.input {
 }
 
 .modal-player > .modal-head {
+  align-items: center;
   justify-content: flex-end;
   padding: var(--s4) var(--s5);
+}
+
+.player-hint {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s2);
+  margin-right: auto;
+  color: var(--text-4);
+}
+
+.player-hint .ic {
+  flex: none;
+}
+
+.player-hint span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .modal-player.is-web-fullscreen > .modal-head,

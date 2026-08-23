@@ -81,6 +81,10 @@
 
     <dialog id="recording-player-dialog" class="modal modal-player" aria-label="播放录像">
       <header class="modal-head">
+        <small id="recording-player-hint" class="player-hint hidden">
+          <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-info" /></svg>
+          <span>非 MP4 格式视频，首次播放需要简单重新封装</span>
+        </small>
         <button id="recording-player-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭播放器">
           <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
         </button>

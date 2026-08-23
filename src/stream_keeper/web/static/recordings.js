@@ -29,6 +29,7 @@ const sortNode = document.querySelector("#recording-sort");
 const playerDialog = document.querySelector("#recording-player-dialog");
 const playerContainer = document.querySelector("#recording-player");
 const playerError = document.querySelector("#recording-player-error");
+const playerHint = document.querySelector("#recording-player-hint");
 const Artplayer = window.Artplayer;
 
 if (Artplayer) {
@@ -267,6 +268,7 @@ function setPlayerSource(entry) {
 
 function openPlayer(entry) {
   if (!entry.playable) return;
+  toggle(playerHint, entry.playback_mode === "remux");
   document.querySelector("#recording-player-path").textContent = `/${entry.path}`;
   document.querySelector("#recording-player-meta").textContent = [
     String(entry.extension).toUpperCase(),
