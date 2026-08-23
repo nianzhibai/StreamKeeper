@@ -20,7 +20,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260831";
+} from "/static/ui.js?v=20260871";
 
 const state = {
   tasks: [],
@@ -131,11 +131,11 @@ function renderTask(task) {
         ${escapeHtml(formatRelative(task.last_checked_at))}
       </time>
       <div class="task-ops">
-        <a class="btn btn-icon btn-sm btn-ghost" href="/logs?task=${encodeURIComponent(task.id)}" aria-label="查看 ${escapeHtml(title)} 的运行日志" title="查看这个任务的运行日志">${icon("logs", "ic-sm")}</a>
         <button class="btn btn-sm btn-ghost" type="button" data-action="edit" data-id="${escapeHtml(task.id)}">${icon("edit", "ic-xs")}编辑</button>
         ${task.enabled
           ? `<button class="btn btn-sm btn-ghost" type="button" data-action="stop" data-id="${escapeHtml(task.id)}">${icon("stop", "ic-xs")}停止</button>`
           : `<button class="btn btn-sm btn-ghost is-positive" type="button" data-action="start" data-id="${escapeHtml(task.id)}">${icon("play", "ic-xs")}启动</button>`}
+        <a class="btn btn-icon btn-sm btn-ghost" href="/logs?task=${encodeURIComponent(task.id)}" aria-label="查看 ${escapeHtml(title)} 的运行日志" title="查看这个任务的运行日志">${icon("logs", "ic-sm")}</a>
         <button class="btn btn-icon btn-sm btn-ghost is-negative" type="button" data-action="delete" data-id="${escapeHtml(task.id)}" aria-label="删除 ${escapeHtml(title)}" title="删除">
           ${icon("trash", "ic-sm")}
         </button>
@@ -227,9 +227,6 @@ function resetDialog() {
   syncMonitorAvailability();
   elements.inspectResult.className = "inspect hidden";
   elements.inspectResult.innerHTML = "";
-  elements.form.querySelectorAll("details").forEach((node) => {
-    node.open = false;
-  });
 }
 
 function openCreateDialog() {
@@ -237,7 +234,7 @@ function openCreateDialog() {
   resetDialog();
   const form = elements.form.elements;
   form.output_format.value = state.recordingDefaults.output_format;
-  form.segment_seconds.value = String(state.recordingDefaults.segment_seconds);
+  form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60);
   form.segment_count.value = String(state.recordingDefaults.segment_count);
   validateSegmentSettings();
   elements.dialogTitle.textContent = "新建任务";
@@ -255,7 +252,7 @@ function openEditDialog(task) {
   form.quality.value = task.quality;
   form.output_format.value = task.output_format;
   form.source.value = task.source;
-  form.segment_seconds.value = String(task.segment_seconds);
+  form.segment_minutes.value = String(task.segment_seconds / 60);
   form.segment_count.value = String(task.segment_count);
   form.monitor.checked = task.monitor;
   form.interval_seconds.value = String(task.interval_seconds);
@@ -325,10 +322,10 @@ async function inspectRoom() {
 }
 
 function validateSegmentSettings() {
-  const segmentSeconds = Number(elements.form.elements.segment_seconds.value);
+  const segmentMinutes = Number(elements.form.elements.segment_minutes.value);
   const segmentCount = Number(elements.form.elements.segment_count.value);
   elements.form.elements.segment_count.setCustomValidity(
-    segmentCount > 0 && segmentSeconds <= 0 ? "设置段数时，分段时长必须大于 0" : "",
+    segmentCount > 0 && segmentMinutes <= 0 ? "设置段数时，分段时长必须大于 0" : "",
   );
   syncMonitorAvailability();
 }
@@ -361,7 +358,7 @@ async function submitTask(event) {
     quality: data.get("quality"),
     output_format: data.get("output_format"),
     source: data.get("source"),
-    segment_seconds: Number(data.get("segment_seconds")),
+    segment_seconds: Math.round(Number(data.get("segment_minutes")) * 60),
     segment_count: segmentCount,
     monitor: segmentCount === 0 && data.get("monitor") === "on",
     interval_seconds: Number(data.get("interval_seconds")),
@@ -453,7 +450,7 @@ elements.inspectButton.addEventListener("click", inspectRoom);
 elements.form.addEventListener("submit", submitTask);
 elements.form.elements.url.addEventListener("input", invalidateInspection);
 elements.form.elements.quality.addEventListener("change", invalidateInspection);
-elements.form.elements.segment_seconds.addEventListener("input", validateSegmentSettings);
+elements.form.elements.segment_minutes.addEventListener("input", validateSegmentSettings);
 elements.form.elements.segment_count.addEventListener("input", validateSegmentSettings);
 document.querySelector("#task-url").addEventListener("paste", () => {
   window.setTimeout(() => {

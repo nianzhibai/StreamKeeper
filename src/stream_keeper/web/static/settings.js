@@ -6,7 +6,7 @@ import {
   setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260831";
+} from "/static/ui.js?v=20260871";
 
 const form = document.querySelector("#archive-schedule-form");
 const accountCard = document.querySelector("#account-settings-card");
@@ -17,7 +17,6 @@ const saveBar = document.querySelector(".save-bar");
 const saveHint = document.querySelector("[data-save-hint]");
 const resetButton = document.querySelector("[data-reset-form]");
 const scheduledField = document.querySelector("[data-scheduled-field]");
-const modeHint = document.querySelector("[data-mode-hint]");
 
 let cloud = null;
 let recordingDefaults = null;
@@ -42,20 +41,7 @@ function accountFormDirty() {
   const fields = accountForm.elements;
   return (
     fields.username.value.trim() !== accountUsername
-    || Boolean(fields.current_password.value)
     || Boolean(fields.new_password.value)
-    || Boolean(fields.new_password_confirmation.value)
-  );
-}
-
-function validateAccountPasswords() {
-  const fields = accountForm.elements;
-  const password = fields.new_password.value;
-  const confirmation = fields.new_password_confirmation.value;
-  fields.new_password.setCustomValidity(!password && confirmation ? "请先输入新密码" : "");
-  fields.new_password_confirmation.required = Boolean(password);
-  fields.new_password_confirmation.setCustomValidity(
-    password && password !== confirmation ? "两次输入的新密码不一致" : "",
   );
 }
 
@@ -68,7 +54,6 @@ function populateAccount(session) {
   accountUsername = session.username;
   accountForm.reset();
   accountForm.elements.username.value = accountUsername;
-  validateAccountPasswords();
   accountSaveButton.disabled = false;
 }
 
@@ -76,16 +61,13 @@ function syncModeFields() {
   const scheduled = form.elements.upload_mode.value === "scheduled";
   form.elements.upload_hour.disabled = !scheduled;
   scheduledField.setAttribute("aria-disabled", String(!scheduled));
-  modeHint.textContent = scheduled
-    ? "定时扫描时，只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。"
-    : "录制进程正常结束后，该次生成的所有视频分段会立即上传；文件稳定时间仍用于手动归档。";
 }
 
 function validateRecordingSettings() {
-  const segmentSeconds = Number(form.elements.recording_segment_seconds.value);
+  const segmentMinutes = Number(form.elements.recording_segment_minutes.value);
   const segmentCount = Number(form.elements.recording_segment_count.value);
   form.elements.recording_segment_count.setCustomValidity(
-    segmentCount > 0 && segmentSeconds <= 0 ? "设置录制段数时，分段时长必须大于 0" : "",
+    segmentCount > 0 && segmentMinutes <= 0 ? "设置录制段数时，分段时长必须大于 0" : "",
   );
 }
 
@@ -96,7 +78,7 @@ function populate(cloudValue, recordingValue, runtimeValue) {
   form.reset();
   form.elements.max_concurrent_recordings.value = String(recordingRuntime.max_concurrent_recordings);
   form.elements.recording_output_format.value = recordingDefaults.output_format;
-  form.elements.recording_segment_seconds.value = String(recordingDefaults.segment_seconds);
+  form.elements.recording_segment_minutes.value = String(recordingDefaults.segment_seconds / 60);
   form.elements.recording_segment_count.value = String(recordingDefaults.segment_count);
   form.elements.upload_mode.value = cloud.schedule.mode || "scheduled";
   form.elements.upload_hour.value = String(cloud.schedule.hour);
@@ -129,7 +111,6 @@ async function load() {
 
 async function submitAccount(event) {
   event.preventDefault();
-  validateAccountPasswords();
   if (!accountForm.reportValidity()) return;
   const fields = accountForm.elements;
   const username = fields.username.value.trim();
@@ -154,9 +135,7 @@ async function submitAccount(event) {
       method: "PUT",
       body: JSON.stringify({
         username,
-        current_password: fields.current_password.value,
         new_password: newPassword || null,
-        new_password_confirmation: newPassword ? fields.new_password_confirmation.value : null,
       }),
     });
     accountUsername = result.username;
@@ -169,7 +148,7 @@ async function submitAccount(event) {
     toast(error.message, "error");
   } finally {
     accountSaveButton.disabled = false;
-    accountSaveButton.textContent = "更新账号并退出";
+    accountSaveButton.textContent = "更新账号";
   }
 }
 
@@ -187,7 +166,7 @@ async function submit(event) {
   saveButton.disabled = true;
   const recordingPayload = {
     output_format: fields.recording_output_format.value,
-    segment_seconds: Number(fields.recording_segment_seconds.value),
+    segment_seconds: Math.round(Number(fields.recording_segment_minutes.value) * 60),
     segment_count: Number(fields.recording_segment_count.value),
   };
   const runtimePayload = {
@@ -231,7 +210,6 @@ async function submit(event) {
 }
 
 accountForm.addEventListener("submit", submitAccount);
-accountForm.addEventListener("input", validateAccountPasswords);
 form.addEventListener("submit", submit);
 form.addEventListener("input", () => {
   validateRecordingSettings();

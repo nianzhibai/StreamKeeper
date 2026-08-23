@@ -1067,15 +1067,19 @@ body.is-stuck .page-head::after {
     background var(--fast) var(--ease);
 }
 
+/* Background SVGs cannot inherit currentColor, so each theme pins its stroke. */
 select.input {
   appearance: none;
   padding-right: 34px;
-  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: right 16px center, right 11px center;
-  background-size: 5px 5px, 5px 5px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239fa9b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-size: 16px 16px;
   background-repeat: no-repeat;
   cursor: pointer;
+}
+
+:root[data-theme="light"] select.input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2355606f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 .input::placeholder {
@@ -1407,6 +1411,12 @@ select.input {
 
 .select-inline select {
   appearance: none;
+  height: 100%;
+  /* Pull the box across the icon and pill padding, then pad the text back to
+     its original spot: clicking a <label> only focuses a <select>, it never
+     opens the picker, so the select itself must cover the whole pill. */
+  margin: 0 calc(-1 * var(--s4)) 0 calc(-1 * (var(--s4) + 15.5px + var(--s2)));
+  padding: 0 var(--s4) 0 calc(var(--s4) + 15.5px + var(--s2));
   border: 0;
   outline: none;
   background: none;
@@ -2819,6 +2829,10 @@ select.input {
   color: var(--brand);
 }
 
+#provider-config-dialog .modal-head {
+  align-items: center;
+}
+
 .provider-config-state {
   display: flex;
   align-items: center;
@@ -4088,5 +4102,90 @@ select.input {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* --- Customizable <select> picker (progressive enhancement) ------------ */
+/* Chromium 135+ lets CSS style the dropdown list itself via base-select.
+   Placed last so the opt-in outranks the appearance: none set earlier on
+   the same selectors; other browsers skip this and keep the native popup. */
+@supports (appearance: base-select) {
+  select.input,
+  .select-inline select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+
+  /* Base appearance lays the closed box out as a plain CSS box; recreate the
+     native widget's vertical centering so text lines up with sibling inputs. */
+  select.input,
+  .select-inline select {
+    display: flex;
+    align-items: center;
+  }
+
+  /* The picker's implicit anchor is the bare <select>, i.e. just the text
+     inside the pill; re-anchor it to the pill so the popup lines up with the
+     visible control. Shared anchor names resolve to the last element in DOM
+     order, so this stays exact only while a page has one .select-inline. */
+  .select-inline {
+    anchor-name: --select-inline;
+  }
+
+  .select-inline select::picker(select) {
+    position-anchor: --select-inline;
+  }
+
+  /* The boxes keep their own chevron; drop the UA one to avoid doubling. */
+  select::picker-icon {
+    display: none;
+  }
+
+  ::picker(select) {
+    margin-top: var(--s2);
+    padding: var(--s2);
+    border: 1px solid var(--line-2);
+    border-radius: var(--r);
+    background: var(--surface-2);
+    box-shadow: var(--shadow-3);
+    opacity: 1;
+    translate: 0 0;
+    transition: opacity var(--fast) var(--ease), translate var(--fast) var(--ease);
+  }
+
+  @starting-style {
+    ::picker(select):popover-open {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+
+  option {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s3) var(--s4);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  option:hover,
+  option:focus-visible {
+    background: var(--hover);
+    color: var(--text);
+    outline: none;
+  }
+
+  option:checked {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  option::checkmark {
+    order: 1;
+    margin-left: auto;
+    color: var(--brand);
   }
 }

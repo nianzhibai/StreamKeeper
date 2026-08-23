@@ -677,14 +677,9 @@ def create_app(
         current_username = request.state.auth_session.username
         result = await store.update_web_credentials(
             current_username,
-            payload.current_password.get_secret_value(),
             payload.username,
             payload.new_password.get_secret_value() if payload.new_password is not None else None,
         )
-        if result is CredentialUpdateStatus.INVALID_CURRENT_PASSWORD:
-            # This is a form validation failure, not an expired Web session;
-            # returning 401 would make the shared API client redirect too early.
-            raise HTTPException(status_code=400, detail="当前密码不正确")
         if result is CredentialUpdateStatus.UNCHANGED:
             raise HTTPException(status_code=400, detail="用户名和密码均未更改")
 

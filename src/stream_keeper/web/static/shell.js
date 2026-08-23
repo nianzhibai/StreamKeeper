@@ -66,7 +66,7 @@
         {
           page: "settings",
           href: "/settings",
-          label: "设置",
+          label: "配置面板",
           icon: "settings",
           mobile: "more",
           description: "调整上传模式与执行计划",

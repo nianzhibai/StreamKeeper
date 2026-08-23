@@ -79,7 +79,6 @@ class CloudCredentialSnapshot:
 
 class CredentialUpdateStatus(str, Enum):
     UPDATED = "updated"
-    INVALID_CURRENT_PASSWORD = "invalid_current_password"
     UNCHANGED = "unchanged"
 
 
@@ -804,7 +803,6 @@ class TaskStore:
     async def update_web_credentials(
         self,
         current_username: str,
-        current_password: str,
         new_username: str,
         new_password: str | None,
     ) -> CredentialUpdateStatus:
@@ -818,7 +816,6 @@ class TaskStore:
         return await self._run_sync(
             self._update_web_credentials_sync,
             current_username,
-            current_password,
             normalized_username,
             new_password,
         )
@@ -826,7 +823,6 @@ class TaskStore:
     def _update_web_credentials_sync(
         self,
         current_username: str,
-        current_password: str,
         new_username: str,
         new_password: str | None,
     ) -> CredentialUpdateStatus:
@@ -839,8 +835,11 @@ class TaskStore:
                 WHERE id = 1
                 """
             ).fetchone()
-            if not self._stored_credentials_match(row, current_username, current_password):
-                return CredentialUpdateStatus.INVALID_CURRENT_PASSWORD
+            if row is None or row["username"] != current_username:
+                # Live sessions are revoked whenever credentials change, so the
+                # session-derived username can only mismatch if the account row
+                # vanished mid-flight; refuse to touch it instead of updating.
+                return CredentialUpdateStatus.UNCHANGED
 
             salt = row["password_salt"]
             digest = row["password_digest"]

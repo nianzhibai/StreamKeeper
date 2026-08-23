@@ -16,7 +16,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260831";
+} from "/static/ui.js?v=20260871";
 
 const runButton = document.querySelector("#cloud-run-button");
 const providerDialog = document.querySelector("#provider-config-dialog");
@@ -27,7 +27,6 @@ const providerCancelButton = document.querySelector("#provider-config-cancel");
 const providerLoginButton = document.querySelector("#provider-login-button");
 const providerLogo = document.querySelector("#provider-config-logo");
 const providerTitle = document.querySelector("#provider-config-title");
-const providerDescription = document.querySelector("#provider-config-description");
 const providerCredentialHint = document.querySelector("#provider-credential-hint");
 const providerLoginDescription = document.querySelector("#provider-login-description");
 const providerAuthRow = document.querySelector(".auth-row");
@@ -49,7 +48,6 @@ const providerMeta = {
   quark: {
     name: "夸克网盘",
     app: "夸克 App",
-    description: "配置夸克账号、上传根目录和启用状态",
     loginDescription: "使用夸克 App 扫码，无需手动复制 Cookie",
     credentials: ["cookie"],
     options: ["root_id"],
@@ -59,7 +57,6 @@ const providerMeta = {
   wopan: {
     name: "联通云盘",
     app: "联通云盘 App",
-    description: "配置联通云盘账号、上传根目录和启用状态",
     loginDescription: "使用联通云盘 App 扫码获取 Token",
     credentials: ["access_token", "refresh_token"],
     options: ["root_id", "family_id"],
@@ -69,7 +66,6 @@ const providerMeta = {
   baidu: {
     name: "百度网盘",
     app: "百度网盘 App",
-    description: "配置百度网盘账号、上传根目录和启用状态",
     loginDescription: "使用百度网盘 App 扫码，无需手动填写 Token",
     supportsQr: true,
     credentials: ["cookie", "access_token", "refresh_token", "client_id", "client_secret"],
@@ -79,7 +75,6 @@ const providerMeta = {
   pan115: {
     name: "115网盘",
     app: "115 App",
-    description: "配置 115 Cookie 或 Open Token",
     loginDescription: "使用 115 App 扫码，或填写 Cookie / Open Token",
     supportsQr: true,
     credentials: ["cookie", "access_token", "refresh_token"],
@@ -89,7 +84,6 @@ const providerMeta = {
   guangya: {
     name: "光鸭网盘",
     app: "光鸭云盘 App",
-    description: "配置光鸭网盘账号、上传根目录和启用状态",
     loginDescription: "使用光鸭云盘 App 扫码，无需手动填写 Token",
     supportsQr: true,
     credentials: ["client_id", "device_id", "access_token", "refresh_token"],
@@ -297,8 +291,7 @@ function populateProviderForm(kind) {
 
   providerLogo.className = `provider-logo ${kind} has-image`;
   providerLogo.innerHTML = `<img class="provider-logo-image" src="${escapeHtml(providerIcon(kind))}" alt="" />`;
-  providerTitle.textContent = `配置${meta.name}`;
-  providerDescription.textContent = meta.description;
+  providerTitle.textContent = meta.name;
   providerLoginDescription.textContent = meta.loginDescription;
   providerLoginButton.dataset.cloudLogin = kind;
   providerAuthRow.classList.toggle("hidden", !supportsQr);

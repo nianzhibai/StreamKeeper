@@ -5,22 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <meta name="description" content="配置管理员账号、录制并发、任务默认值与网盘归档计划" />
-    <title>设置 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260816"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260850" />
+    <title>配置面板 · Stream Keeper</title>
+    <script src="/static/theme.js?v=20260871"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260871" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260871" />
   </head>
   <body data-page="settings">
-    <script src="/static/sprite.js?v=20260847"></script>
-    <script src="/static/shell.js?v=20260844"></script>
+    <script src="/static/sprite.js?v=20260871"></script>
+    <script src="/static/shell.js?v=20260871"></script>
     <div class="app" id="app">
       <main class="main main-settings" id="main">
         <header class="page-head">
           <div class="page-heading">
-            <h1>设置</h1>
-          </div>
-          <div class="page-tools">
-            <a class="btn btn-soft" href="/archive">管理存储目标</a>
+            <h1>配置面板</h1>
           </div>
         </header>
 
@@ -31,12 +28,11 @@
 
         <section id="account-settings-card" class="card">
           <header class="card-head">
-            <span class="card-glyph tone-info" aria-hidden="true">
-              <svg class="ic ic-sm"><use href="#ic-shield" /></svg>
+            <span class="card-glyph" aria-hidden="true">
+              <svg class="ic ic-sm"><use href="#ic-user" /></svg>
             </span>
             <div class="card-heading">
               <h2>管理员账号</h2>
-              <p>修改用于登录 Stream Keeper 的用户名或密码</p>
             </div>
           </header>
           <form id="account-settings-form" class="card-body">
@@ -46,20 +42,11 @@
                 <input class="input" name="username" type="text" minlength="1" maxlength="128" autocomplete="username" required />
               </label>
               <label class="field">
-                <span class="field-label">当前密码</span>
-                <input class="input" name="current_password" type="password" maxlength="1024" autocomplete="current-password" required />
-              </label>
-              <label class="field">
                 <span class="field-label">新密码<em>留空则不修改</em></span>
                 <input class="input" name="new_password" type="password" minlength="10" maxlength="1024" autocomplete="new-password" />
               </label>
-              <label class="field">
-                <span class="field-label">确认新密码</span>
-                <input class="input" name="new_password_confirmation" type="password" minlength="10" maxlength="1024" autocomplete="new-password" />
-              </label>
-              <p class="field-hint span-2">更新后，包括当前浏览器在内的所有登录会话都会立即失效，需要使用新凭据重新登录。</p>
               <div class="account-actions span-2">
-                <button id="account-save-button" class="btn btn-primary" type="submit" disabled>更新账号并退出</button>
+                <button id="account-save-button" class="btn btn-primary" type="submit" disabled>更新账号</button>
               </div>
             </div>
           </form>
@@ -68,12 +55,11 @@
         <form id="archive-schedule-form" class="settings">
           <section class="card">
             <header class="card-head">
-              <span class="card-glyph tone-info" aria-hidden="true">
+              <span class="card-glyph" aria-hidden="true">
                 <svg class="ic ic-sm"><use href="#ic-layers" /></svg>
               </span>
               <div class="card-heading">
                 <h2>录制并发</h2>
-                <p>控制服务器最多同时运行多少个 FFmpeg 录制进程</p>
               </div>
             </header>
             <div class="card-body">
@@ -82,7 +68,6 @@
                   <span class="field-label">同时录制上限</span>
                   <span class="suffix"><input class="input" name="max_concurrent_recordings" type="number" min="1" max="100" step="1" value="3" required /><em>路</em></span>
                 </label>
-                <p class="field-hint span-2">保存后立即生效。调高会放行排队任务；调低不会中断正在录制的直播，新任务会等现有录制数量降到新上限后开始。</p>
               </div>
             </div>
           </section>
@@ -94,7 +79,6 @@
               </span>
               <div class="card-heading">
                 <h2>录制默认值</h2>
-                <p>统一设置新建直播任务的文件格式与分段规则</p>
               </div>
             </header>
             <div class="card-body">
@@ -110,13 +94,12 @@
                 </label>
                 <label class="field">
                   <span class="field-label">分段时长</span>
-                  <span class="suffix"><input class="input" name="recording_segment_seconds" type="number" min="0" max="86400" step="1" value="1800" required /><em>秒</em></span>
+                  <span class="suffix"><input class="input" name="recording_segment_minutes" type="number" min="0" max="1440" step="any" value="30" required /><em>分钟</em></span>
                 </label>
                 <label class="field">
                   <span class="field-label">录制段数</span>
                   <span class="suffix"><input class="input" name="recording_segment_count" type="number" min="0" max="10000" step="1" value="0" required /><em>段</em></span>
                 </label>
-                <p class="field-hint span-2">分段时长为 0 表示不切分；录制段数为 0 表示不限制。新建任务会带入这些值，在任务中单独修改时以任务配置为准；修改默认值不会影响已有任务。</p>
               </div>
             </div>
           </section>
@@ -128,7 +111,6 @@
               </span>
               <div class="card-heading">
                 <h2>上传模式</h2>
-                <p>选择定时上传或在每场直播录制完成后即时上传</p>
               </div>
             </header>
             <div class="card-body">
@@ -137,7 +119,7 @@
                   <span class="field-label">上传模式</span>
                   <select class="input" name="upload_mode">
                     <option value="scheduled">定时上传</option>
-                    <option value="recording_completed">即时上传（录制完成后）</option>
+                    <option value="recording_completed">及时上传</option>
                   </select>
                 </label>
                 <label class="field" data-scheduled-field>
@@ -152,7 +134,6 @@
                   <span class="field-label">网络超时</span>
                   <span class="suffix"><input class="input" name="upload_timeout_seconds" type="number" min="30" max="86400" step="1" value="300" /><em>秒</em></span>
                 </label>
-                <p class="field-hint span-2" data-mode-hint>定时扫描时，只有最后修改时间超过「文件稳定时间」的录像才会被上传，避免传走正在写入的片段。</p>
               </div>
             </div>
           </section>
@@ -168,6 +149,6 @@
       </main>
     </div>
 
-    <script type="module" src="/static/settings.js?v=20260831"></script>
+    <script type="module" src="/static/settings.js?v=20260871"></script>
   </body>
 </html>

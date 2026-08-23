@@ -6,13 +6,13 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="description" content="把本地录像同步到多个网盘，并按需清理磁盘" />
     <title>网盘归档 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260816"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260850" />
+    <script src="/static/theme.js?v=20260871"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260871" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260871" />
   </head>
   <body data-page="archive">
-    <script src="/static/sprite.js?v=20260847"></script>
-    <script src="/static/shell.js?v=20260844"></script>
+    <script src="/static/sprite.js?v=20260871"></script>
+    <script src="/static/shell.js?v=20260871"></script>
     <div class="app" id="app">
       <main class="main" id="main">
         <header class="page-head">
@@ -55,7 +55,7 @@
         <div class="archive-grid">
           <section class="card">
             <header class="card-head">
-              <span class="card-glyph tone-info" aria-hidden="true">
+              <span class="card-glyph" aria-hidden="true">
                 <svg class="ic ic-sm"><use href="#ic-cloud" /></svg>
               </span>
               <div class="card-heading">
@@ -72,7 +72,7 @@
                 aria-label="配置夸克网盘"
               >
                 <span class="provider-logo quark has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-quark.png?v=20260823" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-quark.png?v=20260871" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>夸克网盘</strong>
@@ -91,7 +91,7 @@
                 aria-label="配置联通云盘"
               >
                 <span class="provider-logo wopan has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260823" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260871" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>联通云盘</strong>
@@ -110,7 +110,7 @@
                 aria-label="配置百度网盘"
               >
                 <span class="provider-logo baidu has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260824" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260871" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>百度网盘</strong>
@@ -129,7 +129,7 @@
                 aria-label="配置115网盘"
               >
                 <span class="provider-logo pan115 has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260823" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260871" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>115网盘</strong>
@@ -148,7 +148,7 @@
                 aria-label="配置光鸭网盘"
               >
                 <span class="provider-logo guangya has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260823" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260871" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>光鸭网盘</strong>
@@ -195,7 +195,6 @@
           <span id="provider-config-logo" class="provider-logo" aria-hidden="true"></span>
           <div class="modal-heading">
             <h2 id="provider-config-title">配置网盘</h2>
-            <p id="provider-config-description">配置存储目标</p>
           </div>
           <button id="provider-config-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭">
             <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
@@ -204,7 +203,7 @@
         <div class="modal-body">
           <div class="provider-config-state">
             <div>
-              <strong>存储目标</strong>
+              <strong>上传目标</strong>
               <small id="provider-credential-hint">读取中</small>
             </div>
             <label class="switch-field">
@@ -413,6 +412,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260839"></script>
+    <script type="module" src="/static/archive.js?v=20260871"></script>
   </body>
 </html>

@@ -319,19 +319,18 @@ class StoreTests(IsolatedAsyncioTestCase):
         first_token, _ = await self.store.create_session("admin", 3600)
         second_token, _ = await self.store.create_session("admin", 3600)
 
-        invalid = await self.store.update_web_credentials(
-            "admin",
-            "incorrect-password",
+        stale = await self.store.update_web_credentials(
+            "someone-else",
             "operator",
             "new-secure-password",
         )
-        self.assertIs(invalid, CredentialUpdateStatus.INVALID_CURRENT_PASSWORD)
+        self.assertIs(stale, CredentialUpdateStatus.UNCHANGED)
         self.assertIsNotNone(await self.store.get_session(first_token))
         self.assertIsNotNone(await self.store.get_session(second_token))
+        self.assertFalse(await self.store.verify_web_credentials("operator", "new-secure-password"))
 
         updated = await self.store.update_web_credentials(
             "admin",
-            "first-long-password",
             "operator",
             "new-secure-password",
         )
@@ -349,7 +348,6 @@ class StoreTests(IsolatedAsyncioTestCase):
         replacement_token, _ = await self.store.create_session("operator", 3600)
         unchanged = await self.store.update_web_credentials(
             "operator",
-            "new-secure-password",
             "operator",
             "new-secure-password",
         )
@@ -362,7 +360,6 @@ class StoreTests(IsolatedAsyncioTestCase):
         update_result, raced_login = await asyncio.gather(
             self.store.update_web_credentials(
                 "admin",
-                "first-long-password",
                 "operator",
                 "new-secure-password",
             ),

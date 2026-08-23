@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from contextlib import closing
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from stream_keeper.errors import InsufficientDiskSpaceError
 from stream_keeper.models import LiveInfo
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD, Settings
+from stream_keeper.web import app as web_app
 from stream_keeper.web.app import create_app
 from stream_keeper.web.auth import SESSION_COOKIE_NAME
 from stream_keeper.web.cloud_login import CloudLoginPoll
@@ -196,7 +198,7 @@ class WebSetupTests(TestCase):
         initial_login_page = self.client.get("/login")
         self.assertEqual(initial_login_page.status_code, 200)
         self.assertIn('id="setup-confirm-field"', initial_login_page.text)
-        self.assertIn("/static/login.js?v=20260851", initial_login_page.text)
+        self.assertRegex(initial_login_page.text, r"/static/login\.js\?v=\d+")
 
         login_before_setup = self.client.post(
             "/api/auth/login",
@@ -403,51 +405,27 @@ class WebTests(TestCase):
 
         missing_csrf = self.client.put(
             "/api/settings/account",
-            json={
-                "username": "operator",
-                "current_password": "secret-password",
-                "new_password": None,
-                "new_password_confirmation": None,
-            },
+            json={"username": "operator", "new_password": None},
         )
         self.assertEqual(missing_csrf.status_code, 403)
 
-        wrong_password = self.client.put(
-            "/api/settings/account",
-            headers=self.csrf_headers,
-            json={
-                "username": "operator",
-                "current_password": "incorrect-password",
-                "new_password": None,
-                "new_password_confirmation": None,
-            },
-        )
-        self.assertEqual(wrong_password.status_code, 400)
-        self.assertIn("当前密码不正确", wrong_password.text)
-        self.assertIsNotNone(asyncio.run(self.store.get_session(current_token)))
-        self.assertIsNotNone(asyncio.run(self.store.get_session(second_token)))
-
-        mismatch = self.client.put(
+        legacy_fields = self.client.put(
             "/api/settings/account",
             headers=self.csrf_headers,
             json={
                 "username": "operator",
                 "current_password": "secret-password",
-                "new_password": "replacement-password",
-                "new_password_confirmation": "different-password",
+                "new_password": None,
             },
         )
-        self.assertEqual(mismatch.status_code, 422)
+        self.assertEqual(legacy_fields.status_code, 422)
+        self.assertIsNotNone(asyncio.run(self.store.get_session(current_token)))
+        self.assertIsNotNone(asyncio.run(self.store.get_session(second_token)))
 
         unchanged = self.client.put(
             "/api/settings/account",
             headers=self.csrf_headers,
-            json={
-                "username": "admin",
-                "current_password": "secret-password",
-                "new_password": None,
-                "new_password_confirmation": None,
-            },
+            json={"username": "admin", "new_password": None},
         )
         self.assertEqual(unchanged.status_code, 400)
         self.assertIn("均未更改", unchanged.text)
@@ -456,12 +434,7 @@ class WebTests(TestCase):
         updated = self.client.put(
             "/api/settings/account",
             headers=self.csrf_headers,
-            json={
-                "username": "  operator  ",
-                "current_password": "secret-password",
-                "new_password": "replacement-password",
-                "new_password_confirmation": "replacement-password",
-            },
+            json={"username": "  operator  ", "new_password": "replacement-password"},
         )
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json(), {"username": "operator", "sessions_revoked": True})
@@ -515,15 +488,29 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260850', page.text)
-                self.assertIn('/static/sprite.js?v=20260847', page.text)
-                self.assertIn('/static/shell.js?v=20260844', page.text)
+                self.assertRegex(page.text, r"/static/style\.css\?v=\d+")
+                self.assertRegex(page.text, r"/static/sprite\.js\?v=\d+")
+                self.assertRegex(page.text, r"/static/shell\.js\?v=\d+")
                 self.assertNotIn('class="page-eyebrow"', page.text)
                 self.assertNotIn('id="refresh-button"', page.text)
                 self.assertRegex(
                     page.text,
                     r'<div class="page-heading">\s*<h1>[^<]+</h1>\s*</div>',
                 )
+
+    def test_static_asset_versions_move_in_lockstep(self) -> None:
+        """第一方资源的 ?v= 必须全仓库一致；第三方资源（artplayer）沿用自身发布版本号，不参与。"""
+        static_dir = Path(web_app.__file__).resolve().parent / "static"
+        references: dict[str, set[str]] = {}
+        for source in sorted([*static_dir.glob("*.html"), *static_dir.glob("*.js")]):
+            for asset, version in re.findall(r'/static/([\w.-]+)\?v=(\d+)"', source.read_text(encoding="utf-8")):
+                references.setdefault(version, set()).add(f"{source.name}:{asset}")
+        self.assertTrue(references)
+        self.assertEqual(
+            len(references),
+            1,
+            f"静态资源 ?v= 版本号不一致，修改静态文件时请整体提升：{references}",
+        )
 
     def test_page_scripts_do_not_bind_removed_refresh_controls(self) -> None:
         self.login()
@@ -553,29 +540,26 @@ class WebTests(TestCase):
 
         self.assertIn("管理员账号", settings_page)
         self.assertIn('id="account-settings-form"', settings_page)
-        self.assertIn('name="current_password"', settings_page)
-        self.assertIn('name="new_password_confirmation"', settings_page)
-        self.assertIn("所有登录会话都会立即失效", settings_page)
+        self.assertNotIn('name="current_password"', settings_page)
+        self.assertNotIn('name="new_password_confirmation"', settings_page)
         self.assertIn("录制并发", settings_page)
         self.assertIn('name="max_concurrent_recordings"', settings_page)
-        self.assertIn("调低不会中断正在录制的直播", settings_page)
         self.assertIn("录制默认值", settings_page)
         self.assertIn('name="recording_output_format"', settings_page)
-        self.assertIn('name="recording_segment_seconds"', settings_page)
+        self.assertIn('name="recording_segment_minutes"', settings_page)
         self.assertIn('name="recording_segment_count"', settings_page)
-        self.assertIn("/static/settings.js?v=20260831", settings_page)
+        self.assertRegex(settings_page, r"/static/settings\.js\?v=\d+")
         self.assertIn("/api/settings/account", settings_script)
         self.assertIn('window.location.replace("/login")', settings_script)
-        self.assertIn("new_password_confirmation", settings_script)
+        self.assertNotIn("new_password_confirmation", settings_script)
         self.assertIn("/api/settings/recording-defaults", settings_script)
         self.assertIn("/api/settings/recording-runtime", settings_script)
         self.assertIn("form.elements.max_concurrent_recordings.value", settings_script)
         self.assertIn("form.elements.recording_output_format.value", settings_script)
 
-        self.assertIn("仅覆盖当前任务", task_page)
-        self.assertIn("/static/tasks.js?v=20260835", task_page)
+        self.assertRegex(task_page, r"/static/tasks\.js\?v=\d+")
         self.assertIn("form.output_format.value = state.recordingDefaults.output_format", tasks_script)
-        self.assertIn("form.segment_seconds.value = String(state.recordingDefaults.segment_seconds)", tasks_script)
+        self.assertIn("form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60)", tasks_script)
         self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", tasks_script)
 
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
@@ -1134,7 +1118,7 @@ class WebTests(TestCase):
         self.assertIn("payload.inspection_token = inspection.token", tasks_script)
         self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
         self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
-        self.assertIn("/static/tasks.js?v=20260835", self.client.get("/tasks").text)
+        self.assertRegex(self.client.get("/tasks").text, r"/static/tasks\.js\?v=\d+")
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
         self.login()
@@ -1362,7 +1346,7 @@ class WebTests(TestCase):
             self.assertEqual(self.client.get(icon_path).status_code, 200)
         self.assertIn('id="archive-schedule-form"', settings_page.text)
         self.assertIn('name="recording_output_format"', settings_page.text)
-        self.assertIn('name="recording_segment_seconds"', settings_page.text)
+        self.assertIn('name="recording_segment_minutes"', settings_page.text)
         self.assertIn('name="recording_segment_count"', settings_page.text)
         self.assertIn('name="upload_mode"', settings_page.text)
         self.assertIn('value="recording_completed"', settings_page.text)
