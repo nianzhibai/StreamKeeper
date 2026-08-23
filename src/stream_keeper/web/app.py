@@ -458,7 +458,6 @@ def create_app(
         return AuthStatus(
             authentication_enabled=authentication_enabled,
             setup_required=setup_required,
-            suggested_username=settings.web_username if setup_required else None,
         )
 
     @app.post("/api/auth/setup", response_model=AuthSession, status_code=status.HTTP_201_CREATED)

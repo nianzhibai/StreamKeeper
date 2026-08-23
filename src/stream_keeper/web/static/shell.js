@@ -91,7 +91,7 @@
     return (
       '<a class="brand" href="' + href + '">' +
       '<span class="brand-mark" aria-hidden="true"><i></i></span>' +
-      '<span class="brand-text"><strong>Stream Keeper</strong><small>多平台直播录制</small></span>' +
+      '<span class="brand-text"><strong>Stream Keeper</strong></span>' +
       "</a>"
     );
   }

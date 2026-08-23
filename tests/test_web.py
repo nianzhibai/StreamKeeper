@@ -190,14 +190,13 @@ class WebSetupTests(TestCase):
             {
                 "authentication_enabled": True,
                 "setup_required": True,
-                "suggested_username": "admin",
             },
         )
         self.assertEqual(self.client.get("/", follow_redirects=False).status_code, 303)
         initial_login_page = self.client.get("/login")
         self.assertEqual(initial_login_page.status_code, 200)
         self.assertIn('id="setup-confirm-field"', initial_login_page.text)
-        self.assertIn("/static/login.js?v=20260824", initial_login_page.text)
+        self.assertIn("/static/login.js?v=20260851", initial_login_page.text)
 
         login_before_setup = self.client.post(
             "/api/auth/login",
@@ -241,7 +240,6 @@ class WebSetupTests(TestCase):
             {
                 "authentication_enabled": True,
                 "setup_required": False,
-                "suggested_username": None,
             },
         )
         self.assertEqual(
@@ -345,7 +343,7 @@ class WebTests(TestCase):
         self.assertEqual(self.client.get("/health").status_code, 200)
         login_page = self.client.get("/login")
         self.assertEqual(login_page.status_code, 200)
-        self.assertIn('<h1 id="login-title">登录</h1>', login_page.text)
+        self.assertIn('id="login-form"', login_page.text)
         static_asset = self.client.get("/static/login.js")
         self.assertEqual(static_asset.status_code, 200)
         self.assertEqual(static_asset.headers["cache-control"], "no-cache, must-revalidate")
@@ -517,9 +515,9 @@ class WebTests(TestCase):
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
                 page = self.client.get(path)
-                self.assertIn('/static/style.css?v=20260842', page.text)
-                self.assertIn('/static/sprite.js?v=20260836', page.text)
-                self.assertIn('/static/shell.js?v=20260821', page.text)
+                self.assertIn('/static/style.css?v=20260850', page.text)
+                self.assertIn('/static/sprite.js?v=20260847', page.text)
+                self.assertIn('/static/shell.js?v=20260844', page.text)
                 self.assertNotIn('class="page-eyebrow"', page.text)
                 self.assertNotIn('id="refresh-button"', page.text)
                 self.assertRegex(

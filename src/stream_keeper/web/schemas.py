@@ -85,7 +85,6 @@ class WebAccountUpdateResult(StrictModel):
 class AuthStatus(StrictModel):
     authentication_enabled: bool
     setup_required: bool
-    suggested_username: str | None = None
 
 
 class AuthSetupRequest(StrictModel):

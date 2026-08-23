@@ -1,6 +1,4 @@
 const form = document.querySelector("#login-form");
-const title = document.querySelector("#login-title");
-const description = document.querySelector("#login-description");
 const username = document.querySelector("#login-username");
 const password = document.querySelector("#login-password");
 const confirmationField = document.querySelector("#setup-confirm-field");
@@ -41,16 +39,10 @@ function setMode(status) {
   password.autocomplete = setupRequired ? "new-password" : "current-password";
   if (setupRequired) {
     password.minLength = 10;
-    title.textContent = "设置管理员账号";
-    description.textContent = "首次使用需要创建用于登录 Stream Keeper 的管理员账号";
-    securityText.textContent = "账号只保存在当前服务器，默认占位密码不会用于登录";
+    securityText.textContent = "首次访问，请设置管理员密码";
     submit.textContent = "保存并进入";
-    if (!username.value) username.value = status.suggested_username || "admin";
   } else {
     password.removeAttribute("minlength");
-    title.textContent = "登录";
-    description.textContent = "管理录制任务、本地录像与网盘归档";
-    securityText.textContent = "连续登录失败会锁定来源 IP";
     submit.textContent = "登录";
   }
   submit.disabled = false;
@@ -85,6 +77,17 @@ async function loadAuthState() {
 passwordConfirmation.addEventListener("input", () => {
   passwordConfirmation.setCustomValidity("");
 });
+
+for (const toggle of document.querySelectorAll(".password-toggle")) {
+  const input = toggle.parentElement.querySelector("input");
+  const icon = toggle.querySelector("use");
+  toggle.addEventListener("click", () => {
+    const reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    icon.setAttribute("href", reveal ? "#ic-eyeOff" : "#ic-eye");
+    toggle.setAttribute("aria-label", reveal ? "隐藏密码" : "显示密码");
+  });
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

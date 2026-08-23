@@ -484,12 +484,6 @@ img, svg {
   white-space: nowrap;
 }
 
-.brand-text small {
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-}
-
 .rail-toggle {
   display: grid;
   width: 28px;
@@ -1103,6 +1097,41 @@ select.input {
   background: var(--surface-2);
   color: var(--text-3);
   cursor: default;
+}
+
+.password-input {
+  position: relative;
+  display: block;
+}
+
+.password-input .input {
+  padding-right: 44px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-4);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease);
+}
+
+.password-toggle:hover {
+  color: var(--text-2);
+}
+
+.password-toggle:focus-visible {
+  color: var(--text-2);
+  box-shadow: var(--ring);
+  outline: none;
 }
 
 .input[type="number"] {
@@ -3766,25 +3795,10 @@ select.input {
   padding: 0;
 }
 
-.login-heading {
-  margin: var(--s8) 0 var(--s7);
-}
-
-.login-heading h1 {
-  font-size: var(--t-2xl);
-  font-weight: 660;
-  letter-spacing: -0.032em;
-}
-
-.login-heading p {
-  margin-top: var(--s2);
-  color: var(--text-3);
-  font-size: var(--t-base);
-}
-
 .login-form {
   display: grid;
   gap: var(--s5);
+  margin-top: var(--s8);
 }
 
 .login-form .btn {
@@ -3872,7 +3886,6 @@ select.input {
 
   .sidebar-head { flex: 1; min-width: 0; }
   .rail-toggle { display: none; }
-  .brand-text small { display: none; }
 
   :root[data-sidebar="rail"] .brand-text,
   :root[data-sidebar="rail"] .health span,
@@ -4058,7 +4071,7 @@ select.input {
   .toasts { right: var(--s5); bottom: calc(var(--tab-h) + var(--s5)); left: var(--s5); width: auto; }
   .login-page { padding: var(--s6); }
   .login-card { padding: var(--s8) var(--s7); }
-  .login-heading { margin: var(--s7) 0 var(--s6); }
+  .login-form { margin-top: var(--s7); }
 }
 
 @media (prefers-reduced-motion: reduce) {

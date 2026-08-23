@@ -8,38 +8,43 @@
     <title>登录 · Stream Keeper</title>
     <script src="/static/theme.js?v=20260814"></script>
     <link rel="icon" href="/static/favicon.svg?v=20260814" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260842" />
+    <link rel="stylesheet" href="/static/style.css?v=20260850" />
   </head>
   <body class="login-page">
-    <script src="/static/sprite.js?v=20260836"></script>
-    <script src="/static/shell.js?v=20260821"></script>
+    <script src="/static/sprite.js?v=20260847"></script>
+    <script src="/static/shell.js?v=20260844"></script>
     <div class="login-backdrop" aria-hidden="true"></div>
 
     <main class="login-shell">
-      <section class="login-card" aria-labelledby="login-title">
+      <section class="login-card" aria-label="登录">
         <a class="brand" href="/login">
           <span class="brand-mark" aria-hidden="true"><i></i></span>
-          <span class="brand-text"><strong>Stream Keeper</strong><small>多平台直播录制</small></span>
+          <span class="brand-text"><strong>Stream Keeper</strong></span>
         </a>
-
-        <div class="login-heading">
-          <h1 id="login-title">登录</h1>
-          <p id="login-description">管理录制任务、本地录像与网盘归档</p>
-        </div>
 
         <form id="login-form" class="login-form">
           <label class="field">
             <span class="field-label">用户名</span>
             <input id="login-username" class="input" name="username" type="text" required maxlength="128" autocomplete="username" autofocus />
           </label>
-          <label class="field">
-            <span class="field-label">密码</span>
-            <input id="login-password" class="input" name="password" type="password" required maxlength="1024" autocomplete="current-password" />
-          </label>
-          <label id="setup-confirm-field" class="field hidden">
-            <span class="field-label">确认密码</span>
-            <input id="setup-password-confirmation" class="input" name="password_confirmation" type="password" minlength="10" maxlength="1024" autocomplete="new-password" disabled />
-          </label>
+          <div class="field">
+            <label class="field-label" for="login-password">密码</label>
+            <span class="password-input">
+              <input id="login-password" class="input" name="password" type="password" required maxlength="1024" autocomplete="current-password" />
+              <button type="button" class="password-toggle" aria-label="显示密码">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-eye" /></svg>
+              </button>
+            </span>
+          </div>
+          <div id="setup-confirm-field" class="field hidden">
+            <label class="field-label" for="setup-password-confirmation">确认密码</label>
+            <span class="password-input">
+              <input id="setup-password-confirmation" class="input" name="password_confirmation" type="password" minlength="10" maxlength="1024" autocomplete="new-password" disabled />
+              <button type="button" class="password-toggle" aria-label="显示密码">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-eye" /></svg>
+              </button>
+            </span>
+          </div>
           <p id="login-error" class="alert alert-bad hidden" role="alert" aria-live="polite"></p>
           <button id="login-submit" class="btn btn-primary btn-block" type="submit" disabled>登录</button>
         </form>
@@ -54,6 +59,6 @@
       </footer>
     </main>
 
-    <script type="module" src="/static/login.js?v=20260824"></script>
+    <script type="module" src="/static/login.js?v=20260851"></script>
   </body>
 </html>
