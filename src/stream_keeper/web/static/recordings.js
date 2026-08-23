@@ -11,7 +11,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260874";
+} from "/static/ui.js?v=20260875";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };

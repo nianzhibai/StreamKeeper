@@ -163,7 +163,6 @@
 
   --side-w: 250px;
   --top-h: 58px;
-  --tab-h: 62px;
   --sticky-top: 0px;
   --page-w: 1280px;
 
@@ -558,13 +557,43 @@ img, svg {
   white-space: nowrap;
 }
 
-.nav-label-compact,
-.mobile-more-toggle {
+/* Phone-only chrome. The desktop sidebar is always on screen, so the drawer
+   control and its scrim have nothing to do above the breakpoint; the drawer
+   panel collapses out of the box model instead, leaving the nav and the footer
+   as direct children of the sidebar column. */
+.drawer-toggle,
+.nav-scrim {
   display: none;
 }
 
-.mobile-more-toggle {
+.sidebar-panel {
+  display: contents;
+}
+
+.drawer-toggle {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
   cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.drawer-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.drawer-ic-close,
+.sidebar.is-drawer-open .drawer-ic-open {
+  display: none;
+}
+
+.sidebar.is-drawer-open .drawer-ic-close {
+  display: block;
 }
 
 .nav-link:hover {
@@ -742,55 +771,59 @@ img, svg {
   font-size: var(--t-sm);
 }
 
-/* Rail mode: icons only, with native tooltips supplied by shell.js. */
-:root[data-sidebar="rail"] .sidebar {
-  padding-inline: var(--s4);
-  overflow: hidden;
-}
+/* Rail mode: icons only, with native tooltips supplied by shell.js. The
+   preference is a desktop affordance, so the whole block is scoped above the
+   layout breakpoint rather than undone rule by rule inside the phone drawer. */
+@media (min-width: 901px) {
+  :root[data-sidebar="rail"] .sidebar {
+    padding-inline: var(--s4);
+    overflow: hidden;
+  }
 
-:root[data-sidebar="rail"] .brand-text,
-:root[data-sidebar="rail"] .nav-label,
-:root[data-sidebar="rail"] .nav-title,
-:root[data-sidebar="rail"] .health span,
-:root[data-sidebar="rail"] .api-link,
-:root[data-sidebar="rail"] .account-text {
-  display: none;
-}
+  :root[data-sidebar="rail"] .brand-text,
+  :root[data-sidebar="rail"] .nav-label,
+  :root[data-sidebar="rail"] .nav-title,
+  :root[data-sidebar="rail"] .health span,
+  :root[data-sidebar="rail"] .api-link,
+  :root[data-sidebar="rail"] .account-text {
+    display: none;
+  }
 
-:root[data-sidebar="rail"] .sidebar-head,
-:root[data-sidebar="rail"] .sidebar-tools,
-:root[data-sidebar="rail"] .health,
-:root[data-sidebar="rail"] .account {
-  justify-content: center;
-}
+  :root[data-sidebar="rail"] .sidebar-head,
+  :root[data-sidebar="rail"] .sidebar-tools,
+  :root[data-sidebar="rail"] .health,
+  :root[data-sidebar="rail"] .account {
+    justify-content: center;
+  }
 
-/* The footer controls are wider than the rail side by side, so they stack. */
-:root[data-sidebar="rail"] .sidebar-head,
-:root[data-sidebar="rail"] .sidebar-tools,
-:root[data-sidebar="rail"] .theme-switch,
-:root[data-sidebar="rail"] .account {
-  flex-direction: column;
-  gap: var(--s2);
-}
+  /* The footer controls are wider than the rail side by side, so they stack. */
+  :root[data-sidebar="rail"] .sidebar-head,
+  :root[data-sidebar="rail"] .sidebar-tools,
+  :root[data-sidebar="rail"] .theme-switch,
+  :root[data-sidebar="rail"] .account {
+    flex-direction: column;
+    gap: var(--s2);
+  }
 
-:root[data-sidebar="rail"] .brand {
-  flex: none;
-  justify-content: center;
-}
+  :root[data-sidebar="rail"] .brand {
+    flex: none;
+    justify-content: center;
+  }
 
-:root[data-sidebar="rail"] .nav-link {
-  justify-content: center;
-  padding: 0;
-}
+  :root[data-sidebar="rail"] .nav-link {
+    justify-content: center;
+    padding: 0;
+  }
 
-:root[data-sidebar="rail"] .nav-link.is-active::before {
-  left: calc(var(--s4) * -1);
-}
+  :root[data-sidebar="rail"] .nav-link.is-active::before {
+    left: calc(var(--s4) * -1);
+  }
 
-:root[data-sidebar="rail"] .account {
-  padding: 0;
-  border: 0;
-  background: none;
+  :root[data-sidebar="rail"] .account {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
 }
 
 .main {
@@ -3385,150 +3418,6 @@ select.input {
    9. Overlays
    ========================================================================== */
 
-/* Phone-only secondary navigation. It is a separate overlay instead of a
-   repurposed desktop sidebar, so adding future maintenance pages never squeezes
-   the four primary touch targets. */
-.mobile-more {
-  position: fixed;
-  inset: auto 0 0;
-  width: 100%;
-  max-width: none;
-  max-height: min(76dvh, 560px);
-  margin: 0;
-  padding: 0 0 env(safe-area-inset-bottom);
-  overflow: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  border: 1px solid var(--line-2);
-  border-bottom: 0;
-  border-radius: var(--r-xl) var(--r-xl) 0 0;
-  background: var(--surface);
-  background-image: var(--sheen);
-  box-shadow: 0 -18px 60px -24px rgba(0, 0, 0, 0.72);
-  color: var(--text);
-}
-
-.mobile-more[open] {
-  animation: mobile-sheet-in 240ms var(--ease-out) both;
-}
-
-@keyframes mobile-sheet-in {
-  from { opacity: 0; transform: translateY(28px); }
-}
-
-.mobile-more::backdrop {
-  background: var(--scrim);
-  backdrop-filter: blur(4px);
-}
-
-.mobile-more-handle {
-  display: block;
-  width: 36px;
-  height: 4px;
-  margin: var(--s3) auto 0;
-  border-radius: var(--r-full);
-  background: var(--line-3);
-}
-
-.mobile-more-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s6);
-  padding: var(--s5) var(--s6) var(--s4);
-}
-
-.mobile-more-head > div {
-  min-width: 0;
-}
-
-.mobile-more-head small {
-  display: block;
-  color: var(--text-4);
-  font-size: var(--t-micro);
-  font-weight: 650;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.mobile-more-head h2 {
-  margin-top: 1px;
-  font-size: var(--t-xl);
-  font-weight: 660;
-  letter-spacing: -0.025em;
-}
-
-.mobile-more-nav {
-  display: grid;
-  gap: var(--s2);
-  padding: var(--s3) var(--s5) var(--s6);
-}
-
-.mobile-more-link {
-  display: grid;
-  min-height: 66px;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--s4);
-  padding: var(--s3) var(--s4);
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  text-decoration: none;
-  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease),
-    color var(--fast) var(--ease);
-}
-
-.mobile-more-link:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.mobile-more-link.is-active {
-  border-color: var(--brand-line);
-  background: var(--brand-soft);
-  color: var(--text);
-}
-
-.mobile-more-glyph {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--surface-2);
-  color: var(--text-3);
-}
-
-.mobile-more-link.is-active .mobile-more-glyph {
-  border-color: var(--brand-line);
-  color: var(--brand);
-}
-
-.mobile-more-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.mobile-more-copy strong {
-  font-size: var(--t-md);
-  font-weight: 620;
-}
-
-.mobile-more-copy small {
-  overflow: hidden;
-  color: var(--text-4);
-  font-size: var(--t-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mobile-more-link > .ic {
-  color: var(--text-4);
-}
-
 .modal {
   width: min(660px, calc(100% - 28px));
   max-height: min(860px, calc(100dvh - 40px));
@@ -3880,8 +3769,8 @@ select.input {
   .file-row { grid-template-columns: minmax(200px, 1fr) 96px 138px 116px; gap: var(--s5); }
 }
 
-/* Below this width the rail preference no longer applies: the sidebar becomes
-   a top bar plus a bottom tab bar. */
+/* Below this width the rail preference no longer applies: the sidebar breaks
+   apart into two floating control clusters and an off-canvas nav drawer. */
 @media (max-width: 900px) {
   :root,
   :root[data-sidebar="rail"] {
@@ -3889,129 +3778,120 @@ select.input {
     --sticky-top: var(--top-h);
   }
 
+  /* The page keeps the whole viewport and the drawer control floats over it, so
+     the container itself is inert and paints nothing. It also has to stay free
+     of `backdrop-filter`, `filter` and `transform`: any of them would become the
+     containing block for the fixed drawer inside and pin it to the header. */
   .sidebar {
     inset: 0 0 auto 0;
     width: 100%;
-    height: var(--top-h);
+    height: auto;
     flex-direction: row;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--s5);
-    padding: 0 var(--s5);
+    padding: var(--s5);
     border-right: 0;
-    border-bottom: 1px solid var(--line);
-    background: transparent;
-    /* The bottom tab bar is a fixed descendant of the top bar here, so a named
-       snapshot would span the whole viewport. Let the page cross-fade instead. */
+    background: none;
+    pointer-events: none;
+    /* The drawer is a fixed descendant, so a named snapshot would span the whole
+       viewport. Let the page cross-fade instead. */
     view-transition-name: none;
   }
 
-  /* The frosted backdrop lives on a pseudo-element: `backdrop-filter` on the bar
-     itself would become the containing block for the fixed bottom tab bar and
-     drag it up into the header. */
-  .sidebar::before {
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background: var(--bg-2);
-    content: "";
-  }
-
-  @supports (backdrop-filter: blur(1px)) {
-    .sidebar::before {
-      background: color-mix(in srgb, var(--bg-2) 86%, transparent);
-      backdrop-filter: blur(16px) saturate(1.4);
-    }
-  }
-
-  .sidebar-head { flex: 1; min-width: 0; }
-  .rail-toggle { display: none; }
-
-  :root[data-sidebar="rail"] .brand-text,
-  :root[data-sidebar="rail"] .health span,
-  :root[data-sidebar="rail"] .account-text { display: flex; }
-
-  :root[data-sidebar="rail"] .sidebar,
-  :root[data-sidebar="rail"] .sidebar-head,
-  :root[data-sidebar="rail"] .sidebar-tools,
-  :root[data-sidebar="rail"] .theme-switch,
-  :root[data-sidebar="rail"] .account { flex-direction: row; }
-
-  :root[data-sidebar="rail"] .sidebar { padding-inline: var(--s5); overflow: visible; }
-
-  .nav {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 40;
-    display: grid;
-    height: calc(var(--tab-h) + env(safe-area-inset-bottom));
-    grid-template-columns: repeat(6, 1fr);
-    gap: 0;
-    margin: 0;
-    padding: var(--s2) var(--s2) env(safe-area-inset-bottom);
-    overflow: visible;
-    border-top: 1px solid var(--line);
-    background: var(--bg-2);
-  }
-
-  @supports (backdrop-filter: blur(1px)) {
-    .nav {
-      background: color-mix(in srgb, var(--bg-2) 90%, transparent);
-      backdrop-filter: blur(16px) saturate(1.4);
-    }
-  }
-
-  .nav-title { display: none; }
-
-  .nav-link,
-  :root[data-sidebar="rail"] .nav-link {
-    min-height: 100%;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
-    padding: 0 2px;
-    border-radius: var(--r-sm);
-    font-size: var(--t-micro);
-    font-weight: 600;
-  }
-
-  .nav-label,
-  :root[data-sidebar="rail"] .nav-label { display: block; }
-
-  .nav-link.is-active { background: none; color: var(--brand); }
-  .nav-link.is-active::before,
-  :root[data-sidebar="rail"] .nav-link.is-active::before { display: none; }
-
-  .sidebar-foot,
-  :root[data-sidebar="rail"] .sidebar-foot {
+  .sidebar-head {
+    position: relative;
+    /* Above the drawer, so the toggle stays reachable to close it again. */
+    z-index: 3;
     display: flex;
+    min-height: 0;
     flex: none;
     align-items: center;
-    gap: var(--s3);
-    margin: 0;
+    padding: 5px;
+    border: 1px solid var(--line-2);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-3);
+    pointer-events: auto;
   }
 
-  .health,
-  :root[data-sidebar="rail"] .health { padding: 0; }
-  .health span,
-  .api-link,
-  .account-text,
-  :root[data-sidebar="rail"] .health span,
-  :root[data-sidebar="rail"] .account-text { display: none; }
+  @supports (backdrop-filter: blur(1px)) {
+    .sidebar-head {
+      background: color-mix(in srgb, var(--surface) 76%, transparent);
+      backdrop-filter: blur(16px) saturate(1.4);
+    }
+  }
 
-  .account,
-  :root[data-sidebar="rail"] .account { padding: 0; border: 0; background: none; }
-  .account .avatar { display: none; }
+  .drawer-toggle { display: grid; }
+
+  /* The phone header is a single control, not a title bar: the wordmark would
+     only pad it out, and the drawer already leads with the page that the logo
+     linked to. */
+  .rail-toggle,
+  .brand { display: none; }
+
+  .nav-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    display: block;
+    background: var(--scrim);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    /* Swallows drags so the page underneath cannot be scrolled through it. */
+    touch-action: none;
+    pointer-events: none;
+    transition: opacity var(--dur) var(--ease);
+  }
+
+  .sidebar.is-drawer-open .nav-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* The drawer carries the sidebar column verbatim — nav on top, status and
+     account pinned to the bottom by the footer's own `margin-top: auto`. */
+  .sidebar-panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    width: min(280px, calc(100vw - 56px));
+    flex-direction: column;
+    gap: var(--s6);
+    padding: calc(var(--top-h) + var(--s2)) var(--s5) calc(var(--s5) + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-right: 1px solid var(--line);
+    background: var(--bg-2);
+    box-shadow: var(--shadow-4);
+    pointer-events: auto;
+    transform: translateX(-100%);
+    /* Hiding waits for the slide-out to finish; without `visibility` the parked
+       links would keep answering the tab key. */
+    visibility: hidden;
+    transition: transform var(--dur) var(--ease), visibility 0s linear var(--dur);
+  }
+
+  .sidebar.is-drawer-open .sidebar-panel {
+    transform: none;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  /* The panel is the scroll container, so the nav must not compete for it. */
+  .nav { overflow: visible; }
+
+  .nav-link { min-height: 42px; }
 
   .main {
     margin-left: 0;
-    padding: calc(var(--top-h) + var(--s7)) var(--s7) calc(var(--tab-h) + var(--s10));
+    padding: calc(var(--top-h) + var(--s7)) var(--s7) var(--s10);
   }
 
   .page-head { margin-top: calc(var(--s7) * -1); padding-top: var(--s7); }
-  .main-settings { padding-bottom: calc(var(--tab-h) + 72px); }
-  .save-bar { bottom: calc(var(--tab-h) + var(--s5)); }
+  .main-settings { padding-bottom: 72px; }
 
   .hero { align-items: stretch; flex-direction: column; gap: var(--s6); }
   .hero-facts { min-width: 0; width: 100%; }
@@ -4035,15 +3915,6 @@ select.input {
 }
 
 @media (max-width: 640px) {
-  .nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .nav-link[data-nav="archive"],
-  .nav-link[data-nav="logs"],
-  .nav-link[data-nav="settings"] { display: none; }
-  .mobile-more-toggle,
-  :root[data-sidebar="rail"] .mobile-more-toggle { display: flex; }
-  .nav-label-full { display: none; }
-  .nav-label-compact { display: inline; }
-
   .main { padding-right: var(--s5); padding-left: var(--s5); }
   .page-head { align-items: flex-start; flex-direction: column; gap: var(--s5); }
   .page-tools { width: 100%; }
@@ -4106,7 +3977,7 @@ select.input {
   .modal-player .player-stage { max-height: calc(100dvh - 250px); aspect-ratio: auto; }
   .player-foot { gap: var(--s4); padding: var(--s4) var(--s5); }
 
-  .toasts { right: var(--s5); bottom: calc(var(--tab-h) + var(--s5)); left: var(--s5); width: auto; }
+  .toasts { right: var(--s5); bottom: var(--s5); left: var(--s5); width: auto; }
   .login-page { padding: var(--s6); }
   .login-card { padding: var(--s8) var(--s7); }
   .login-form { margin-top: var(--s7); }

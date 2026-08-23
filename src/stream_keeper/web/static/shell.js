@@ -18,59 +18,17 @@
     {
       title: "录制",
       items: [
-        {
-          page: "dashboard",
-          href: "/",
-          label: "概览",
-          mobileLabel: "概览",
-          icon: "dashboard",
-          mobile: "primary",
-        },
-        {
-          page: "tasks",
-          href: "/tasks",
-          label: "录制任务",
-          mobileLabel: "任务",
-          icon: "record",
-          mobile: "primary",
-        },
-        {
-          page: "recordings",
-          href: "/recordings",
-          label: "本地录像",
-          mobileLabel: "录像",
-          icon: "video",
-          mobile: "primary",
-        },
+        { page: "dashboard", href: "/", label: "概览", icon: "dashboard" },
+        { page: "tasks", href: "/tasks", label: "录制任务", icon: "record" },
+        { page: "recordings", href: "/recordings", label: "本地录像", icon: "video" },
       ],
     },
     {
       title: "运维",
       items: [
-        {
-          page: "archive",
-          href: "/archive",
-          label: "网盘归档",
-          icon: "cloud",
-          mobile: "more",
-          description: "管理存储目标与自动上传",
-        },
-        {
-          page: "logs",
-          href: "/logs",
-          label: "运行日志",
-          icon: "logs",
-          mobile: "more",
-          description: "查看录制、上传和登录事件",
-        },
-        {
-          page: "settings",
-          href: "/settings",
-          label: "配置面板",
-          icon: "settings",
-          mobile: "more",
-          description: "调整上传模式与执行计划",
-        },
+        { page: "archive", href: "/archive", label: "网盘归档", icon: "cloud" },
+        { page: "logs", href: "/logs", label: "运行日志", icon: "logs" },
+        { page: "settings", href: "/settings", label: "配置面板", icon: "settings" },
       ],
     },
   ];
@@ -104,51 +62,11 @@
           '<a class="nav-link' + (active ? " is-active" : "") + '" href="' + item.href +
           '" data-nav="' + item.page + '" data-nav-label="' + item.label + '"' +
           (active ? ' aria-current="page"' : "") + ">" +
-          icon(item.icon) + '<span class="nav-label"><span class="nav-label-full">' + item.label +
-          '</span><span class="nav-label-compact">' + (item.mobileLabel || item.label) +
-          "</span></span></a>"
+          icon(item.icon) + '<span class="nav-label">' + item.label + "</span></a>"
         );
       }).join("");
       return '<p class="nav-title">' + group.title + "</p>" + links;
     }).join("");
-  }
-
-  function mobileMoreItems() {
-    return NAVIGATION.reduce(function (items, group) {
-      return items.concat(group.items.filter(function (item) { return item.mobile === "more"; }));
-    }, []);
-  }
-
-  function mobileMoreToggleMarkup(current) {
-    var currentItem = mobileMoreItems().find(function (item) { return item.page === current; });
-    var label = currentItem ? "更多，当前页面：" + currentItem.label : "更多功能";
-    return (
-      '<button class="nav-link mobile-more-toggle' + (currentItem ? " is-active" : "") +
-      '" type="button" data-mobile-more-toggle aria-label="' + label +
-      '" aria-haspopup="dialog" aria-controls="mobile-more-dialog" aria-expanded="false">' +
-      icon("more") + '<span class="nav-label">更多</span></button>'
-    );
-  }
-
-  function mobileMoreDialogMarkup(current) {
-    var links = mobileMoreItems().map(function (item) {
-      var active = item.page === current;
-      return (
-        '<a class="mobile-more-link' + (active ? " is-active" : "") + '" href="' + item.href + '"' +
-        (active ? ' aria-current="page"' : "") + ">" +
-        '<span class="mobile-more-glyph" aria-hidden="true">' + icon(item.icon) + "</span>" +
-        '<span class="mobile-more-copy"><strong>' + item.label + "</strong><small>" + item.description +
-        "</small></span>" + icon("chevronRight", "ic-sm") + "</a>"
-      );
-    }).join("");
-    return (
-      '<dialog id="mobile-more-dialog" class="mobile-more" aria-modal="true" aria-labelledby="mobile-more-title">' +
-      '<span class="mobile-more-handle" aria-hidden="true"></span>' +
-      '<header class="mobile-more-head"><div><small>导航</small><h2 id="mobile-more-title">更多功能</h2></div>' +
-      '<button class="btn btn-icon btn-soft" type="button" data-mobile-more-close aria-label="关闭更多功能">' +
-      icon("close", "ic-sm") + "</button></header>" +
-      '<nav class="mobile-more-nav" aria-label="更多导航">' + links + "</nav></dialog>"
-    );
   }
 
   function themeSwitchMarkup() {
@@ -169,11 +87,16 @@
   function sidebarMarkup(current) {
     return (
       '<aside class="sidebar">' +
-      '<div class="sidebar-head">' + brandMarkup("/") +
+      '<div class="sidebar-head">' +
+      '<button class="drawer-toggle" type="button" data-drawer-toggle aria-label="打开导航"' +
+      ' aria-controls="main-nav" aria-expanded="false">' +
+      icon("menu", "drawer-ic-open") + icon("close", "drawer-ic-close") + "</button>" +
+      brandMarkup("/") +
       '<button class="rail-toggle" type="button" data-sidebar-toggle aria-label="收起侧边栏" title="收起侧边栏">' +
       icon("panelLeft", "ic-sm") + "</button></div>" +
-      '<nav class="nav" aria-label="主要导航">' + navigationMarkup(current) + mobileMoreToggleMarkup(current) +
-      "</nav>" +
+      '<button class="nav-scrim" type="button" data-drawer-close aria-label="关闭导航" tabindex="-1"></button>' +
+      '<div class="sidebar-panel">' +
+      '<nav class="nav" id="main-nav" aria-label="主要导航">' + navigationMarkup(current) + "</nav>" +
       '<div class="sidebar-foot">' +
       '<div id="server-health" class="health" title="服务连接状态"><i></i><span>正在连接</span></div>' +
       '<div class="sidebar-tools">' + themeSwitchMarkup() +
@@ -183,7 +106,7 @@
       '<span class="avatar avatar-sm" data-account-avatar aria-hidden="true">A</span>' +
       '<span class="account-text"><strong data-account-name>—</strong><small>管理员</small></span>' +
       '<button class="btn btn-icon btn-sm btn-ghost" type="button" data-logout aria-label="退出登录" title="退出登录">' +
-      icon("logout", "ic-sm") + "</button></div></div></aside>"
+      icon("logout", "ic-sm") + "</button></div></div></div></aside>"
     );
   }
 
@@ -230,63 +153,48 @@
     toggle.setAttribute("aria-expanded", String(!rail));
   }
 
-  function mountMobileMore(root) {
-    var toggle = root.querySelector("[data-mobile-more-toggle]");
-    var dialog = root.querySelector("#mobile-more-dialog");
-    if (!toggle || !dialog || toggle.dataset.mounted === "true") return;
-    toggle.dataset.mounted = "true";
-    var mobile = window.matchMedia("(max-width: 640px)");
+  /**
+   * Below the layout breakpoint the nav rail turns into an off-canvas drawer.
+   * It stays the same element with the same links rather than a parallel phone
+   * menu, so a new page never has to be registered in two places; only the open
+   * state lives here, as a class the stylesheet reacts to.
+   */
+  function mountNavDrawer(sidebar) {
+    var toggle = sidebar.querySelector("[data-drawer-toggle]");
+    var scrim = sidebar.querySelector("[data-drawer-close]");
+    if (!toggle || !scrim) return;
+    var wide = window.matchMedia("(min-width: 901px)");
 
-    function syncOpenState(open) {
+    function setOpen(open) {
+      sidebar.classList.toggle("is-drawer-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "关闭导航" : "打开导航");
+      // The scrim only covers the page while it can be dismissed, so it must
+      // leave the tab order the rest of the time.
+      scrim.tabIndex = open ? 0 : -1;
     }
 
-    function close() {
-      if (!dialog.open) return;
-      if (typeof dialog.close === "function") dialog.close();
-      else {
-        dialog.removeAttribute("open");
-        syncOpenState(false);
-      }
+    function isOpen() {
+      return sidebar.classList.contains("is-drawer-open");
     }
 
-    toggle.addEventListener("click", function () {
-      if (!mobile.matches || dialog.open) return;
-      if (typeof dialog.showModal === "function") dialog.showModal();
-      else dialog.setAttribute("open", "");
-      syncOpenState(true);
-      window.requestAnimationFrame(function () {
-        var target = dialog.querySelector('[aria-current="page"]') || dialog.querySelector(".mobile-more-link");
-        if (target) target.focus({ preventScroll: true });
-      });
+    toggle.addEventListener("click", function () { setOpen(!isOpen()); });
+    scrim.addEventListener("click", function () { setOpen(false); });
+
+    // Same-page links (the current page) never navigate, so the drawer has to
+    // close on the click rather than waiting for the document to unload.
+    sidebar.querySelectorAll(".nav-link").forEach(function (link) {
+      link.addEventListener("click", function () { setOpen(false); });
     });
 
-    dialog.querySelector("[data-mobile-more-close]").addEventListener("click", close);
-    dialog.addEventListener("close", function () { syncOpenState(false); });
-    dialog.addEventListener("click", function (event) {
-      if (event.target !== dialog) return;
-      var bounds = dialog.getBoundingClientRect();
-      var outside = event.clientX < bounds.left || event.clientX > bounds.right ||
-        event.clientY < bounds.top || event.clientY > bounds.bottom;
-      if (outside) close();
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && isOpen()) setOpen(false);
     });
 
-    var touchStart = null;
-    dialog.addEventListener("touchstart", function (event) {
-      if (event.touches.length !== 1) return;
-      touchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
-    }, { passive: true });
-    dialog.addEventListener("touchend", function (event) {
-      if (!touchStart || event.changedTouches.length !== 1) return;
-      var deltaX = Math.abs(event.changedTouches[0].clientX - touchStart.x);
-      var deltaY = event.changedTouches[0].clientY - touchStart.y;
-      touchStart = null;
-      if (deltaY > 72 && deltaY > deltaX * 1.4) close();
-    }, { passive: true });
-    dialog.addEventListener("touchcancel", function () { touchStart = null; }, { passive: true });
-
-    mobile.addEventListener("change", function (event) {
-      if (!event.matches) close();
+    // The drawer styles vanish with the media query, and a stale open class
+    // would leave the scrim covering the desktop layout.
+    wide.addEventListener("change", function (event) {
+      if (event.matches) setOpen(false);
     });
   }
 
@@ -323,13 +231,12 @@
       // #app — which has not been parsed yet at this point in the document.
       document.body.insertAdjacentHTML(
         "afterbegin",
-        '<a class="skip-link" href="#main">跳到主要内容</a>' + sidebarMarkup(document.body.dataset.page) +
-        mobileMoreDialogMarkup(document.body.dataset.page),
+        '<a class="skip-link" href="#main">跳到主要内容</a>' + sidebarMarkup(document.body.dataset.page),
       );
       var sidebar = document.querySelector(".sidebar");
       mountThemeSwitch(sidebar);
       mountSidebarToggle(sidebar);
-      mountMobileMore(document);
+      mountNavDrawer(sidebar);
     }
 
     if (!document.querySelector("#toast-region")) {

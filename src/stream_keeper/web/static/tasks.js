@@ -20,7 +20,7 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260874";
+} from "/static/ui.js?v=20260875";
 
 const state = {
   tasks: [],
