@@ -11,6 +11,8 @@ from time import time
 
 from fastapi import HTTPException
 
+from ..errors import InsufficientDiskSpaceError
+from ..storage import ensure_disk_reserve, wait_until_disk_reserve_reached
 from .schemas import RecordingDirectoryView, RecordingEntry
 
 RECORDING_MEDIA_TYPES = {
@@ -194,6 +196,7 @@ class RecordingPreviewCache:
         self.max_bytes = max_bytes
         self.max_age_seconds = max_age_seconds
         self._locks: dict[str, asyncio.Lock] = {}
+        self._generation_lock = asyncio.Lock()
 
     @staticmethod
     def _source_signature(path: Path) -> tuple[int, int]:
@@ -309,6 +312,27 @@ class RecordingPreviewCache:
                 pass
             await process.wait()
 
+    @classmethod
+    async def _communicate_with_disk_guard(
+        cls,
+        process: asyncio.subprocess.Process,
+        directory: Path,
+    ) -> tuple[bytes, bool]:
+        communication = asyncio.create_task(process.communicate())
+        disk_guard = asyncio.create_task(wait_until_disk_reserve_reached(directory))
+        done, _pending = await asyncio.wait(
+            {communication, disk_guard},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        reserve_reached = disk_guard in done and communication not in done
+        if reserve_reached:
+            await cls._stop_process(process)
+        _stdout, stderr = await communication
+        if not disk_guard.done():
+            disk_guard.cancel()
+        await asyncio.gather(disk_guard, return_exceptions=True)
+        return stderr, reserve_reached
+
     async def get(self, source: Path, relative_path: str) -> Path:
         signature = await asyncio.to_thread(self._source_signature, source)
         key = self._cache_key(relative_path, signature)
@@ -319,28 +343,42 @@ class RecordingPreviewCache:
             if await asyncio.to_thread(self._is_cached, target):
                 return target
 
-            executable = resolve_ffmpeg(self.ffmpeg)
-            await asyncio.to_thread(self.directory.mkdir, parents=True, exist_ok=True)
-            temporary = self.directory / f".{key}.{secrets.token_hex(6)}.mp4"
-            process: asyncio.subprocess.Process | None = None
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *build_remux_command(executable, source, temporary),
-                    stdout=subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _stdout, stderr = await process.communicate()
-                if process.returncode != 0 or not temporary.is_file() or temporary.stat().st_size == 0:
-                    if b"No space left on device" in stderr:
-                        raise HTTPException(status_code=507, detail="磁盘空间不足，无法准备播放缓存")
-                    raise HTTPException(status_code=422, detail="录像无法无损封装为浏览器可播放的 MP4")
-                if await asyncio.to_thread(self._source_signature, source) != signature:
-                    raise HTTPException(status_code=409, detail="录像仍在写入，请稍后重试")
-                await asyncio.to_thread(temporary.replace, target)
-            finally:
-                if process is not None:
-                    await self._stop_process(process)
-                await asyncio.to_thread(self._unlink, temporary)
+            async with self._generation_lock:
+                if await asyncio.to_thread(self._is_cached, target):
+                    return target
+
+                executable = resolve_ffmpeg(self.ffmpeg)
+                await asyncio.to_thread(self.directory.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(self._cleanup, target)
+                try:
+                    await asyncio.to_thread(
+                        ensure_disk_reserve,
+                        self.directory,
+                        required_bytes=signature[0],
+                    )
+                except InsufficientDiskSpaceError as exc:
+                    raise HTTPException(status_code=507, detail=str(exc)) from exc
+
+                temporary = self.directory / f".{key}.{secrets.token_hex(6)}.mp4"
+                process: asyncio.subprocess.Process | None = None
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *build_remux_command(executable, source, temporary),
+                        stdout=subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stderr, reserve_reached = await self._communicate_with_disk_guard(process, self.directory)
+                    if reserve_reached or b"No space left on device" in stderr:
+                        raise HTTPException(status_code=507, detail="磁盘空间已达到 1 GB 保留水位")
+                    if process.returncode != 0 or not temporary.is_file() or temporary.stat().st_size == 0:
+                        raise HTTPException(status_code=422, detail="录像无法无损封装为浏览器可播放的 MP4")
+                    if await asyncio.to_thread(self._source_signature, source) != signature:
+                        raise HTTPException(status_code=409, detail="录像仍在写入，请稍后重试")
+                    await asyncio.to_thread(temporary.replace, target)
+                finally:
+                    if process is not None:
+                        await self._stop_process(process)
+                    await asyncio.to_thread(self._unlink, temporary)
 
             await asyncio.to_thread(self._cleanup, target)
             return target

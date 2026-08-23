@@ -52,3 +52,7 @@ class FFmpegNotFoundError(StreamKeeperError):
 
 class FFmpegRecordingError(StreamKeeperError):
     """Raised when FFmpeg exits with an error."""
+
+
+class InsufficientDiskSpaceError(StreamKeeperError):
+    """Raised before an application write would consume the disk reserve."""

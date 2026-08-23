@@ -10,8 +10,10 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from stream_keeper.errors import InsufficientDiskSpaceError
 from stream_keeper.models import LiveInfo
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD, Settings
 from stream_keeper.web.app import create_app
@@ -729,6 +731,25 @@ class WebTests(TestCase):
 
         self.assertEqual(asyncio.run(cache.discard("主播/2026-07-12/live.ts")), 0)
         self.assertEqual(asyncio.run(RecordingPreviewCache(directory / "missing", "ffmpeg").discard("a.ts")), 0)
+
+    def test_preview_cache_preserves_one_gibibyte_of_free_space(self) -> None:
+        directory = Path(self.temp_dir.name) / "preview-cache"
+        source = Path(self.temp_dir.name) / "recording.ts"
+        source.write_bytes(b"video")
+        cache = RecordingPreviewCache(directory, "ffmpeg")
+
+        with (
+            patch("stream_keeper.web.recordings.resolve_ffmpeg", return_value="/fake/ffmpeg"),
+            patch(
+                "stream_keeper.web.recordings.ensure_disk_reserve",
+                side_effect=InsufficientDiskSpaceError("磁盘可用空间不足，必须至少保留 1 GB"),
+            ),
+        ):
+            with self.assertRaisesRegex(HTTPException, "至少保留 1 GB") as raised:
+                asyncio.run(cache.get(source, "recording.ts"))
+
+        self.assertEqual(raised.exception.status_code, 507)
+        self.assertEqual(tuple(directory.iterdir()), ())
 
     def test_recordings_delegate_cloud_uploads_to_the_archive_page(self) -> None:
         self.login()

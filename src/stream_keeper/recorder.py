@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .errors import FFmpegNotFoundError, FFmpegRecordingError
+from .errors import FFmpegNotFoundError, FFmpegRecordingError, InsufficientDiskSpaceError
 from .ffmpeg import FORMAT_NAMES, SOURCE_NAMES, build_ffmpeg_command, choose_source
 from .models import LiveInfo, RecordingResult
+from .storage import ensure_disk_reserve, wait_until_disk_reserve_reached
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,11 @@ class Recorder:
         if not info.is_live:
             raise FFmpegRecordingError("直播间当前未开播，不能启动录制")
 
+        try:
+            await asyncio.to_thread(ensure_disk_reserve, Path(self.options.output_dir))
+        except InsufficientDiskSpaceError as exc:
+            raise FFmpegRecordingError(str(exc)) from exc
+
         executable = self._resolve_ffmpeg()
         selected_source = choose_source(info, self.options.source)
         output_path = create_output_path(
@@ -175,13 +181,28 @@ class Recorder:
         stderr_task = asyncio.create_task(self._consume_stderr(stderr)) if stderr is not None else None
         stdout = getattr(process, "stdout", None)
         progress_task = asyncio.create_task(self._consume_progress(stdout)) if stdout is not None else None
+        disk_task = asyncio.create_task(wait_until_disk_reserve_reached(output_path.parent))
         progress_seconds = 0.0
+        disk_reserve_reached = False
         try:
-            return_code = await process.wait()  # type: ignore[attr-defined]
+            process_task = asyncio.create_task(process.wait())  # type: ignore[attr-defined]
+            done, _pending = await asyncio.wait(
+                {process_task, disk_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if disk_task in done and process_task not in done:
+                disk_reserve_reached = True
+                await self.stop()
+            return_code = await process_task
         except asyncio.CancelledError:
             await asyncio.shield(self.stop())
             raise
         finally:
+            if not disk_task.done():
+                disk_task.cancel()
+            disk_result = await asyncio.gather(disk_task, return_exceptions=True)
+            if disk_result and isinstance(disk_result[0], int):
+                disk_reserve_reached = True
             if stderr_task is not None:
                 await asyncio.gather(stderr_task, return_exceptions=True)
             if progress_task is not None:
@@ -191,6 +212,8 @@ class Recorder:
                     self._progress_seconds = progress_seconds
             self._process = None
 
+        if disk_reserve_reached:
+            raise FFmpegRecordingError("磁盘可用空间已达到 1 GB 保留水位，录制已停止")
         if return_code not in {0, 255}:
             raise FFmpegRecordingError(f"FFmpeg 录制失败，退出码: {return_code}")
 

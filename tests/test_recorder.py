@@ -2,8 +2,9 @@ import asyncio
 from datetime import datetime
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import AsyncMock, patch
 
-from stream_keeper.errors import FFmpegRecordingError
+from stream_keeper.errors import FFmpegRecordingError, InsufficientDiskSpaceError
 from stream_keeper.models import LiveInfo
 from stream_keeper.recorder import Recorder, RecorderOptions, create_output_path, redact_stream_urls, sanitize_name
 
@@ -126,3 +127,33 @@ class RecorderProcessTests(IsolatedAsyncioTestCase):
             self.assertIsNotNone(recorder.current_output_path)
             self.assertEqual(recorder.current_output_path.parent.parent.name, "主播")
             self.assertRegex(recorder.current_output_path.parent.name, r"^\d{4}-\d{2}-\d{2}$")
+
+    async def test_low_disk_space_prevents_ffmpeg_from_starting(self) -> None:
+        process_factory = AsyncMock()
+        info = LiveInfo(
+            platform="抖音",
+            anchor_name="主播",
+            is_live=True,
+            title=None,
+            quality="OD",
+            m3u8_url="https://example.com/live.m3u8",
+            flv_url=None,
+            record_url="https://example.com/live.m3u8",
+            live_url="https://live.douyin.com/123",
+        )
+        with TemporaryDirectory() as tmp:
+            recorder = Recorder(
+                RecorderOptions(output_dir=tmp),
+                process_factory=process_factory,
+                executable_resolver=lambda _: "/fake/ffmpeg",
+            )
+            with (
+                patch(
+                    "stream_keeper.recorder.ensure_disk_reserve",
+                    side_effect=InsufficientDiskSpaceError("磁盘可用空间不足，必须至少保留 1 GB"),
+                ),
+                self.assertRaisesRegex(FFmpegRecordingError, "至少保留 1 GB"),
+            ):
+                await recorder.record(info)
+
+        process_factory.assert_not_awaited()
