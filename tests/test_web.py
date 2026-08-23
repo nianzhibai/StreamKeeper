@@ -606,10 +606,13 @@ class WebTests(TestCase):
         self.assertEqual(root.status_code, 200)
         self.assertEqual(root.json()["path"], "")
         self.assertEqual([entry["name"] for entry in root.json()["entries"]], ["测试 主播"])
+        # 文件夹大小统计目录下所有普通文件（10 字节视频 + 空视频 + 10 字节文本）。
+        self.assertEqual(root.json()["entries"][0]["size"], 20)
 
         anchor = self.client.get("/api/recordings", params={"path": "测试 主播"})
         self.assertEqual(anchor.status_code, 200)
         self.assertEqual(anchor.json()["entries"][0]["kind"], "directory")
+        self.assertEqual(anchor.json()["entries"][0]["size"], 20)
 
         listing = self.client.get("/api/recordings", params={"path": "测试 主播/2026-07-12"})
         self.assertEqual(listing.status_code, 200)
@@ -696,6 +699,7 @@ class WebTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(video.exists())
         discard.assert_awaited_once_with(file_path)
+        self.assertEqual(self.client.get("/api/recordings").json()["entries"][0]["size"], 10)
         self.assertEqual(
             self.client.delete(f"/api/recordings/file/{file_path}", headers=self.csrf_headers).status_code,
             404,

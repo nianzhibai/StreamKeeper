@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import secrets
 import shutil
 import subprocess
@@ -62,6 +63,34 @@ def resolve_recording_path(root: Path, value: str, *, allow_root: bool = False) 
     return resolved, normalized
 
 
+def _directory_total_bytes(directory: Path) -> int:
+    """Recursive size of every regular file below one directory.
+
+    Computed on each listing so folder sizes always match the disk, including
+    recordings still being written. Entries that vanish mid-walk (a recorder
+    or archive job moving files) are skipped, like in ``_list_directory``.
+    """
+    total = 0
+    pending = [directory]
+    while pending:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as iterator:
+                for entry in iterator:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
 def _list_directory(root: Path, relative_path: str) -> RecordingDirectoryView:
     root = root.resolve()
     directory, normalized = resolve_recording_path(root, relative_path, allow_root=True)
@@ -87,7 +116,7 @@ def _list_directory(root: Path, relative_path: str) -> RecordingDirectoryView:
                         name=child.name,
                         path=child_path,
                         kind="directory",
-                        size=None,
+                        size=_directory_total_bytes(child),
                         modified_at=modified_at,
                         extension=None,
                         playback_mode=None,

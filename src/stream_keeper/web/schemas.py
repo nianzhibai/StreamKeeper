@@ -274,7 +274,7 @@ class RecordingEntry(StrictModel):
     name: str
     path: str
     kind: Literal["directory", "video"]
-    size: int | None
+    size: int
     modified_at: datetime
     extension: str | None
     playback_mode: Literal["direct", "remux"] | None

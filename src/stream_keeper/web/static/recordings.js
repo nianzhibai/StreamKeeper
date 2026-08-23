@@ -11,7 +11,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260872";
+} from "/static/ui.js?v=20260873";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };
@@ -106,7 +106,7 @@ function rowTemplate(entry, index) {
           <small>${escapeHtml(detail)}</small>
         </span>
       </button>
-      <span class="file-size">${isFolder ? "—" : escapeHtml(formatBytes(entry.size))}</span>
+      <span class="file-size">${escapeHtml(formatBytes(entry.size))}</span>
       <time class="file-time" datetime="${escapeHtml(entry.modified_at)}">${escapeHtml(formatTime(entry.modified_at))}</time>
       <div class="file-ops">${rowActions(entry)}</div>
     </article>`;

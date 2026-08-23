@@ -1,4 +1,4 @@
-import { icon } from "/static/icons.js?v=20260872";
+import { icon } from "/static/icons.js?v=20260873";
 
 const sessionState = {
   value: null,
@@ -31,11 +31,11 @@ export const SOURCE_LABELS = {
 // overview card cannot drift apart. The static provider buttons in archive.html
 // still carry their own copies; markup cannot import from here.
 const PROVIDER_ICONS = {
-  quark: "/static/provider-quark.png?v=20260872",
-  wopan: "/static/provider-wopan.png?v=20260872",
-  baidu: "/static/provider-baidu.png?v=20260872",
-  pan115: "/static/provider-pan115.png?v=20260872",
-  guangya: "/static/provider-guangya.png?v=20260872",
+  quark: "/static/provider-quark.png?v=20260873",
+  wopan: "/static/provider-wopan.png?v=20260873",
+  baidu: "/static/provider-baidu.png?v=20260873",
+  pan115: "/static/provider-pan115.png?v=20260873",
+  guangya: "/static/provider-guangya.png?v=20260873",
 };
 
 export function escapeHtml(value) {
