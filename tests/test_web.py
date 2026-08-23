@@ -190,7 +190,6 @@ class WebSetupTests(TestCase):
         self.assertEqual(
             status_response.json(),
             {
-                "authentication_enabled": True,
                 "setup_required": True,
             },
         )
@@ -240,7 +239,6 @@ class WebSetupTests(TestCase):
         self.assertEqual(
             self.client.get("/api/auth/status").json(),
             {
-                "authentication_enabled": True,
                 "setup_required": False,
             },
         )

@@ -14,7 +14,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260871";
+} from "/static/ui.js?v=20260872";
 
 const PAGE_SIZE = 100;
 /** Rows kept in the DOM. Beyond this the oldest are dropped and "load earlier" comes back. */

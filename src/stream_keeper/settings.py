@@ -27,13 +27,6 @@ def _env(suffix: str, default: str = "") -> str:
     return os.getenv(_env_name(suffix), default)
 
 
-def _env_bool(suffix: str, default: bool = False) -> bool:
-    value = _env(suffix)
-    if not value:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True, slots=True)
 class Settings:
     data_dir: Path = Path("data")
@@ -43,7 +36,6 @@ class Settings:
     web_port: int = 8000
     web_username: str = DEFAULT_WEB_USERNAME
     web_password: str = ""
-    allow_insecure: bool = False
     web_workers: int = 1
     session_ttl_hours: int = 24 * 7
     login_max_attempts: int = 3
@@ -99,7 +91,6 @@ class Settings:
             web_port=int(_env("WEB_PORT", "8000")),
             web_username=_env("WEB_USERNAME", DEFAULT_WEB_USERNAME),
             web_password=_env("WEB_PASSWORD"),
-            allow_insecure=_env_bool("ALLOW_INSECURE"),
             web_workers=int(_env("WEB_WORKERS", "1")),
             session_ttl_hours=int(_env("SESSION_TTL_HOURS", str(24 * 7))),
             login_max_attempts=int(_env("LOGIN_MAX_ATTEMPTS", "3")),
@@ -147,11 +138,8 @@ class Settings:
         return self.web_password == WEB_SETUP_PASSWORD
 
     def prepare(self) -> None:
-        if not self.web_password and not self.allow_insecure:
-            raise RuntimeError(
-                "必须设置 STREAM_KEEPER_WEB_PASSWORD；"
-                "仅限本地调试时可设置 STREAM_KEEPER_ALLOW_INSECURE=true"
-            )
+        if not self.web_password:
+            raise RuntimeError("必须设置 STREAM_KEEPER_WEB_PASSWORD")
         if self.web_password and len(self.web_password) < 10:
             raise RuntimeError("STREAM_KEEPER_WEB_PASSWORD 至少需要 10 个字符")
         if self.web_workers != 1:

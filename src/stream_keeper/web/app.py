@@ -261,7 +261,6 @@ def create_app(
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
     recording_settings_lock = asyncio.Lock()
-    authentication_enabled = bool(settings.web_password)
 
     async def persist_cloud_archive_config(
         config: CloudArchiveConfig,
@@ -371,14 +370,13 @@ def create_app(
             RecordingRuntimeSettings(max_concurrent_recordings=settings.max_concurrent_recordings)
         )
         scheduler.set_max_concurrent_recordings(runtime_settings.max_concurrent_recordings)
-        if authentication_enabled:
-            if settings.web_setup_mode:
-                # Older releases persisted the documented placeholder as if it
-                # were a real password. Remove only that exact legacy row; once
-                # setup stores real credentials, subsequent restarts preserve it.
-                await store.discard_web_credentials_if_match(settings.web_username, settings.web_password)
-            else:
-                await store.sync_web_credentials(settings.web_username, settings.web_password)
+        if settings.web_setup_mode:
+            # Older releases persisted the documented placeholder as if it
+            # were a real password. Remove only that exact legacy row; once
+            # setup stores real credentials, subsequent restarts preserve it.
+            await store.discard_web_credentials_if_match(settings.web_username, settings.web_password)
+        else:
+            await store.sync_web_credentials(settings.web_username, settings.web_password)
         await event_log.info(
             "system",
             f"服务已启动（v{__version__}）",
@@ -405,7 +403,6 @@ def create_app(
     app.add_middleware(
         SessionAuthMiddleware,
         store=store,
-        enabled=authentication_enabled,
         session_ttl_seconds=settings.session_ttl_hours * 3600,
     )
     app.add_middleware(SecurityHeadersMiddleware)
@@ -441,8 +438,6 @@ def create_app(
 
     @app.get("/login", include_in_schema=False, response_model=None)
     async def login_page(request: Request) -> Response:
-        if not authentication_enabled:
-            return RedirectResponse("/", status_code=303)
         token = request.cookies.get(SESSION_COOKIE_NAME)
         if token and await store.get_session(token):
             return RedirectResponse("/", status_code=303)
@@ -450,19 +445,12 @@ def create_app(
 
     @app.get("/api/auth/status", response_model=AuthStatus)
     async def auth_status() -> AuthStatus:
-        setup_required = (
-            authentication_enabled
-            and settings.web_setup_mode
-            and not await store.web_credentials_configured()
-        )
-        return AuthStatus(
-            authentication_enabled=authentication_enabled,
-            setup_required=setup_required,
-        )
+        setup_required = settings.web_setup_mode and not await store.web_credentials_configured()
+        return AuthStatus(setup_required=setup_required)
 
     @app.post("/api/auth/setup", response_model=AuthSession, status_code=status.HTTP_201_CREATED)
     async def setup_auth(payload: AuthSetupRequest, request: Request, response: Response) -> AuthSession:
-        if not authentication_enabled or not settings.web_setup_mode:
+        if not settings.web_setup_mode:
             raise HTTPException(status_code=409, detail="当前实例不允许通过网页初始化管理员账号")
         created = await store.initialize_web_credentials(
             payload.username,
@@ -476,8 +464,6 @@ def create_app(
 
     @app.post("/api/auth/login", response_model=AuthSession)
     async def login(payload: LoginRequest, request: Request, response: Response) -> AuthSession:
-        if not authentication_enabled:
-            raise HTTPException(status_code=409, detail="当前开发环境未启用登录认证")
         if not await store.web_credentials_configured():
             raise HTTPException(status_code=409, detail="请先在登录页面完成管理员账号初始化")
 
@@ -530,12 +516,6 @@ def create_app(
 
     @app.get("/api/auth/session", response_model=AuthSession)
     async def current_session(request: Request) -> AuthSession:
-        if not authentication_enabled:
-            return AuthSession(
-                username=settings.web_username,
-                csrf_token="",
-                expires_at=utc_now() + timedelta(hours=settings.session_ttl_hours),
-            )
         return _auth_session_response(request.state.auth_session)
 
     @app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -672,8 +652,6 @@ def create_app(
         request: Request,
         response: Response,
     ) -> WebAccountUpdateResult:
-        if not authentication_enabled:
-            raise HTTPException(status_code=409, detail="当前实例未启用登录认证")
         current_username = request.state.auth_session.username
         result = await store.update_web_credentials(
             current_username,

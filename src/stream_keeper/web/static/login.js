@@ -62,10 +62,6 @@ async function loadAuthState() {
     const response = await fetch("/api/auth/status", { credentials: "same-origin", cache: "no-store" });
     const status = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(status.detail || `无法读取认证状态 (${response.status})`);
-    if (!status.authentication_enabled) {
-      window.location.replace(destination());
-      return;
-    }
     setMode(status);
     if (!setupRequired) await checkExistingSession();
   } catch (error) {

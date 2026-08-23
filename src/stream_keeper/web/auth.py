@@ -79,17 +79,15 @@ class SessionAuthMiddleware:
         self,
         app: ASGIApp,
         store: TaskStore,
-        enabled: bool = True,
         session_ttl_seconds: int = 7 * 24 * 3600,
     ) -> None:
         self.app = app
         self.store = store
-        self.enabled = enabled
         self.session_ttl_seconds = session_ttl_seconds
         self.renew_before_seconds = max(1, session_ttl_seconds // 2)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not self.enabled:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 

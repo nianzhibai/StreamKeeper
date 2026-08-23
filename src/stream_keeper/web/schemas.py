@@ -71,7 +71,6 @@ class WebAccountUpdateResult(StrictModel):
 
 
 class AuthStatus(StrictModel):
-    authentication_enabled: bool
     setup_required: bool
 
 
