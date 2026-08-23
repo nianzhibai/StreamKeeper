@@ -6,6 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 import httpx
 
 from stream_keeper.web.cloud_login import (
+    BaiduOpenListAuth,
     BaiduQrLoginFlow,
     CloudLoginError,
     CloudLoginManager,
@@ -75,6 +76,7 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
             self.assertNotIn("one-time-service-ticket", cookie)
         finally:
             await flow.aclose()
+
 
     async def test_pan115_qr_login_returns_cookie_credentials(self) -> None:
         status_calls = 0
@@ -368,6 +370,59 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
             )
         finally:
             await flow.aclose()
+
+
+class BaiduOpenListAuthTests(IsolatedAsyncioTestCase):
+    async def test_oob_authorization_exchanges_code_for_baidu_tokens(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/baiduyun/requests":
+                self.assertEqual(request.url.params["driver_txt"], "baiduyun_ob")
+                self.assertEqual(request.url.params["server_use"], "false")
+                return httpx.Response(
+                    200,
+                    json={
+                        "text": "https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&redirect_uri=oob"
+                    },
+                )
+            if request.url.path == "/baiduyun/callback":
+                self.assertEqual(request.url.params["server_oob"], "true")
+                self.assertEqual(request.url.params["code"], "baidu-authorization-code")
+                encoded = base64.b64encode(
+                    json.dumps(
+                        {"access_token": "openlist-access-token", "refresh_token": "openlist-refresh-token"}
+                    ).encode()
+                ).decode()
+                return httpx.Response(302, headers={"location": f"/#{encoded}"})
+            raise AssertionError(f"unexpected request: {request.url}")
+
+        auth = BaiduOpenListAuth(
+            api_base="https://api.oplist.test",
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            authorization_url = await auth.authorization_url()
+            self.assertTrue(authorization_url.startswith("https://openapi.baidu.com/oauth/2.0/authorize"))
+            credentials = await auth.exchange("baidu-authorization-code")
+        finally:
+            await auth.aclose()
+
+        self.assertEqual(credentials["access_token"], "openlist-access-token")
+        self.assertEqual(credentials["refresh_token"], "openlist-refresh-token")
+        self.assertTrue(credentials["client_id"])
+        self.assertTrue(credentials["client_secret"])
+
+    async def test_untrusted_authorization_url_is_rejected(self) -> None:
+        auth = BaiduOpenListAuth(
+            api_base="https://api.oplist.test",
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={"text": "https://attacker.example/authorize"})
+            ),
+        )
+        try:
+            with self.assertRaisesRegex(CloudLoginError, "不可信"):
+                await auth.authorization_url()
+        finally:
+            await auth.aclose()
 
 
 class BaiduQrImageTests(IsolatedAsyncioTestCase):

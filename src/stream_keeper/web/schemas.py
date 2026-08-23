@@ -367,6 +367,14 @@ class CloudProviderUpdate(StrictModel):
         return value
 
 
+class BaiduOpenListAuthorizationView(StrictModel):
+    authorization_url: str
+
+
+class BaiduOpenListExchange(StrictModel):
+    authorization_code: SecretStr = Field(min_length=1, max_length=2048)
+
+
 class CloudQuarkView(StrictModel):
     enabled: bool
     credential_configured: bool

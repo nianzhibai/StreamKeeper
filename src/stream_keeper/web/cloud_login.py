@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import io
 import json
 import secrets
@@ -10,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 import qrcode
@@ -36,6 +37,11 @@ _BAIDU_NETDISK_HOME = "https://pan.baidu.com/disk/home"
 # `imgurl` arrives inside a remote response, so the host it names is untrusted input
 # for the server-side fetch in BaiduQrLoginFlow._fetch_qr_image.
 _BAIDU_QR_IMAGE_HOSTS = frozenset({"passport.baidu.com", "wappass.baidu.com"})
+_BAIDU_OPENLIST_API_BASE = "https://api.oplist.org"
+# Public OOB application parameters published by OpenList-APIPages. They are
+# intentionally embedded in its browser client and are not StreamKeeper secrets.
+_BAIDU_OPENLIST_CLIENT_ID = "NqOMXF6XGhGRIGemsQ9nG0Na"
+_BAIDU_OPENLIST_CLIENT_SECRET = "SVT6xpMdLcx6v4aCR4wT8BBOTbzFO8LM"
 _GUANGYA_ACCOUNT_URL = "https://account.guangyapan.com/v1/auth"
 _GUANGYA_CLIENT_ID = "aMe-8VSlkrbQXpUR"
 _GUANGYA_DEVICE_CODE_URL = f"{_GUANGYA_ACCOUNT_URL}/device/code"
@@ -111,6 +117,113 @@ def _png_data_uri(payload: bytes, provider_name: str) -> str:
         raise CloudLoginError(f"{provider_name}返回了无效二维码")
     encoded = base64.b64encode(payload).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+class BaiduOpenListAuth:
+    """Acquire Baidu OAuth credentials through OpenList's public OOB API."""
+
+    def __init__(
+        self,
+        *,
+        api_base: str = _BAIDU_OPENLIST_API_BASE,
+        timeout_seconds: float = 40,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_base = api_base.rstrip("/")
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+            transport=transport,
+            headers={"Accept": "application/json", "User-Agent": _USER_AGENT},
+        )
+
+    @staticmethod
+    def _payload(response: httpx.Response, operation: str) -> dict[str, object]:
+        if response.is_error:
+            raise CloudLoginError(f"OpenList 在线 API {operation}失败（HTTP {response.status_code}）")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CloudLoginError(f"OpenList 在线 API {operation}返回格式错误") from exc
+        if not isinstance(payload, dict):
+            raise CloudLoginError(f"OpenList 在线 API {operation}返回格式错误")
+        return payload
+
+    async def authorization_url(self) -> str:
+        try:
+            response = await self._client.get(
+                f"{self._api_base}/baiduyun/requests",
+                params={
+                    "client_uid": "",
+                    "client_key": _BAIDU_OPENLIST_CLIENT_ID,
+                    "secret_key": _BAIDU_OPENLIST_CLIENT_SECRET,
+                    "driver_txt": "baiduyun_ob",
+                    "server_use": "false",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("OpenList 在线 API 连接失败") from exc
+        payload = self._payload(response, "生成授权地址")
+        value = payload.get("text")
+        if not isinstance(value, str) or not value:
+            raise CloudLoginError("OpenList 在线 API 没有返回百度授权地址")
+        url = httpx.URL(value)
+        if url.scheme != "https" or url.host != "openapi.baidu.com" or url.path != "/oauth/2.0/authorize":
+            raise CloudLoginError("OpenList 在线 API 返回了不可信的百度授权地址")
+        return str(url)
+
+    async def exchange(self, authorization_code: str) -> dict[str, str]:
+        code = authorization_code.strip()
+        if not code or len(code) > 2048 or any(ord(char) < 33 for char in code):
+            raise CloudLoginError("百度授权码格式错误")
+        try:
+            response = await self._client.get(
+                f"{self._api_base}/baiduyun/callback",
+                params={
+                    "server_oob": "true",
+                    "client_key": _BAIDU_OPENLIST_CLIENT_ID,
+                    "secret_key": _BAIDU_OPENLIST_CLIENT_SECRET,
+                    "code": code,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("OpenList 在线 API 交换百度凭据失败") from exc
+        if not response.is_redirect:
+            detail = " ".join(response.text.split())[:200]
+            raise CloudLoginError(
+                f"OpenList 在线 API 交换百度凭据失败（HTTP {response.status_code}）：{detail}"
+            )
+        fragment = urlsplit(response.headers.get("location", "")).fragment
+        try:
+            decoded = base64.b64decode(fragment, validate=True)
+            payload = json.loads(decoded.decode("utf-8"))
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CloudLoginError("OpenList 在线 API 返回了无效的百度凭据") from exc
+        if not isinstance(payload, dict):
+            raise CloudLoginError("OpenList 在线 API 返回了无效的百度凭据")
+        message = payload.get("message_err")
+        if isinstance(message, str) and message:
+            raise CloudLoginError(f"百度授权失败：{message[:200]}")
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token")
+        if (
+            not isinstance(access_token, str)
+            or not access_token
+            or not isinstance(refresh_token, str)
+            or not refresh_token
+            or len(access_token) > 4096
+            or len(refresh_token) > 4096
+        ):
+            raise CloudLoginError("OpenList 在线 API 返回的百度 Token 不完整")
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "client_id": _BAIDU_OPENLIST_CLIENT_ID,
+            "client_secret": _BAIDU_OPENLIST_CLIENT_SECRET,
+        }
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
 
 class QuarkQrLoginFlow:

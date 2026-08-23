@@ -32,6 +32,7 @@ from .auth import (
     set_session_cookie,
 )
 from .cloud_login import (
+    BaiduOpenListAuth,
     CloudLoginError,
     CloudLoginFlowFactory,
     CloudLoginManager,
@@ -51,6 +52,8 @@ from .schemas import (
     AuthSession,
     AuthSetupRequest,
     AuthStatus,
+    BaiduOpenListAuthorizationView,
+    BaiduOpenListExchange,
     CloudArchiveUpdate,
     CloudArchiveView,
     CloudLoginView,
@@ -232,6 +235,7 @@ def create_app(
     inspect_client_factory: ClientFactory | None = None,
     cloud_login_flow_factory: CloudLoginFlowFactory | None = None,
     cloud_login_poll_interval: float = 2,
+    baidu_openlist_auth: BaiduOpenListAuth | None = None,
     inspection_handoffs: InspectionHandoffStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
@@ -253,6 +257,7 @@ def create_app(
     inspect_client_factory = inspect_client_factory or settings.create_client
     if inspection_handoffs is None:
         inspection_handoffs = InspectionHandoffStore()
+    baidu_openlist_auth = baidu_openlist_auth or BaiduOpenListAuth()
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
     recording_settings_lock = asyncio.Lock()
@@ -329,6 +334,23 @@ def create_app(
                 raise CloudLoginError(str(exc)) from exc
         await event_log.success("auth", f"{CLOUD_PROVIDER_LABELS[provider]}扫码登录成功，凭据已保存")
 
+    async def save_baidu_openlist_credentials(credentials: dict[str, str]) -> CloudArchiveConfig:
+        """Switch Baidu from cookie auth to the OAuth credentials returned by OpenList."""
+
+        def build(current: CloudArchiveConfig) -> CloudArchiveConfig:
+            previous = current.provider("baidu")
+            merged = {key: value for key, value in previous.credentials.items() if key != "cookie"}
+            merged.update(credentials)
+            return current.with_provider(replace(previous, credentials=merged))
+
+        async with cloud_config_lock:
+            try:
+                config = await persist_cloud_archive_update(build, invalidate_credentials=("baidu",))
+            except ValueError as exc:
+                raise CloudLoginError(str(exc)) from exc
+        await event_log.success("auth", "百度网盘通过 OpenList 在线 API 授权成功，OAuth 凭据已保存")
+        return config
+
     if cloud_login_flow_factory is None:
         cloud_login_manager = CloudLoginManager(
             save_cloud_login_credentials,
@@ -369,6 +391,7 @@ def create_app(
         finally:
             await event_log.info("system", "服务正在停止，已启用的任务会在下次启动时恢复")
             await cloud_login_manager.shutdown()
+            await baidu_openlist_auth.aclose()
             await upload_service.shutdown()
             await scheduler.shutdown()
 
@@ -739,6 +762,32 @@ def create_app(
         except CloudLoginError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return _cloud_login_response(snapshot)
+
+    @app.post(
+        "/api/cloud/login/baidu/openlist",
+        response_model=BaiduOpenListAuthorizationView,
+    )
+    async def start_baidu_openlist_login() -> BaiduOpenListAuthorizationView:
+        try:
+            authorization_url = await baidu_openlist_auth.authorization_url()
+        except CloudLoginError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return BaiduOpenListAuthorizationView(authorization_url=authorization_url)
+
+    @app.post(
+        "/api/cloud/login/baidu/openlist/exchange",
+        response_model=CloudArchiveView,
+    )
+    async def exchange_baidu_openlist_login(payload: BaiduOpenListExchange) -> CloudArchiveView:
+        credentials: dict[str, str] = {}
+        try:
+            credentials = await baidu_openlist_auth.exchange(payload.authorization_code.get_secret_value())
+            config = await save_baidu_openlist_credentials(credentials)
+        except CloudLoginError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        finally:
+            credentials.clear()
+        return await _cloud_archive_response(config, upload_service)
 
     @app.get(
         "/api/cloud/login/{provider}/{session_id}",

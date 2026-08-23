@@ -37,6 +37,13 @@ const loginStatus = document.querySelector("#cloud-login-status");
 const loginTip = document.querySelector("#cloud-login-tip");
 const loginRefresh = document.querySelector("#cloud-login-refresh");
 const loginClose = document.querySelector("#cloud-login-close");
+const baiduOpenListButton = document.querySelector("#baidu-openlist-login");
+const baiduOpenListDialog = document.querySelector("#baidu-openlist-dialog");
+const baiduOpenListForm = document.querySelector("#baidu-openlist-form");
+const baiduOpenListStatus = document.querySelector("#baidu-openlist-status");
+const baiduOpenListAuthorize = document.querySelector("#baidu-openlist-authorize");
+const baiduOpenListCode = document.querySelector("#baidu-openlist-code");
+const baiduOpenListExchange = document.querySelector("#baidu-openlist-exchange");
 
 const providerMeta = {
   quark: {
@@ -465,6 +472,50 @@ async function startCloudLogin(provider) {
   }
 }
 
+async function startBaiduOpenListLogin() {
+  baiduOpenListButton.disabled = true;
+  baiduOpenListStatus.textContent = "正在准备百度授权地址…";
+  baiduOpenListAuthorize.classList.add("hidden");
+  baiduOpenListAuthorize.removeAttribute("href");
+  baiduOpenListCode.value = "";
+  if (!baiduOpenListDialog.open) baiduOpenListDialog.showModal();
+  try {
+    const value = await api("/api/cloud/login/baidu/openlist", { method: "POST" });
+    baiduOpenListAuthorize.href = value.authorization_url;
+    baiduOpenListAuthorize.classList.remove("hidden");
+    baiduOpenListStatus.textContent = "打开百度授权页面，授权后复制页面显示的授权码";
+  } catch (error) {
+    baiduOpenListStatus.textContent = error.message;
+    toast(error.message, "error");
+  } finally {
+    baiduOpenListButton.disabled = false;
+  }
+}
+
+async function exchangeBaiduOpenListCode(event) {
+  event.preventDefault();
+  const authorizationCode = baiduOpenListCode.value.trim();
+  if (!authorizationCode) return;
+  baiduOpenListExchange.disabled = true;
+  baiduOpenListExchange.textContent = "交换中…";
+  try {
+    render(await api("/api/cloud/login/baidu/openlist/exchange", {
+      method: "POST",
+      body: JSON.stringify({ authorization_code: authorizationCode }),
+    }));
+    baiduOpenListCode.value = "";
+    baiduOpenListDialog.close();
+    updateProviderCredentialHint("baidu");
+    toast("百度 OAuth2 授权成功", "success");
+  } catch (error) {
+    baiduOpenListStatus.textContent = error.message;
+    toast(error.message, "error");
+  } finally {
+    baiduOpenListExchange.disabled = false;
+    baiduOpenListExchange.textContent = "保存授权";
+  }
+}
+
 async function load({ quiet = false } = {}) {
   if (loading) return;
   loading = true;
@@ -518,6 +569,15 @@ loginRefresh.addEventListener("click", () => startCloudLogin(activeLogin?.provid
 loginClose.addEventListener("click", () => loginDialog.close());
 loginDialog.addEventListener("close", () => {
   cancelActiveLogin();
+});
+baiduOpenListButton.addEventListener("click", startBaiduOpenListLogin);
+baiduOpenListForm.addEventListener("submit", exchangeBaiduOpenListCode);
+document.querySelector("#baidu-openlist-close").addEventListener("click", () => baiduOpenListDialog.close());
+document.querySelector("#baidu-openlist-cancel").addEventListener("click", () => baiduOpenListDialog.close());
+baiduOpenListDialog.addEventListener("close", () => {
+  baiduOpenListCode.value = "";
+  baiduOpenListAuthorize.classList.add("hidden");
+  baiduOpenListAuthorize.removeAttribute("href");
 });
 
 bootstrap(load);

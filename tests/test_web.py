@@ -129,6 +129,26 @@ class FakeCloudLoginFlow:
         pass
 
 
+class FakeBaiduOpenListAuth:
+    def __init__(self) -> None:
+        self.codes: list[str] = []
+
+    async def authorization_url(self) -> str:
+        return "https://openapi.baidu.com/oauth/2.0/authorize?redirect_uri=oob"
+
+    async def exchange(self, authorization_code: str) -> dict[str, str]:
+        self.codes.append(authorization_code)
+        return {
+            "access_token": "openlist-baidu-access-token",
+            "refresh_token": "openlist-baidu-refresh-token",
+            "client_id": "openlist-baidu-client-id",
+            "client_secret": "openlist-baidu-client-secret",
+        }
+
+    async def aclose(self) -> None:
+        pass
+
+
 class WebSetupTests(TestCase):
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
@@ -291,6 +311,7 @@ class WebTests(TestCase):
         )
         self.store = TaskStore(self.settings.database_path)
         self.scheduler = FakeScheduler(self.store)
+        self.baidu_openlist_auth = FakeBaiduOpenListAuth()
         app = create_app(
             self.settings,
             store=self.store,
@@ -298,6 +319,7 @@ class WebTests(TestCase):
             inspect_client_factory=FakeInspectClient,
             cloud_login_flow_factory=FakeCloudLoginFlow,
             cloud_login_poll_interval=0.01,
+            baidu_openlist_auth=self.baidu_openlist_auth,
         )
         self.app = app
         self.client_context = TestClient(app)
@@ -1680,3 +1702,46 @@ class WebTests(TestCase):
         self.assertEqual(archive["baidu"]["configured_credentials"], ["cookie"])
         self.assertTrue(archive["guangya"]["credential_configured"])
         self.assertNotIn("qr-seid", json.dumps(archive))
+
+    def test_baidu_openlist_online_api_switches_cookie_auth_to_oauth(self) -> None:
+        self.login()
+        archive_page = self.client.get("/archive")
+        self.assertIn('id="baidu-openlist-login"', archive_page.text)
+        self.assertIn('id="baidu-openlist-dialog"', archive_page.text)
+
+        configured = self.client.put(
+            "/api/cloud/archive/providers/baidu/config",
+            headers=self.csrf_headers,
+            json={
+                "enabled": True,
+                "credentials": {"cookie": "BDUSS=old-cookie; STOKEN=old-stoken"},
+                "clear_credentials": False,
+                "options": {},
+            },
+        )
+        self.assertEqual(configured.status_code, 200)
+
+        started = self.client.post("/api/cloud/login/baidu/openlist", headers=self.csrf_headers)
+        self.assertEqual(started.status_code, 200)
+        self.assertTrue(started.json()["authorization_url"].startswith("https://openapi.baidu.com/"))
+
+        exchanged = self.client.post(
+            "/api/cloud/login/baidu/openlist/exchange",
+            headers=self.csrf_headers,
+            json={"authorization_code": "one-time-baidu-code"},
+        )
+        self.assertEqual(exchanged.status_code, 200)
+        self.assertNotIn("openlist-baidu-access-token", exchanged.text)
+        self.assertEqual(self.baidu_openlist_auth.codes, ["one-time-baidu-code"])
+        baidu = exchanged.json()["baidu"]
+        self.assertEqual(
+            baidu["configured_credentials"],
+            ["access_token", "refresh_token", "client_id", "client_secret"],
+        )
+
+        with closing(sqlite3.connect(self.settings.database_path)) as connection:
+            stored = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
+            raw = json.loads(stored)
+        credentials = raw["providers"]["baidu"]["credentials"]
+        self.assertNotIn("cookie", credentials)
+        self.assertEqual(credentials["access_token"], "openlist-baidu-access-token")

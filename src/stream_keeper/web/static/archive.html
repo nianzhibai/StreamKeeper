@@ -297,6 +297,15 @@
                 <input class="input" name="baidu_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
               </label>
             </div>
+            <div class="auth-row">
+              <div>
+                <strong>OpenList 在线 API</strong>
+                <small>通过百度 OAuth2 授权获取可自动续期的 Token</small>
+              </div>
+              <button id="baidu-openlist-login" class="btn btn-soft" type="button">
+                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg>在线授权
+              </button>
+            </div>
             <details class="disclosure">
               <summary><span>百度登录凭据</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
               <div class="form-grid">
@@ -350,6 +359,37 @@
       </form>
     </dialog>
 
+    <dialog id="baidu-openlist-dialog" class="modal modal-sm" aria-labelledby="baidu-openlist-title">
+      <form id="baidu-openlist-form">
+        <header class="modal-head">
+          <span class="modal-glyph tone-info" aria-hidden="true">
+            <svg class="ic ic-sm"><use href="#ic-key" /></svg>
+          </span>
+          <div class="modal-heading">
+            <h2 id="baidu-openlist-title">百度 OAuth2 授权</h2>
+            <p>由 OpenList 在线 API 完成授权码交换</p>
+          </div>
+          <button id="baidu-openlist-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭">
+            <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
+          </button>
+        </header>
+        <div class="modal-body">
+          <p id="baidu-openlist-status">正在准备百度授权地址…</p>
+          <a id="baidu-openlist-authorize" class="btn btn-soft hidden" href="#" target="_blank" rel="noopener noreferrer">
+            打开百度授权页面
+          </a>
+          <label class="field">
+            <span class="field-label">授权码</span>
+            <input id="baidu-openlist-code" class="input" type="password" maxlength="2048" autocomplete="off" placeholder="在百度授权页面复制授权码后粘贴到这里" required />
+          </label>
+        </div>
+        <footer class="modal-foot">
+          <button id="baidu-openlist-cancel" class="btn btn-soft" type="button">取消</button>
+          <button id="baidu-openlist-exchange" class="btn btn-primary" type="submit">保存授权</button>
+        </footer>
+      </form>
+    </dialog>
+
     <dialog id="cloud-login-dialog" class="modal modal-sm" aria-labelledby="cloud-login-title">
       <header class="modal-head">
         <span class="modal-glyph tone-info" aria-hidden="true">
@@ -373,6 +413,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260838"></script>
+    <script type="module" src="/static/archive.js?v=20260839"></script>
   </body>
 </html>
