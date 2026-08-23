@@ -16,7 +16,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260875";
+} from "/static/ui.js?v=20260876";
 
 const runButton = document.querySelector("#cloud-run-button");
 const providerDialog = document.querySelector("#provider-config-dialog");

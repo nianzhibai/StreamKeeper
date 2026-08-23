@@ -3798,6 +3798,22 @@ select.input {
     view-transition-name: none;
   }
 
+  /* The sticky page header parks below the floating control, so the strip above
+     it is the one band nothing else fills — the control alone covers a corner,
+     and scrolled content used to run straight through the rest. Painting it in
+     the page background continues the header's own fill, so the two read as a
+     single surface rather than reinstating a bar with an edge of its own. */
+  .sidebar::before {
+    position: fixed;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: -1;
+    height: var(--sticky-top);
+    background: var(--bg);
+    content: "";
+  }
+
   .sidebar-head {
     position: relative;
     /* Above the drawer, so the toggle stays reachable to close it again. */
@@ -3962,7 +3978,11 @@ select.input {
   .log-filter-foot { align-items: flex-start; flex-direction: column; gap: var(--s3); }
   .chip-row-label { min-width: 0; width: 100%; }
 
-  .form-grid,
+  /* `.form-grid` keeps its two columns: the fields that need the full width
+     already claim it with `span-2`, so what is left in the grid is the short
+     selects and unit-suffixed numbers that still read fine side by side. The
+     three-column variant and the switch rows do not survive the narrower
+     track, so they collapse. */
   .form-grid-3,
   .option-row { grid-template-columns: minmax(0, 1fr); }
   .modal-head,
