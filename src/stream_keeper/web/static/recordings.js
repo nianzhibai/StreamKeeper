@@ -2,6 +2,7 @@ import {
   api,
   bootstrap,
   clearPageError,
+  confirmAction,
   escapeHtml,
   formatBytes,
   formatTime,
@@ -87,7 +88,8 @@ function rowActions(entry) {
     return `<button class="btn btn-icon btn-sm btn-ghost" type="button" data-action="open" aria-label="打开 ${escapeHtml(entry.name)}">${icon("chevronRight", "ic-sm")}</button>`;
   }
   return `<button class="btn btn-sm btn-ghost" type="button" data-action="play"${entry.playable ? "" : " disabled"}>${icon("play", "ic-xs")}<span>播放</span></button>
-     <a class="btn btn-icon btn-sm btn-ghost" href="${fileUrl(entry.path, { download: true })}" data-action="download" download aria-label="下载 ${escapeHtml(entry.name)}" title="下载原文件">${icon("download", "ic-sm")}</a>`;
+     <a class="btn btn-icon btn-sm btn-ghost" href="${fileUrl(entry.path, { download: true })}" data-action="download" download aria-label="下载 ${escapeHtml(entry.name)}" title="下载原文件">${icon("download", "ic-sm")}</a>
+     <button class="btn btn-icon btn-sm btn-ghost is-negative" type="button" data-action="delete" aria-label="删除 ${escapeHtml(entry.name)}" title="删除">${icon("trash", "ic-sm")}</button>`;
 }
 
 function rowTemplate(entry, index) {
@@ -300,6 +302,25 @@ function closePlayer() {
   showPlayerMessage("loading");
 }
 
+async function deleteRecording(entry, button) {
+  const proceed = await confirmAction({
+    title: "删除录像文件",
+    message: `将永久删除“${entry.name}”及对应的转码文件，此操作无法撤销。`,
+    confirmLabel: "删除文件",
+  });
+  if (!proceed) return;
+
+  button.disabled = true;
+  try {
+    await api(`/api/recordings/file/${encodePath(entry.path)}`, { method: "DELETE" });
+    toast("录像文件已删除", "success");
+    await load({ quiet: true });
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message, "error");
+  }
+}
+
 document.querySelector("#recording-up")?.addEventListener("click", () => {
   if (!currentPath) return;
   navigate(currentPath.split("/").slice(0, -1).join("/"));
@@ -316,7 +337,7 @@ sortNode?.addEventListener("change", () => {
   sortMode = sortNode.value;
   renderList();
 });
-listNode.addEventListener("click", (event) => {
+listNode.addEventListener("click", async (event) => {
   const action = event.target.closest("[data-action]");
   const row = event.target.closest("[data-entry-index]");
   if (!action || !row || action.dataset.action === "download") return;
@@ -324,6 +345,7 @@ listNode.addEventListener("click", (event) => {
   if (!entry) return;
   if (action.dataset.action === "open") navigate(entry.path);
   if (action.dataset.action === "play") openPlayer(entry);
+  if (action.dataset.action === "delete") await deleteRecording(entry, action);
 });
 document.querySelector("#recording-player-close")?.addEventListener("click", closePlayer);
 playerDialog.addEventListener("cancel", (event) => {

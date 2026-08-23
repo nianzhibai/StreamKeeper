@@ -128,6 +128,17 @@ def get_recording_file(root: Path, relative_path: str) -> tuple[Path, str]:
     return path, normalized
 
 
+def _delete_recording_file(root: Path, relative_path: str) -> str:
+    path, normalized = get_recording_file(root, relative_path)
+    try:
+        path.unlink()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="录像文件不存在") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="无法删除录像文件") from exc
+    return normalized
+
+
 def resolve_ffmpeg(executable: str) -> str:
     resolved = shutil.which(executable)
     if not resolved:
@@ -333,3 +344,19 @@ class RecordingPreviewCache:
 
             await asyncio.to_thread(self._cleanup, target)
             return target
+
+
+async def delete_recording_file(
+    root: Path,
+    relative_path: str,
+    preview_cache: RecordingPreviewCache,
+) -> None:
+    """Delete a recording and every completed browser-playback derivative.
+
+    Removing the source first prevents an in-flight remux from publishing a new
+    cache entry: it rechecks the source before replacing its temporary output.
+    The cache key is based on the normalized relative path, so all cached
+    generations of the same recording are discarded together.
+    """
+    normalized = await asyncio.to_thread(_delete_recording_file, root, relative_path)
+    await preview_cache.discard(normalized)

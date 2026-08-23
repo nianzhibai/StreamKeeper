@@ -42,6 +42,7 @@ from .inspections import InspectionHandoffStore
 from .recordings import (
     RECORDING_MEDIA_TYPES,
     RecordingPreviewCache,
+    delete_recording_file,
     get_recording_file,
     list_recording_directory,
 )
@@ -1005,6 +1006,18 @@ def create_app(
             content_disposition_type="inline",
             headers={"X-Recording-Preview": "remux-cache"},
         )
+
+    @app.delete(
+        "/api/recordings/file/{recording_path:path}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def delete_recording(recording_path: str) -> Response:
+        await delete_recording_file(
+            settings.recordings_dir,
+            recording_path,
+            recording_preview_cache,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/tasks", response_model=list[TaskRecord])
     async def list_tasks() -> list[TaskRecord]:

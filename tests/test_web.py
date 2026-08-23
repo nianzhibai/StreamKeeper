@@ -671,6 +671,36 @@ class WebTests(TestCase):
             self.client.get("/api/recordings/file/测试 主播/2026-07-12/内部信息.txt").status_code,
             404,
         )
+        self.assertEqual(
+            self.client.delete(
+                "/api/recordings/file/测试 主播/2026-07-12/内部信息.txt",
+                headers=self.csrf_headers,
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.delete("/api/recordings/file/../outside.mp4", headers=self.csrf_headers).status_code,
+            404,
+        )
+
+        with patch.object(
+            self.app.state.recording_preview_cache,
+            "discard",
+            new=AsyncMock(return_value=1),
+        ) as discard:
+            deleted = self.client.delete(f"/api/recordings/file/{file_path}", headers=self.csrf_headers)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(video.exists())
+        discard.assert_awaited_once_with(file_path)
+        self.assertEqual(
+            self.client.delete(f"/api/recordings/file/{file_path}", headers=self.csrf_headers).status_code,
+            404,
+        )
+
+        recordings_script = self.client.get("/static/recordings.js").text
+        self.assertIn('data-action="delete"', recordings_script)
+        self.assertIn("对应的转码文件", recordings_script)
+        self.assertIn('method: "DELETE"', recordings_script)
 
     def test_preview_cache_entries_can_be_found_by_recording_path(self) -> None:
         directory = Path(self.temp_dir.name) / "preview-cache"
