@@ -43,9 +43,11 @@ from .inspections import InspectionHandoffStore
 from .recordings import (
     RECORDING_MEDIA_TYPES,
     RecordingPreviewCache,
+    delete_recording_directory,
     delete_recording_file,
     get_recording_file,
     list_recording_directory,
+    resolve_recording_path,
 )
 from .scheduler import ClientFactory, TaskScheduler
 from .schemas import (
@@ -1034,6 +1036,23 @@ def create_app(
     )
     async def delete_recording(recording_path: str) -> Response:
         await delete_recording_file(
+            settings.recordings_dir,
+            recording_path,
+            recording_preview_cache,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.delete(
+        "/api/recordings/directory/{recording_path:path}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def delete_recording_folder(recording_path: str) -> Response:
+        directory, _ = resolve_recording_path(settings.recordings_dir, recording_path)
+        active_provider = getattr(scheduler, "recording_output_directories", None)
+        active_directories = active_provider() if callable(active_provider) else set()
+        if any(directory == active or directory in active.parents for active in active_directories):
+            raise HTTPException(status_code=409, detail="目录下有正在录制的任务，暂时无法删除")
+        await delete_recording_directory(
             settings.recordings_dir,
             recording_path,
             recording_preview_cache,

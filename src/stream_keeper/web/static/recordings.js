@@ -84,7 +84,8 @@ function visibleEntries() {
 
 function rowActions(entry) {
   if (entry.kind === "directory") {
-    return `<button class="btn btn-icon btn-sm btn-ghost" type="button" data-action="open" aria-label="打开 ${escapeHtml(entry.name)}">${icon("chevronRight", "ic-sm")}</button>`;
+    return `<button class="btn btn-icon btn-sm btn-ghost is-negative" type="button" data-action="delete" aria-label="删除 ${escapeHtml(entry.name)}" title="删除文件夹">${icon("trash", "ic-sm")}</button>
+       <button class="btn btn-icon btn-sm btn-ghost" type="button" data-action="open" aria-label="打开 ${escapeHtml(entry.name)}">${icon("chevronRight", "ic-sm")}</button>`;
   }
   return `<button class="btn btn-sm btn-ghost" type="button" data-action="play"${entry.playable ? "" : " disabled"}>${icon("play", "ic-xs")}<span>播放</span></button>
      <a class="btn btn-icon btn-sm btn-ghost" href="${fileUrl(entry.path, { download: true })}" data-action="download" download aria-label="下载 ${escapeHtml(entry.name)}" title="下载原文件">${icon("download", "ic-sm")}</a>
@@ -287,17 +288,20 @@ function closePlayer() {
 }
 
 async function deleteRecording(entry, button) {
+  const isFolder = entry.kind === "directory";
   const proceed = await confirmAction({
-    title: "删除录像文件",
-    message: `将永久删除“${entry.name}”及可能存在的转码文件，此操作无法撤销。`,
-    confirmLabel: "删除文件",
+    title: isFolder ? "删除录像文件夹" : "删除录像文件",
+    message: isFolder
+      ? `将永久删除“${entry.name}”文件夹里的全部录像及可能存在的转码文件，此操作无法撤销。`
+      : `将永久删除“${entry.name}”及可能存在的转码文件，此操作无法撤销。`,
+    confirmLabel: isFolder ? "删除文件夹" : "删除文件",
   });
   if (!proceed) return;
 
   button.disabled = true;
   try {
-    await api(`/api/recordings/file/${encodePath(entry.path)}`, { method: "DELETE" });
-    toast("录像文件已删除", "success");
+    await api(`/api/recordings/${isFolder ? "directory" : "file"}/${encodePath(entry.path)}`, { method: "DELETE" });
+    toast(isFolder ? "文件夹已删除" : "录像文件已删除", "success");
     await load({ quiet: true });
   } catch (error) {
     button.disabled = false;

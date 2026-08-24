@@ -564,7 +564,6 @@ class WebTests(TestCase):
         self.login()
         recording_page = self.client.get("/recordings")
         self.assertIn('id="recording-player"', recording_page.text)
-        self.assertIn('id="recording-download"', recording_page.text)
         self.assertIn("/static/artplayer.css?v=5.4.1", recording_page.text)
         self.assertIn("/static/artplayer.js?v=5.4.1", recording_page.text)
         self.assertNotIn('id="recording-play-toggle"', recording_page.text)
@@ -707,8 +706,76 @@ class WebTests(TestCase):
 
         recordings_script = self.client.get("/static/recordings.js").text
         self.assertIn('data-action="delete"', recordings_script)
-        self.assertIn("对应的转码文件", recordings_script)
+        self.assertIn('data-action="download"', recordings_script)
+        self.assertIn("可能存在的转码文件", recordings_script)
         self.assertIn('method: "DELETE"', recordings_script)
+
+    def test_recording_directory_delete_removes_videos_and_their_remuxes(self) -> None:
+        self.login()
+        root = self.settings.recordings_dir
+        target = root / "测试 主播" / "2026-08-24"
+        nested = target / "夜场"
+        nested.mkdir(parents=True)
+        (target / "one.ts").write_bytes(b"0" * 8)
+        (nested / "two.mp4").write_bytes(b"0" * 8)
+        (target / "notes.txt").write_text("sidecar", encoding="utf-8")
+        sibling = root / "测试 主播" / "2026-08-25"
+        sibling.mkdir()
+        (sibling / "keep.ts").write_bytes(b"0" * 8)
+
+        self.assertEqual(
+            self.client.delete("/api/recordings/directory/../outside", headers=self.csrf_headers).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.delete("/api/recordings/directory/", headers=self.csrf_headers).status_code,
+            400,
+        )
+        # A file path is not a directory, and the tree stays untouched on a miss.
+        self.assertEqual(
+            self.client.delete(
+                "/api/recordings/directory/测试 主播/2026-08-25/keep.ts",
+                headers=self.csrf_headers,
+            ).status_code,
+            404,
+        )
+
+        # A directory holding an active recording is refused outright.
+        self.scheduler.recording_output_directories = lambda: {nested.resolve()}
+        try:
+            conflicted = self.client.delete(
+                "/api/recordings/directory/测试 主播/2026-08-24",
+                headers=self.csrf_headers,
+            )
+        finally:
+            del self.scheduler.recording_output_directories
+        self.assertEqual(conflicted.status_code, 409)
+        self.assertTrue((target / "one.ts").exists())
+
+        with patch.object(
+            self.app.state.recording_preview_cache,
+            "discard",
+            new=AsyncMock(return_value=0),
+        ) as discard:
+            deleted = self.client.delete(
+                "/api/recordings/directory/测试 主播/2026-08-24",
+                headers=self.csrf_headers,
+            )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(target.exists())
+        self.assertTrue((sibling / "keep.ts").exists())
+        self.assertEqual(
+            {call.args[0] for call in discard.await_args_list},
+            {"测试 主播/2026-08-24/one.ts", "测试 主播/2026-08-24/夜场/two.mp4"},
+        )
+
+        self.assertEqual(
+            self.client.delete(
+                "/api/recordings/directory/测试 主播/2026-08-24",
+                headers=self.csrf_headers,
+            ).status_code,
+            404,
+        )
 
     def test_preview_cache_entries_can_be_found_by_recording_path(self) -> None:
         directory = Path(self.temp_dir.name) / "preview-cache"

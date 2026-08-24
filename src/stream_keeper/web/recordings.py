@@ -448,3 +448,42 @@ async def delete_recording_file(
     """
     normalized = await asyncio.to_thread(_delete_recording_file, root, relative_path)
     await preview_cache.discard(normalized)
+
+
+def _delete_recording_directory(root: Path, relative_path: str) -> list[str]:
+    root = root.resolve()
+    directory, _ = resolve_recording_path(root, relative_path)
+    if not directory.exists() or not directory.is_dir():
+        raise HTTPException(status_code=404, detail="录像目录不存在")
+    videos: list[str] = []
+    for path in directory.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+        except OSError:
+            continue
+        if path.suffix.lower() in RECORDING_MEDIA_TYPES:
+            videos.append(path.relative_to(root).as_posix())
+    try:
+        shutil.rmtree(directory)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="录像目录不存在") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="无法删除录像目录") from exc
+    return videos
+
+
+async def delete_recording_directory(
+    root: Path,
+    relative_path: str,
+    preview_cache: RecordingPreviewCache,
+) -> int:
+    """Delete a directory tree and every completed remux of the recordings in it.
+
+    Same ordering as the single-file delete: the sources go first so an
+    in-flight remux cannot publish a new cache entry afterwards.
+    """
+    videos = await asyncio.to_thread(_delete_recording_directory, root, relative_path)
+    for video in videos:
+        await preview_cache.discard(video)
+    return len(videos)
