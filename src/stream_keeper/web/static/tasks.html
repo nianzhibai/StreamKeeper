@@ -67,8 +67,7 @@
       <form id="task-form" method="dialog">
         <header class="modal-head">
           <div class="modal-heading">
-            <h2 id="dialog-title">新建任务</h2>
-            <p>支持抖音、哔哩哔哩和快手直播间</p>
+            <h2 id="dialog-title">抖音 | 快手 | 哔哩哔哩</h2>
           </div>
           <button class="btn btn-icon btn-ghost" type="button" data-close-dialog aria-label="关闭">
             <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
@@ -137,16 +136,24 @@
 
           <div class="option-row">
             <label id="monitor-field" class="option">
-              <input name="monitor" type="checkbox" aria-describedby="monitor-hint" checked />
+              <input name="monitor" type="checkbox" aria-describedby="monitor-hint segment-hint" checked />
               <span class="switch" aria-hidden="true"></span>
-              <span class="option-text"><strong>持续值守</strong><small id="monitor-hint">下播后继续等待下一场</small></span>
+              <span class="option-text"><strong>持续值守</strong></span>
             </label>
             <label id="auto-start-field" class="option">
               <input name="auto_start" type="checkbox" checked />
               <span class="switch" aria-hidden="true"></span>
-              <span class="option-text"><strong>立即启动</strong><small>创建后马上开始检查</small></span>
+              <span class="option-text"><strong>立即启动</strong></span>
             </label>
           </div>
+          <p id="monitor-hint" class="field-hint">
+            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-info" /></svg>
+            <span>持续值守会一直监听直播状态，只要开播就录制</span>
+          </p>
+          <p id="segment-hint" class="field-hint">
+            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
+            <span>配置录制段数，持续值守功能将禁用</span>
+          </p>
         </div>
 
         <footer class="modal-foot">

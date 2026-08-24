@@ -50,7 +50,6 @@ const elements = {
   submit: document.querySelector("#task-submit"),
   autoStartField: document.querySelector("#auto-start-field"),
   monitorField: document.querySelector("#monitor-field"),
-  monitorHint: document.querySelector("#monitor-hint"),
   inspectButton: document.querySelector("#inspect-button"),
   inspectResult: document.querySelector("#inspect-result"),
 };
@@ -237,7 +236,7 @@ function openCreateDialog() {
   form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60);
   form.segment_count.value = String(state.recordingDefaults.segment_count);
   validateSegmentSettings();
-  elements.dialogTitle.textContent = "新建任务";
+  elements.dialogTitle.textContent = "抖音 | 快手 | 哔哩哔哩";
   elements.submit.textContent = "创建任务";
   elements.autoStartField.classList.remove("hidden");
   showTaskDialog();
@@ -337,9 +336,6 @@ function syncMonitorAvailability() {
   monitor.disabled = hasSegmentLimit;
   if (hasSegmentLimit) monitor.checked = false;
   elements.monitorField.classList.toggle("is-disabled", hasSegmentLimit);
-  elements.monitorHint.textContent = hasSegmentLimit
-    ? "设置录制段数后，任务完成即停止"
-    : "下播后继续等待下一场";
 }
 
 async function submitTask(event) {
