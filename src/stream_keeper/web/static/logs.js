@@ -4,7 +4,6 @@ import {
   clearPageError,
   confirmAction,
   escapeHtml,
-  formatRelative,
   formatTime,
   icon,
   setBusy,
@@ -16,18 +15,20 @@ import {
   toggle,
 } from "/static/ui.js?v=20260876";
 
-const PAGE_SIZE = 100;
+/** Small first paint; older pages stream in on demand as the reader scrolls. */
+const PAGE_SIZE = 50;
 /** Rows kept in the DOM. Beyond this the oldest are dropped and "load earlier" comes back. */
 const MAX_ROWS = 600;
 const POLL_INTERVAL = 5000;
 const SEARCH_DEBOUNCE = 320;
 const AUTO_REFRESH_KEY = "stream-keeper-log-auto-refresh";
+const ATTENTION_ACK_KEY = "stream-keeper-log-attention-ack";
 
 const LEVELS = {
-  info: { tone: "info", icon: "info", label: "提示" },
-  success: { tone: "ok", icon: "checkCircle", label: "完成" },
-  warning: { tone: "warn", icon: "alert", label: "警告" },
-  error: { tone: "bad", icon: "alert", label: "异常" },
+  info: { tone: "info", label: "提示" },
+  success: { tone: "ok", label: "完成" },
+  warning: { tone: "warn", label: "警告" },
+  error: { tone: "bad", label: "异常" },
 };
 
 const CATEGORIES = {
@@ -37,19 +38,29 @@ const CATEGORIES = {
   auth: "账号",
 };
 
+const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+const dayFormatter = new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "short" });
+
 const elements = {
   list: document.querySelector("#log-list"),
   empty: document.querySelector("#log-empty"),
   search: document.querySelector("#log-search"),
   auto: document.querySelector("#log-auto"),
   levelChips: document.querySelector("#log-level-chips"),
-  categoryChips: document.querySelector("#log-category-chips"),
+  category: document.querySelector("#log-category"),
+  attention: document.querySelector("#log-attention"),
+  attentionText: document.querySelector("#log-attention-text"),
+  attentionFilter: document.querySelector("#log-attention-filter"),
   summary: document.querySelector("#log-summary"),
   clearFilters: document.querySelector("#log-clear-filters"),
   scope: document.querySelector("#log-scope"),
   scopeLabel: document.querySelector("#log-scope-label"),
   scopeClear: document.querySelector("#log-scope-clear"),
-  moreWrap: document.querySelector("#log-more-wrap"),
   more: document.querySelector("#log-more"),
   exportLink: document.querySelector("#log-export"),
   clear: document.querySelector("#log-clear"),
@@ -58,15 +69,18 @@ const elements = {
 const state = {
   rows: [],
   levels: new Set(),
-  categories: new Set(),
+  category: "",
   search: "",
   taskId: new URLSearchParams(window.location.search).get("task") || "",
   hasMore: false,
   latestId: null,
   loading: false,
   freshIds: new Set(),
+  openIds: new Set(),
   pollTimer: 0,
   searchTimer: 0,
+  summary: { errors: 0, warnings: 0 },
+  attentionAck: readAttentionAck(),
 };
 
 function readAutoRefresh() {
@@ -86,53 +100,109 @@ function writeAutoRefresh(enabled) {
   }
 }
 
+/* Viewing the flagged entries acknowledges them: the banner stays away for
+   this tab until the 24h error or warning count rises above what was seen. */
+function readAttentionAck() {
+  try {
+    const raw = window.sessionStorage.getItem(ATTENTION_ACK_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    return { errors: Number(value.errors) || 0, warnings: Number(value.warnings) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function writeAttentionAck(counts) {
+  try {
+    window.sessionStorage.setItem(ATTENTION_ACK_KEY, JSON.stringify(counts));
+  } catch {
+    /* Private browsing can block storage; the in-memory ack still applies. */
+  }
+}
+
 /** Shared by the list request and the export link so the two always agree. */
 function filterParams() {
   const query = new URLSearchParams();
   state.levels.forEach((level) => query.append("levels", level));
-  state.categories.forEach((category) => query.append("categories", category));
+  if (state.category) query.append("categories", state.category);
   if (state.search) query.set("search", state.search);
   if (state.taskId) query.set("task_id", state.taskId);
   return query;
 }
 
 function hasFilters() {
-  return state.levels.size > 0 || state.categories.size > 0 || Boolean(state.search);
+  return state.levels.size > 0 || Boolean(state.category) || Boolean(state.search);
 }
 
-function eventRow(event) {
+function dayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(date) {
+  const now = new Date();
+  const key = dayKey(date);
+  if (key === dayKey(now)) return `今天 · ${dayFormatter.format(date)}`;
+  if (key === dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) {
+    return `昨天 · ${dayFormatter.format(date)}`;
+  }
+  return dayFormatter.format(date);
+}
+
+function entryHtml(event) {
   const level = LEVELS[event.level] || LEVELS.info;
   const category = CATEGORIES[event.category] || event.category;
+  const date = new Date(event.created_at);
+  const clock = Number.isNaN(date.getTime()) ? String(event.created_at) : timeFormatter.format(date);
   const task = event.task_id
     ? `<a class="log-task" href="/logs?task=${encodeURIComponent(event.task_id)}" title="只看这个任务的记录">${icon("record", "ic-xs")}任务</a>`
     : "";
+  const flags = [
+    state.freshIds.has(event.id) ? " is-new" : "",
+    event.detail ? " has-detail" : "",
+    event.detail && state.openIds.has(event.id) ? " is-open" : "",
+  ].join("");
   return `
-    <li class="log-row tone-${level.tone}${state.freshIds.has(event.id) ? " is-new" : ""}" data-id="${event.id}">
-      <span class="log-mark" title="${escapeHtml(level.label)}">${icon(level.icon, "ic-sm")}</span>
-      <div class="log-body">
-        <div class="log-top">
+    <li class="log-entry tone-${level.tone}${flags}" data-id="${event.id}">
+      <time class="log-time" datetime="${escapeHtml(event.created_at)}" title="${escapeHtml(formatTime(event.created_at, { seconds: true }))}">
+        ${escapeHtml(clock)}
+      </time>
+      <span class="log-dot" title="${escapeHtml(level.label)}"></span>
+      <div class="log-text">
+        <p class="log-message">
           <strong>${escapeHtml(event.message)}</strong>
           <span class="tag">${escapeHtml(category)}</span>
           ${task}
-        </div>
-        ${event.detail ? `<small>${escapeHtml(event.detail)}</small>` : ""}
+        </p>
+        ${event.detail ? `<small class="log-detail">${escapeHtml(event.detail)}</small>` : ""}
       </div>
-      <div class="log-side">
-        <time class="log-time" datetime="${escapeHtml(event.created_at)}" title="${escapeHtml(formatTime(event.created_at, { seconds: true }))}">
-          ${escapeHtml(formatRelative(event.created_at))}
-        </time>
-        <button class="log-copy" type="button" data-copy="${event.id}" aria-label="复制这条记录" title="复制">
-          ${icon("copy", "ic-xs")}
-        </button>
-      </div>
+      <button class="log-copy" type="button" data-copy="${event.id}" aria-label="复制这条记录" title="复制">
+        ${icon("copy", "ic-xs")}
+      </button>
     </li>`;
 }
 
-function renderChips(container, key, counts) {
-  container.querySelectorAll(`[data-${key}]`).forEach((chip) => {
-    const value = chip.dataset[key];
+/** Rows arrive newest-first; a separator opens every day the feed crosses. */
+function feedHtml(rows) {
+  const pieces = [];
+  let currentDay = "";
+  rows.forEach((event) => {
+    const date = new Date(event.created_at);
+    const key = Number.isNaN(date.getTime()) ? "unknown" : dayKey(date);
+    if (key !== currentDay) {
+      currentDay = key;
+      pieces.push(`<li class="log-day">${escapeHtml(Number.isNaN(date.getTime()) ? "未知日期" : dayLabel(date))}</li>`);
+    }
+    pieces.push(entryHtml(event));
+  });
+  return pieces.join("");
+}
+
+function renderChips(counts) {
+  elements.levelChips.querySelectorAll("[data-level]").forEach((chip) => {
+    const value = chip.dataset.level;
     const count = counts[value] || 0;
-    const selected = key === "level" ? state.levels.has(value) : state.categories.has(value);
+    const selected = state.levels.has(value);
     setTextIfChanged(chip.querySelector("[data-count]"), String(count));
     chip.setAttribute("aria-pressed", String(selected));
     // A chip with nothing behind it stays visible but unusable, so the row never reflows.
@@ -140,20 +210,42 @@ function renderChips(container, key, counts) {
   });
 }
 
-function renderSummary(summary) {
-  setTextIfChanged(document.querySelector("#log-errors"), String(summary.errors));
-  setTextIfChanged(document.querySelector("#log-warnings"), String(summary.warnings));
-  setTextIfChanged(document.querySelector("#log-total"), String(summary.total));
-  document.querySelector("#log-errors").classList.toggle("is-bad", Boolean(summary.errors));
+function renderCategoryOptions(counts) {
+  elements.category.querySelectorAll("option[value]").forEach((option) => {
+    const value = option.value;
+    if (!value) return;
+    const count = counts[value] || 0;
+    setTextIfChanged(option, count ? `${CATEGORIES[value]} · ${count}` : CATEGORIES[value]);
+  });
+}
+
+/** The banner only exists when the last day produced warnings or errors the
+    operator has not viewed yet; warnings alone render it without an accent. */
+function renderAttention(summary) {
+  const errors = summary.errors || 0;
+  const warnings = summary.warnings || 0;
+  state.summary = { errors, warnings };
+  const ack = state.attentionAck;
+  const acknowledged = Boolean(ack) && errors <= ack.errors && warnings <= ack.warnings;
+  const show = (errors > 0 || warnings > 0) && !acknowledged;
+  toggle(elements.attention, show);
+  if (!show) return;
+  elements.attention.classList.toggle("tone-bad", errors > 0);
+  const parts = [];
+  if (errors) parts.push(`${errors} 次异常`);
+  if (warnings) parts.push(`${warnings} 次警告`);
+  setTextIfChanged(elements.attentionText, `过去 24 小时出现 ${parts.join("、")}`);
+  elements.attentionFilter.dataset.level = errors > 0 ? "error" : "warning";
+  setTextIfChanged(elements.attentionFilter, errors > 0 ? "查看异常" : "查看警告");
 }
 
 function renderList() {
   const filtered = hasFilters() || Boolean(state.taskId);
-  setHtmlIfChanged(elements.list, state.rows.map(eventRow).join(""));
+  setHtmlIfChanged(elements.list, feedHtml(state.rows));
   toggle(elements.list, state.rows.length > 0);
   toggle(elements.empty, state.rows.length === 0);
-  toggle(elements.moreWrap, state.hasMore && state.rows.length > 0);
-  toggle(elements.clearFilters, hasFilters());
+  toggle(elements.more, state.hasMore && state.rows.length > 0);
+  toggle(elements.clearFilters, hasFilters() && state.rows.length === 0);
   toggle(elements.scope, Boolean(state.taskId));
 
   if (state.rows.length === 0) {
@@ -194,9 +286,9 @@ function applyExportLink() {
 }
 
 function applyPayload(payload) {
-  renderSummary(payload.summary);
-  renderChips(elements.levelChips, "level", payload.facets.levels);
-  renderChips(elements.categoryChips, "category", payload.facets.categories);
+  renderAttention(payload.summary);
+  renderChips(payload.facets.levels);
+  renderCategoryOptions(payload.facets.categories);
 }
 
 /** Full reload: replaces the buffer and resets both cursors. */
@@ -211,6 +303,7 @@ async function load({ quiet = false } = {}) {
     state.hasMore = payload.has_more;
     state.latestId = payload.events[0]?.id ?? payload.summary.latest_id ?? null;
     state.freshIds.clear();
+    state.openIds.clear();
     applyPayload(payload);
     renderList();
     applyExportLink();
@@ -283,7 +376,30 @@ async function loadEarlier() {
     state.loading = false;
     setBusy(elements.more, false);
     elements.more.disabled = false;
+    armEarlierObserver();
   }
+}
+
+/* Older pages load themselves as the reader approaches the end of the feed.
+   The observer waits on the "load earlier" button, which is display:none when
+   nothing older remains, so a hidden sentinel never fires; re-arming after
+   each page re-fires it when the sentinel is still inside the viewport. */
+let earlierObserver = null;
+
+function armEarlierObserver() {
+  if (!earlierObserver) return;
+  earlierObserver.unobserve(elements.more);
+  earlierObserver.observe(elements.more);
+}
+
+if ("IntersectionObserver" in window) {
+  earlierObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadEarlier();
+    },
+    { rootMargin: "240px 0px" },
+  );
+  earlierObserver.observe(elements.more);
 }
 
 function syncPolling() {
@@ -294,12 +410,6 @@ function syncPolling() {
     window.clearInterval(state.pollTimer);
     state.pollTimer = 0;
   }
-}
-
-function toggleFilter(set, value) {
-  if (set.has(value)) set.delete(value);
-  else set.add(value);
-  load();
 }
 
 async function copyRow(id) {
@@ -335,6 +445,7 @@ async function clearLog() {
     state.hasMore = payload.has_more;
     state.latestId = payload.events[0]?.id ?? null;
     state.freshIds.clear();
+    state.openIds.clear();
     applyPayload(payload);
     renderList();
     toast("运行日志已清空", "success");
@@ -365,18 +476,30 @@ elements.search.addEventListener("input", () => {
 
 elements.levelChips.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-level]");
-  if (chip && !chip.disabled) toggleFilter(state.levels, chip.dataset.level);
+  if (!chip || chip.disabled) return;
+  if (state.levels.has(chip.dataset.level)) state.levels.delete(chip.dataset.level);
+  else state.levels.add(chip.dataset.level);
+  load();
 });
 
-elements.categoryChips.addEventListener("click", (event) => {
-  const chip = event.target.closest("[data-category]");
-  if (chip && !chip.disabled) toggleFilter(state.categories, chip.dataset.category);
+elements.category.addEventListener("change", () => {
+  state.category = elements.category.value;
+  load();
+});
+
+elements.attentionFilter.addEventListener("click", () => {
+  state.attentionAck = { ...state.summary };
+  writeAttentionAck(state.attentionAck);
+  toggle(elements.attention, false);
+  state.levels = new Set([elements.attentionFilter.dataset.level || "error"]);
+  load();
 });
 
 elements.clearFilters.addEventListener("click", () => {
   state.levels.clear();
-  state.categories.clear();
+  state.category = "";
   state.search = "";
+  elements.category.value = "";
   elements.search.value = "";
   load();
 });
@@ -389,12 +512,18 @@ elements.scopeClear.addEventListener("click", () => {
 
 elements.list.addEventListener("click", (event) => {
   const button = event.target.closest("[data-copy]");
-  if (button) copyRow(button.dataset.copy);
-});
-
-elements.list.addEventListener("dblclick", (event) => {
-  const row = event.target.closest("[data-id]");
-  if (row && !event.target.closest("a, button")) copyRow(row.dataset.id);
+  if (button) {
+    copyRow(button.dataset.copy);
+    return;
+  }
+  if (event.target.closest("a, button")) return;
+  // A clamped detail expands in place; the choice sticks across poll re-renders.
+  const row = event.target.closest(".log-entry.has-detail");
+  if (!row) return;
+  const id = Number(row.dataset.id);
+  if (state.openIds.has(id)) state.openIds.delete(id);
+  else state.openIds.add(id);
+  row.classList.toggle("is-open");
 });
 
 document.addEventListener("keydown", (event) => {

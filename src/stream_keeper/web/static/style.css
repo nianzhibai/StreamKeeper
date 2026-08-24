@@ -3020,51 +3020,36 @@ select.input {
 
 /* --- Activity log ----------------------------------------------------- */
 
-/* Filter bar: search on top, then one chip row per facet. Chips carry their own
-   count so the operator can see where the interesting entries are before
-   clicking, and a chip with nothing behind it is disabled rather than hidden —
-   a stable layout is easier to scan than one that reflows on every poll. */
-.log-filters {
-  display: grid;
-  gap: var(--s5);
-  padding: var(--s6) var(--s7);
+/* Everything the operator filters with lives on one toolbar row: search,
+   level chips (their dot doubles as the legend for the feed), a category
+   select and the refresh switch. Chips carry their own count so the
+   interesting entries are visible before clicking, and a chip with nothing
+   behind it is disabled rather than hidden — a stable layout is easier to
+   scan than one that reflows on every poll. */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3) var(--s4);
+  flex-wrap: wrap;
+  padding: var(--s5) var(--s7);
   border-bottom: 1px solid var(--line);
 }
 
-.log-filter-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s5);
-}
-
-.log-filter-top .search {
+.log-toolbar .search {
   flex: 1;
-  max-width: 420px;
+  min-width: 220px;
+  max-width: 380px;
 }
 
-.log-filter-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--s3);
+.log-toolbar .switch-field {
+  margin-left: auto;
 }
 
-.chip-row {
-  display: flex;
+.log-levels {
+  display: inline-flex;
   align-items: center;
-  gap: var(--s3);
+  gap: var(--s2);
   flex-wrap: wrap;
-}
-
-.chip-row-label {
-  flex: none;
-  min-width: 38px;
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .chip-toggle {
@@ -3122,17 +3107,21 @@ select.input {
   opacity: 0.42;
 }
 
-.log-filter-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s5);
-  color: var(--text-4);
-  font-size: var(--t-sm);
+/* The 24h attention banner renders only when errors or warnings exist, so a
+   quiet system never spends the vertical space. */
+.log-attention {
+  flex-wrap: wrap;
+}
+
+.log-attention strong {
+  flex: 1;
+  min-width: 200px;
+  font-weight: 600;
 }
 
 .log-scope {
   display: inline-flex;
+  margin: var(--s5) var(--s7) 0;
   align-items: center;
   gap: var(--s2);
   padding: 3px var(--s3) 3px var(--s4);
@@ -3159,40 +3148,46 @@ select.input {
   background: var(--info-line);
 }
 
-.log-list {
-  padding: var(--s2) var(--s4) var(--s5);
+/* Day-grouped feed. Each row is a fixed grid — clock, level dot, text, copy —
+   so timestamps and messages line up down the page; only warnings and errors
+   get a spine and a wash, which keeps routine entries quiet and the ones that
+   need an operator loud. */
+.log-feed {
+  padding: var(--s2) 0 var(--s3);
   list-style: none;
 }
 
-.log-row {
-  position: relative;
+.log-day {
+  padding: var(--s5) var(--s7) var(--s2);
+  color: var(--text-4);
+  font-size: var(--t-xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+}
+
+.log-entry {
   display: grid;
+  grid-template-columns: 68px 8px minmax(0, 1fr) auto;
   align-items: start;
-  gap: var(--s1) var(--s5);
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  padding: var(--s4) var(--s5);
-  border-radius: var(--r);
+  gap: 2px var(--s4);
+  padding: var(--s3) var(--s6) var(--s3) calc(var(--s7) - 3px);
+  border-left: 3px solid transparent;
   transition: background var(--fast) var(--ease);
 }
 
-/* A hairline threads the marks into a timeline. */
-.log-row:not(:last-child)::before {
-  position: absolute;
-  top: 46px;
-  bottom: -2px;
-  left: calc(var(--s5) + 15px);
-  width: 1px;
-  background: var(--line);
-  content: "";
+.log-entry:hover {
+  background: var(--hover);
 }
 
-.log-row:hover {
-  background: var(--hover);
+.log-entry.tone-warn,
+.log-entry.tone-bad {
+  border-left-color: var(--tone);
+  background: var(--tone-soft);
 }
 
 /* Newly polled rows flash once so an arriving event is noticeable without
    the whole list moving. */
-.log-row.is-new {
+.log-entry.is-new {
   animation: log-in 420ms var(--ease-out) both;
 }
 
@@ -3200,44 +3195,62 @@ select.input {
   from { background: var(--tone-soft, var(--info-soft)); opacity: 0; transform: translateY(-4px); }
 }
 
-.log-mark {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  place-items: center;
-  border: 1px solid var(--tone-line);
-  border-radius: 50%;
-  background: var(--tone-soft);
-  color: var(--tone);
+.log-entry .log-time {
+  padding-top: 2px;
+  color: var(--text-4);
+  font-size: var(--t-sm);
+  white-space: nowrap;
 }
 
-.log-body {
+.log-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--tone, var(--line-3));
+}
+
+.log-text {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
-  padding-top: 3px;
 }
 
-.log-top {
+.log-message {
   display: flex;
   align-items: center;
   gap: var(--s3);
   flex-wrap: wrap;
+  margin: 0;
 }
 
-.log-top strong {
+.log-message strong {
   font-size: var(--t-base);
-  font-weight: 580;
-  line-height: 1.5;
+  font-weight: 560;
+  line-height: 1.45;
 }
 
-.log-body small {
+/* Long details collapse to one line; clicking the row expands them in place. */
+.log-detail {
+  display: block;
+  overflow: hidden;
   color: var(--text-4);
   font-size: var(--t-sm);
-  line-height: 1.6;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-entry.has-detail {
+  cursor: pointer;
+}
+
+.log-entry.is-open .log-detail {
+  overflow: visible;
+  white-space: normal;
   overflow-wrap: anywhere;
+  text-overflow: clip;
 }
 
 .log-task {
@@ -3259,24 +3272,10 @@ select.input {
   color: var(--info);
 }
 
-.log-side {
-  display: flex;
-  align-items: center;
-  gap: var(--s1);
-  padding-top: var(--s1);
-}
-
-.log-time {
-  color: var(--text-4);
-  font-size: var(--t-sm);
-  white-space: nowrap;
-}
-
 .log-copy {
   display: grid;
   width: 24px;
   height: 24px;
-  flex: none;
   place-items: center;
   border-radius: var(--r-xs);
   color: var(--text-4);
@@ -3286,7 +3285,7 @@ select.input {
     color var(--fast) var(--ease);
 }
 
-.log-row:hover .log-copy,
+.log-entry:hover .log-copy,
 .log-copy:focus-visible {
   opacity: 1;
 }
@@ -3296,12 +3295,15 @@ select.input {
   color: var(--text);
 }
 
-.log-more {
+.log-foot {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--s3);
-  padding: var(--s3) var(--s7) var(--s6);
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s4) var(--s7);
+  border-top: 1px solid var(--line);
+  color: var(--text-4);
+  font-size: var(--t-sm);
 }
 
 /* --- Settings --------------------------------------------------------- */
@@ -3978,17 +3980,18 @@ select.input {
   .file-ops { opacity: 1; }
   .file-ops span { display: none; }
 
-  .log-list { padding: var(--s2); }
-  .log-row { grid-template-columns: 26px minmax(0, 1fr); }
-  .log-row:not(:last-child)::before { top: 42px; left: calc(var(--s5) + 13px); }
-  .log-mark { width: 26px; height: 26px; }
-  .log-side { grid-column: 2; padding-top: 0; }
+  .log-toolbar { padding: var(--s5) var(--s6); }
+  .log-toolbar .search { max-width: none; flex-basis: 100%; }
+  .log-toolbar .switch-field { margin-left: 0; }
+  .log-scope { margin: var(--s4) var(--s6) 0; }
+  .log-day { padding-inline: var(--s6); }
+  .log-entry {
+    grid-template-columns: 62px 8px minmax(0, 1fr) auto;
+    gap: 2px var(--s3);
+    padding: var(--s3) var(--s4) var(--s3) calc(var(--s5) - 3px);
+  }
   .log-copy { opacity: 1; }
-  .log-filters { padding: var(--s5) var(--s6); }
-  .log-filter-top { align-items: stretch; flex-direction: column; }
-  .log-filter-top .search { max-width: none; }
-  .log-filter-foot { align-items: flex-start; flex-direction: column; gap: var(--s3); }
-  .chip-row-label { min-width: 0; width: 100%; }
+  .log-foot { padding-inline: var(--s6); }
 
   /* `.form-grid` keeps its two columns: the fields that need the full width
      already claim it with `span-2`, so what is left in the grid is the short
