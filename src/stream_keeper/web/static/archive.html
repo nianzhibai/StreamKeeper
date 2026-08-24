@@ -202,10 +202,7 @@
         </header>
         <div class="modal-body">
           <div class="provider-config-state">
-            <div>
-              <strong>上传目标</strong>
-              <small id="provider-credential-hint">读取中</small>
-            </div>
+            <strong>上传目标</strong>
             <label class="switch-field">
               <input name="enabled" type="checkbox" />
               <span class="switch" aria-hidden="true"></span>
@@ -214,12 +211,9 @@
           </div>
 
           <div class="auth-row">
-            <div>
-              <strong id="provider-login-title">账号授权</strong>
-              <small id="provider-login-description"></small>
-            </div>
+            <strong>账号授权</strong>
             <button id="provider-login-button" class="btn btn-soft" type="button" data-cloud-login>
-              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg>扫码登录
+              <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg><span id="provider-login-label">扫码登录</span>
             </button>
           </div>
 
@@ -243,10 +237,6 @@
                 <label class="field span-2">
                   <span class="field-label">Cookie</span>
                   <input class="input" name="quark_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="留空则保持现有 Cookie" />
-                </label>
-                <label class="check span-2">
-                  <input name="quark_clear_cookie" type="checkbox" />
-                  <span>清除已保存的 Cookie</span>
                 </label>
               </div>
             </details>
@@ -281,10 +271,6 @@
                   <span class="field-label">Refresh Token</span>
                   <input class="input" name="wopan_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="留空则保持不变" />
                 </label>
-                <label class="check span-2">
-                  <input name="wopan_clear_tokens" type="checkbox" />
-                  <span>清除已保存的 Token</span>
-                </label>
               </div>
             </details>
           </section>
@@ -296,24 +282,13 @@
                 <input class="input" name="baidu_upload_path" type="text" value="/DouYinStreamKeeper" readonly />
               </label>
             </div>
-            <div class="auth-row">
-              <div>
-                <strong>OpenList 在线 API</strong>
-                <small>通过百度 OAuth2 授权获取可自动续期的 Token</small>
-              </div>
-              <button id="baidu-openlist-login" class="btn btn-soft" type="button">
-                <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-key" /></svg>在线授权
-              </button>
-            </div>
             <details class="disclosure">
               <summary><span>百度登录凭据</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
               <div class="form-grid">
-                <label class="field span-2"><span class="field-label">Cookie</span><input class="input" name="baidu_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="扫码登录后自动保存" /></label>
                 <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="baidu_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="百度开放平台" /></label>
                 <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="baidu_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="用于自动刷新" /></label>
                 <label class="field"><span class="field-label">Client ID</span><input class="input" name="baidu_client_id" type="text" maxlength="1024" autocomplete="off" /></label>
                 <label class="field"><span class="field-label">Client Secret</span><input class="input" name="baidu_client_secret" type="password" maxlength="4096" autocomplete="new-password" /></label>
-                <label class="check span-2"><input name="baidu_clear_credentials" type="checkbox" /><span>清除已保存的百度凭据</span></label>
               </div>
             </details>
           </section>
@@ -329,7 +304,6 @@
                 <label class="field span-2"><span class="field-label">115 Cookie</span><input class="input" name="pan115_cookie" type="password" maxlength="32768" autocomplete="new-password" placeholder="UID=...;CID=...;SEID=...;KID=..." /></label>
                 <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="pan115_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
                 <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="pan115_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
-                <label class="check span-2"><input name="pan115_clear_credentials" type="checkbox" /><span>清除已保存的 115 凭据</span></label>
               </div>
             </details>
           </section>
@@ -346,12 +320,12 @@
                 <label class="field"><span class="field-label">Device ID<em>选填</em></span><input class="input" name="guangya_device_id" type="text" maxlength="64" autocomplete="off" placeholder="留空自动生成" /></label>
                 <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="guangya_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="扫码后自动保存" /></label>
                 <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="guangya_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="扫码后自动保存" /></label>
-                <label class="check span-2"><input name="guangya_clear_credentials" type="checkbox" /><span>清除已保存的光鸭凭证</span></label>
               </div>
             </details>
           </section>
         </div>
         <footer class="modal-foot">
+          <button id="provider-clear-credentials" class="btn btn-soft" type="button">清理已配置凭证</button>
           <button id="provider-config-cancel" class="btn btn-soft" type="button">取消</button>
           <button id="provider-config-save" class="btn btn-primary" type="submit">保存网盘</button>
         </footer>
@@ -389,15 +363,8 @@
       </form>
     </dialog>
 
-    <dialog id="cloud-login-dialog" class="modal modal-sm" aria-labelledby="cloud-login-title">
+    <dialog id="cloud-login-dialog" class="modal modal-sm" aria-label="扫码登录">
       <header class="modal-head">
-        <span class="modal-glyph tone-info" aria-hidden="true">
-          <svg class="ic ic-sm"><use href="#ic-key" /></svg>
-        </span>
-        <div class="modal-heading">
-          <h2 id="cloud-login-title">扫码登录</h2>
-          <p>登录信息只保存在本机数据库中</p>
-        </div>
         <button id="cloud-login-close" class="btn btn-icon btn-ghost" type="button" aria-label="关闭">
           <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
         </button>

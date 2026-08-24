@@ -340,122 +340,6 @@ class BaiduNetdiskClientTests(IsolatedAsyncioTestCase):
         self.assertEqual(len(updates), 1)
         self.assertEqual(updates[0]["refresh_token"], "rotated-refresh-token")
 
-    async def test_cookie_mode_uses_web_api_and_superfile2_md5s(self) -> None:
-        directories: dict[str, list[dict[str, object]]] = {"/": []}
-        uploaded_parts: list[int] = []
-        created = False
-        bdstoken_requests = 0
-
-        async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal created, bdstoken_requests
-            if request.url.host == "upload.baidu.test":
-                if "partseq" in request.url.params:
-                    self.assertEqual(request.url.params["app_id"], "250528")
-                    self.assertNotIn("access_token", request.url.params)
-                    self.assertEqual(request.headers["cookie"].split(";")[0], "BDUSS=cookie-session")
-                    await request.aread()
-                    uploaded_parts.append(int(request.url.params["partseq"]))
-                    return httpx.Response(200, json={"md5": f"server-md5-{request.url.params['partseq']}"})
-                return httpx.Response(404, json={"errno": 1})
-
-            self.assertEqual(request.url.host, "pan.baidu.com")
-            self.assertEqual(request.headers["cookie"].split(";")[0], "BDUSS=cookie-session")
-            if request.url.path == "/api/gettemplatevariable":
-                bdstoken_requests += 1
-                return httpx.Response(200, json={"errno": 0, "result": {"bdstoken": "web-bdstoken"}})
-            if request.url.path == "/rest/2.0/xpan/nas":
-                self.assertEqual(request.url.params["method"], "uinfo")
-                self.assertEqual(request.url.params["app_id"], "250528")
-                return httpx.Response(200, json={"errno": 0, "vip_type": 0})
-            if request.url.path == "/rest/2.0/xpan/file" and request.url.params.get("method") == "list":
-                directory = request.url.params["dir"]
-                self.assertEqual(request.url.params["web"], "web")
-                return httpx.Response(200, json={"errno": 0, "list": directories.get(directory, [])})
-            if request.url.path == "/api/precreate":
-                self.assertEqual(request.url.params["bdstoken"], "web-bdstoken")
-                self.assertEqual(request.url.params["app_id"], "250528")
-                form = parse_qs((await request.aread()).decode())
-                self.assertEqual(form["path"][0], f"{CLOUD_ARCHIVE_ROOT}/主播/recording.ts")
-                return httpx.Response(
-                    200,
-                    json={"errno": 0, "return_type": 1, "uploadid": "upload-1", "block_list": [0, 1]},
-                )
-            if request.url.path == "/api/create":
-                self.assertEqual(request.url.params["bdstoken"], "web-bdstoken")
-                form = parse_qs((await request.aread()).decode())
-                if form.get("isdir") == ["1"]:
-                    target = form["path"][0]
-                    directories.setdefault(target, [])
-                    directories.setdefault(str(Path(target).parent).replace("\\", "/"), []).append(
-                        {"fs_id": target, "server_filename": Path(target).name, "size": 0, "isdir": 1, "path": target}
-                    )
-                    return httpx.Response(200, json={"errno": 0, "path": target})
-                self.assertEqual(form["block_list"][0], '["server-md5-0","server-md5-1"]')
-                self.assertEqual(form["uploadid"][0], "upload-1")
-                parent = str(Path(form["path"][0]).parent).replace("\\", "/")
-                directories.setdefault(parent, []).append(
-                    {
-                        "fs_id": 123,
-                        "server_filename": "recording.ts",
-                        "size": int(form["size"][0]),
-                        "isdir": 0,
-                        "path": form["path"][0],
-                    }
-                )
-                created = True
-                return httpx.Response(200, json={"errno": 0, "path": form["path"][0]})
-            return httpx.Response(404, json={"errno": 1, "errmsg": "unknown"})
-
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "recording.ts"
-            path.write_bytes(b"x" * (4 * 1024 * 1024 + 123))
-            client = BaiduNetdiskClient(
-                cookie="BDUSS=cookie-session; STOKEN=netdisk-stoken",
-                transport=httpx.MockTransport(handler),
-                sleep=no_sleep,
-                upload_base_url="https://upload.baidu.test",
-            )
-            try:
-                remote = f"{CLOUD_ARCHIVE_ROOT}/主播/recording.ts"
-                self.assertTrue(await client.upload_verified(path, remote))
-            finally:
-                await client.aclose()
-
-        self.assertEqual(uploaded_parts, [0, 1])
-        self.assertTrue(created)
-        self.assertEqual(bdstoken_requests, 1)
-
-    async def test_cookie_mode_never_touches_openapi_refresh(self) -> None:
-        refresh_hits = 0
-
-        async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal refresh_hits
-            if request.url.host == "openapi.baidu.com":
-                refresh_hits += 1
-                return httpx.Response(200, json={"access_token": "rotated"})
-            if request.url.path == "/api/gettemplatevariable":
-                return httpx.Response(200, json={"errno": 0, "result": {"bdstoken": "web-bdstoken"}})
-            if request.url.path == "/api/create":
-                return httpx.Response(200, json={"errno": 1, "errmsg": "boom"})
-            raise AssertionError(f"unexpected request: {request.url}")
-
-        client = BaiduNetdiskClient(
-            cookie="BDUSS=cookie-session",
-            transport=httpx.MockTransport(handler),
-        )
-        try:
-            with self.assertRaisesRegex(CloudUploadError, "boom"):
-                await client._api_request(
-                    "POST",
-                    "/xpan/file",
-                    params={"method": "create"},
-                    form={"isdir": "1", "path": "/x"},
-                )
-        finally:
-            await client.aclose()
-        self.assertEqual(refresh_hits, 0)
-
-
 class Pan115ClientTests(IsolatedAsyncioTestCase):
     async def test_open_api_upload_uses_oss_callback_and_verifies(self) -> None:
         directories: dict[str, list[dict[str, object]]] = {"0": []}
@@ -943,6 +827,23 @@ class CloudRegistryTests(IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(ValueError, "Client ID"):
             provider.validate()
+
+    def test_stored_baidu_cookie_from_removed_qr_login_is_dropped_and_provider_disabled(self) -> None:
+        config = CloudArchiveConfig.from_dict(
+            {
+                "providers": {
+                    "baidu": {
+                        "enabled": True,
+                        "credentials": {"cookie": "BDUSS=legacy-session; STOKEN=legacy-stoken"},
+                        "options": {},
+                    }
+                }
+            }
+        )
+        baidu = config.provider("baidu")
+        self.assertEqual(baidu.credentials, {})
+        self.assertFalse(baidu.enabled)
+        config.validate()
 
     async def test_legacy_config_is_migrated_and_new_providers_are_canonical(self) -> None:
         config = CloudArchiveConfig.from_dict(

@@ -7,7 +7,6 @@ import logging
 import mimetypes
 import posixpath
 import secrets
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -26,24 +25,10 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 _API_BASE_URL = "https://pan.baidu.com/rest/2.0"
-_WEB_API_BASE_URL = "https://pan.baidu.com/api"
 _TOKEN_URL = "https://openapi.baidu.com/oauth/2.0/token"
 _UPLOAD_BASE_URL = "https://d.pcs.baidu.com"
-_BDSTOKEN_URL = "https://pan.baidu.com/api/gettemplatevariable"
 _MAX_PARTS = 2048
-_WEB_APP_ID = "250528"
 _Sleep = Callable[[float], Awaitable[None]]
-
-
-def _parse_cookie_header(cookie: str) -> dict[str, str]:
-    """Parse a ``Name=Value; Name2=Value2`` cookie header into a cookie map."""
-
-    values: dict[str, str] = {}
-    for part in cookie.split(";"):
-        name, separator, value = part.strip().partition("=")
-        if separator and name:
-            values[name] = value
-    return values
 
 
 class BaiduNetdiskClient:
@@ -55,7 +40,6 @@ class BaiduNetdiskClient:
         refresh_token: str = "",
         client_id: str = "",
         client_secret: str = "",
-        cookie: str = "",
         *,
         timeout_seconds: int = 300,
         on_credential_update: CredentialUpdate | None = None,
@@ -69,7 +53,6 @@ class BaiduNetdiskClient:
         self.refresh_token = refresh_token
         self.client_id = client_id
         self.client_secret = client_secret
-        self.cookie = cookie
         self._on_credential_update = on_credential_update
         self._sleep = sleep
         self._api_base_url = api_base_url.rstrip("/")
@@ -77,18 +60,12 @@ class BaiduNetdiskClient:
         self._upload_base_url = upload_base_url.rstrip("/")
         self._refresh_state = CredentialRefreshCoordinator()
         self._vip_type: int | None = None
-        self._bdstoken: str | None = None
         self._client = httpx.AsyncClient(
             follow_redirects=False,
             timeout=httpx.Timeout(float(timeout_seconds)),
             transport=transport,
             headers={"Accept": "application/json", "User-Agent": "StreamKeeper/0.6"},
-            cookies=_parse_cookie_header(cookie),
         )
-
-    @property
-    def _uses_cookie(self) -> bool:
-        return bool(self.cookie)
 
     @staticmethod
     def _detail(response: httpx.Response) -> str:
@@ -167,8 +144,6 @@ class BaiduNetdiskClient:
         params: dict[str, str | int] | None = None,
         form: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        if self._uses_cookie:
-            return await self._cookie_api_request(method, path, params=params, form=form)
         if not self.access_token:
             await self._refresh_access_token(rejected_generation=self._refresh_state.generation)
         for auth_attempt in range(2):
@@ -201,124 +176,6 @@ class BaiduNetdiskClient:
                 )
             return payload
         raise CloudUploadError("百度网盘 Token 刷新后仍无法访问接口")
-
-    async def _ensure_bdstoken(self) -> str:
-        if self._bdstoken:
-            return self._bdstoken
-        try:
-            response = await self._client.get(
-                _BDSTOKEN_URL,
-                params={
-                    "clienttype": 0,
-                    "app_id": _WEB_APP_ID,
-                    "web": 1,
-                    "dp-logid": str(int(time.time())),
-                    "fields": json.dumps(["bdstoken"], separators=(",", ":")),
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise CloudUploadError(f"百度网盘获取 bdstoken 失败：{exc}") from exc
-        payload = self._json_object(response, "获取 bdstoken")
-        result = payload.get("result")
-        token = result.get("bdstoken") if isinstance(result, dict) else None
-        if not isinstance(token, str) or not token:
-            raise CloudUploadError("百度网盘获取 bdstoken 失败")
-        self._bdstoken = token
-        return token
-
-    @staticmethod
-    def _web_query(operation: str, bdstoken: str, *, isdir: str | None = None) -> dict[str, str]:
-        query = {
-            "bdstoken": bdstoken,
-            "app_id": _WEB_APP_ID,
-            "channel": "chunlei",
-            "web": "1",
-            "clienttype": "0",
-            "rtype": "1",
-        }
-        if isdir is not None:
-            query["isdir"] = isdir
-        return query
-
-    async def _cookie_api_request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, str | int] | None = None,
-        form: dict[str, str] | None = None,
-    ) -> dict[str, object]:
-        operation = str(params.get("method", "") if params else "")
-        if operation in {"list", "uinfo"}:
-            query: dict[str, str | int] = dict(params or {})
-            if operation == "list":
-                query["web"] = "web"
-            else:
-                query.update({"app_id": _WEB_APP_ID, "web": "1", "clienttype": "0"})
-            try:
-                response = await self._client.request(
-                    method,
-                    f"{self._api_base_url}{path}",
-                    params=query,
-                    data=form,
-                )
-            except httpx.HTTPError as exc:
-                raise CloudUploadError(f"百度网盘接口 {path} 请求失败：{exc}") from exc
-            payload = self._json_object(response, f"接口 {path}")
-            if response.is_error or payload.get("errno") != 0:
-                message = payload.get("errmsg") or payload.get("error_msg") or payload.get("error") or ""
-                raise CloudUploadError(
-                    f"百度网盘接口 {path} 失败（HTTP {response.status_code}，errno={payload.get('errno')}）：{message}"
-                )
-            return payload
-
-        bdstoken = await self._ensure_bdstoken()
-        if operation == "precreate":
-            url = f"{_WEB_API_BASE_URL}/precreate"
-            if not form or not isinstance(form.get("path"), str):
-                raise CloudUploadError("百度网盘预上传缺少目标路径")
-            web_form = {
-                "path": form["path"],
-                "autoinit": "1",
-                "block_list": form.get("block_list", "[]"),
-                "target_path": posixpath.dirname(form["path"]) or "/",
-                "local_mtime": str(int(time.time())),
-            }
-        elif operation == "create":
-            isdir = "1" if form and form.get("isdir") == "1" else "0"
-            url = f"{_WEB_API_BASE_URL}/create"
-            if not form or not isinstance(form.get("path"), str):
-                raise CloudUploadError("百度网盘创建目录缺少目标路径")
-            web_form: dict[str, str] = {
-                "path": form["path"],
-                "target_path": posixpath.dirname(form["path"]) or "/",
-                "local_mtime": str(int(time.time())),
-            }
-            if isdir == "1":
-                web_form.update({"size": "0", "block_list": "[]", "isdir": "1"})
-            else:
-                web_form.update(
-                    {
-                        "size": str(form.get("size", "0")),
-                        "uploadid": str(form.get("uploadid", "")),
-                        "block_list": str(form.get("block_list", "[]")),
-                    }
-                )
-        else:
-            raise CloudUploadError(f"百度网盘不支持网页版接口 {path}")
-
-        query = self._web_query(operation, bdstoken, isdir=isdir if operation == "create" else None)
-        try:
-            response = await self._client.post(url, params=query, data=web_form)
-        except httpx.HTTPError as exc:
-            raise CloudUploadError(f"百度网盘接口 {operation} 请求失败：{exc}") from exc
-        payload = self._json_object(response, f"接口 {operation}")
-        if response.is_error or payload.get("errno") not in {0, None}:
-            message = payload.get("errmsg") or payload.get("error_msg") or payload.get("error") or ""
-            raise CloudUploadError(
-                f"百度网盘接口 {operation} 失败（HTTP {response.status_code}，errno={payload.get('errno')}）：{message}"
-            )
-        return payload
 
     async def _list_directory(self, directory: str) -> list[RemoteEntry]:
         entries: list[RemoteEntry] = []
@@ -519,40 +376,7 @@ class BaiduNetdiskClient:
         offset: int,
         size: int,
         progress: UploadProgress | None,
-    ) -> str | None:
-        """Upload one part; cookie mode returns the part md5 from the server."""
-        if self._uses_cookie:
-            with local_path.open("rb") as stream:
-                stream.seek(offset)
-                content = stream.read(size)
-            if len(content) != size:
-                raise CloudUploadError(f"读取百度上传分片时提前到达文件末尾：{local_path}")
-            response = await self._client.post(
-                f"{upload_base}/rest/2.0/pcs/superfile2",
-                params={
-                    "method": "upload",
-                    "app_id": _WEB_APP_ID,
-                    "channel": "chunlei",
-                    "web": "1",
-                    "clienttype": "0",
-                    "path": remote_path,
-                    "uploadid": upload_id,
-                    "uploadsign": "0",
-                    "partseq": str(part_number),
-                },
-                files={"file": (filename, content, mimetypes.guess_type(filename)[0] or "application/octet-stream")},
-            )
-            payload = self._json_object(response, f"上传第 {part_number + 1} 片")
-            md5 = payload.get("md5")
-            if response.is_error or not isinstance(md5, str) or not md5:
-                code = payload.get("error_code") or payload.get("errno") or payload.get("errmsg") or ""
-                raise CloudUploadError(
-                    f"百度网盘第 {part_number + 1} 片上传失败（HTTP {response.status_code}，code={code}）"
-                )
-            if progress is not None:
-                progress("uploading", offset + size)
-            return md5
-
+    ) -> None:
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         last_error: Exception | None = None
         for attempt in range(3):
@@ -596,7 +420,7 @@ class BaiduNetdiskClient:
                     raise CloudUploadError(
                         f"百度网盘第 {part_number + 1} 片上传失败（HTTP {response.status_code}，code={error_code}）"
                     )
-                return None
+                return
             except (CloudUploadError, httpx.HTTPError, TypeError, ValueError) as exc:
                 last_error = exc
                 if attempt < 2:
@@ -653,11 +477,7 @@ class BaiduNetdiskClient:
         needed = precreate.get("block_list")
         if not upload_id or not isinstance(needed, list):
             raise CloudUploadError("百度网盘预上传响应缺少 uploadid 或 block_list")
-        if self._uses_cookie:
-            upload_base = self._upload_base_url
-        else:
-            upload_base = await self._locate_upload(remote_path, upload_id)
-        server_md5s: list[str] = []
+        upload_base = await self._locate_upload(remote_path, upload_id)
         for raw_part in needed:
             try:
                 part_number = int(raw_part)
@@ -666,7 +486,7 @@ class BaiduNetdiskClient:
             if not 0 <= part_number < len(block_list):
                 raise CloudUploadError("百度网盘预上传响应的分片编号越界")
             offset = part_number * part_size
-            part_md5 = await self._upload_part(
+            await self._upload_part(
                 upload_base,
                 local_path,
                 remote_path,
@@ -677,11 +497,7 @@ class BaiduNetdiskClient:
                 size=min(part_size, size - offset),
                 progress=progress,
             )
-            if part_md5 is not None:
-                server_md5s.append(part_md5)
         create_form = dict(common_form)
-        if self._uses_cookie:
-            create_form["block_list"] = json.dumps(server_md5s, separators=(",", ":"))
         create_form["uploadid"] = upload_id
         await self._api_request(
             "POST",

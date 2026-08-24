@@ -1362,21 +1362,6 @@ select.input {
   margin-top: var(--s1);
 }
 
-.check {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  cursor: pointer;
-}
-
-.check input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--brand);
-}
-
 /* --- Search, inline select, disclosure --------------------------------- */
 
 .search {
@@ -2912,20 +2897,9 @@ select.input {
   background: var(--surface-2);
 }
 
-.provider-config-state strong,
-.provider-config-state small {
-  display: block;
-}
-
 .provider-config-state strong {
   font-size: var(--t-base);
   font-weight: 620;
-}
-
-.provider-config-state small {
-  margin-top: 2px;
-  color: var(--text-4);
-  font-size: var(--t-sm);
 }
 
 /* Three across while the card shares a row with the provider list, five once the
@@ -3368,14 +3342,8 @@ select.input {
 }
 
 .auth-row strong {
-  display: block;
   font-size: var(--t-base);
   font-weight: 620;
-}
-
-.auth-row small {
-  color: var(--text-4);
-  font-size: var(--t-sm);
 }
 
 .save-bar {
@@ -3503,6 +3471,21 @@ select.input {
   padding-block: var(--s5);
 }
 
+/* The QR dialog's head holds only the close button; pin it to the right. */
+#cloud-login-dialog .modal-head {
+  justify-content: flex-end;
+}
+
+/* Destructive footer action sits apart from cancel/save. */
+#provider-config-dialog .modal-foot {
+  flex-wrap: wrap;
+}
+
+#provider-clear-credentials {
+  margin-right: auto;
+  color: var(--bad);
+}
+
 .modal-glyph {
   display: grid;
   width: 38px;
@@ -3609,14 +3592,23 @@ select.input {
 
 /* --- Toasts ----------------------------------------------------------- */
 
+/* The region doubles as a manual popover so toasts stack above modal dialogs;
+   every longhand the UA popover stylesheet sets is pinned back here, and the
+   explicit display keeps it rendered identically while the popover is closed. */
 .toasts {
   position: fixed;
-  right: var(--s7);
-  bottom: var(--s7);
+  inset: auto var(--s7) var(--s7) auto;
   z-index: 90;
   display: grid;
   gap: var(--s3);
   width: min(370px, calc(100vw - 32px));
+  height: auto;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  overflow: visible;
+  color: inherit;
+  background: transparent;
   pointer-events: none;
 }
 

@@ -114,7 +114,6 @@
     return (
       '<dialog id="confirm-dialog" class="modal modal-sm" aria-labelledby="confirm-title">' +
       '<div class="modal-head">' +
-      '<span class="modal-glyph" data-confirm-glyph aria-hidden="true">' + icon("alert") + "</span>" +
       '<div class="modal-heading"><h2 id="confirm-title" data-confirm-title>确认操作</h2>' +
       "<p data-confirm-message></p></div></div>" +
       '<div class="modal-foot">' +
@@ -242,7 +241,7 @@
     if (!document.querySelector("#toast-region")) {
       document.body.insertAdjacentHTML(
         "beforeend",
-        '<div id="toast-region" class="toasts" role="region" aria-live="polite" aria-label="通知"></div>',
+        '<div id="toast-region" class="toasts" popover="manual" role="region" aria-live="polite" aria-label="通知"></div>',
       );
     }
     if (!document.querySelector("#confirm-dialog")) {

@@ -203,6 +203,50 @@ const TOAST_GLYPHS = {
   error: "alert",
 };
 
+/* Modal dialogs render in the browser top layer, above any z-index, so the
+   region joins it as a manual popover. Re-showing on every toast keeps it
+   above dialogs opened since the last one: the top layer stacks by show order. */
+function raiseToastRegion(region) {
+  if (typeof region.showPopover !== "function") return;
+  try {
+    if (region.matches(":popover-open")) region.hidePopover();
+    region.showPopover();
+  } catch {
+    /* Falls back to the region's fixed z-index placement. */
+  }
+}
+
+function lowerToastRegion(region) {
+  if (typeof region.hidePopover !== "function") return;
+  try {
+    region.hidePopover();
+  } catch {
+    /* Already hidden. */
+  }
+}
+
+/* showModal() also makes every node outside the open dialog inert, which
+   swallows clicks on the region no matter how high it is painted. Mounting it
+   inside the topmost modal keeps the close buttons interactive; this app's
+   stacked dialogs (config → OAuth / confirm) appear in DOM order, so the last
+   match is the topmost one. */
+function hostToastRegion(region) {
+  const modals = document.querySelectorAll("dialog:modal");
+  const host = modals[modals.length - 1] || document.body;
+  if (region.parentElement === host) return;
+  host.append(region);
+  if (host !== document.body) {
+    host.addEventListener(
+      "close",
+      () => {
+        document.body.append(region);
+        if (region.childElementCount) raiseToastRegion(region);
+      },
+      { once: true },
+    );
+  }
+}
+
 export function toast(message, type = "info") {
   const region = document.querySelector("#toast-region");
   if (!region) return;
@@ -215,15 +259,20 @@ export function toast(message, type = "info") {
 
   const dismiss = () => {
     node.classList.add("is-leaving");
-    window.setTimeout(() => node.remove(), 200);
+    window.setTimeout(() => {
+      node.remove();
+      if (!region.childElementCount) lowerToastRegion(region);
+    }, 200);
   };
   const timer = window.setTimeout(dismiss, type === "error" ? 6000 : 3600);
   node.querySelector(".toast-close").addEventListener("click", () => {
     window.clearTimeout(timer);
     dismiss();
   });
+  hostToastRegion(region);
   region.append(node);
   while (region.children.length > 4) region.firstElementChild.remove();
+  raiseToastRegion(region);
 }
 
 /** Promise-based replacement for window.confirm so destructive actions stay on-brand. */
@@ -237,10 +286,8 @@ export function confirmAction({
   const dialog = document.querySelector("#confirm-dialog");
   if (!dialog) return Promise.resolve(window.confirm(message || title));
 
-  const toneClass = { danger: "bad", warn: "warn" }[tone] || "info";
   dialog.querySelector("[data-confirm-title]").textContent = title;
   dialog.querySelector("[data-confirm-message]").textContent = message;
-  dialog.querySelector("[data-confirm-glyph]").className = `modal-glyph tone-${toneClass}`;
   const accept = dialog.querySelector("[data-confirm-accept]");
   const cancel = dialog.querySelector("[data-confirm-cancel]");
   accept.textContent = confirmLabel;

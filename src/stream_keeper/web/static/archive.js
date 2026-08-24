@@ -24,11 +24,11 @@ const providerForm = document.querySelector("#provider-config-form");
 const providerSaveButton = document.querySelector("#provider-config-save");
 const providerCloseButton = document.querySelector("#provider-config-close");
 const providerCancelButton = document.querySelector("#provider-config-cancel");
+const providerClearButton = document.querySelector("#provider-clear-credentials");
 const providerLoginButton = document.querySelector("#provider-login-button");
+const providerLoginLabel = document.querySelector("#provider-login-label");
 const providerLogo = document.querySelector("#provider-config-logo");
 const providerTitle = document.querySelector("#provider-config-title");
-const providerCredentialHint = document.querySelector("#provider-credential-hint");
-const providerLoginDescription = document.querySelector("#provider-login-description");
 const providerAuthRow = document.querySelector(".auth-row");
 const loginDialog = document.querySelector("#cloud-login-dialog");
 const loginImage = document.querySelector("#cloud-login-image");
@@ -36,7 +36,6 @@ const loginStatus = document.querySelector("#cloud-login-status");
 const loginTip = document.querySelector("#cloud-login-tip");
 const loginRefresh = document.querySelector("#cloud-login-refresh");
 const loginClose = document.querySelector("#cloud-login-close");
-const baiduOpenListButton = document.querySelector("#baidu-openlist-login");
 const baiduOpenListDialog = document.querySelector("#baidu-openlist-dialog");
 const baiduOpenListForm = document.querySelector("#baidu-openlist-form");
 const baiduOpenListStatus = document.querySelector("#baidu-openlist-status");
@@ -48,47 +47,38 @@ const providerMeta = {
   quark: {
     name: "夸克网盘",
     app: "夸克 App",
-    loginDescription: "使用夸克 App 扫码，无需手动复制 Cookie",
     credentials: ["cookie"],
     options: ["root_id"],
-    clearField: "quark_clear_cookie",
     supportsQr: true,
   },
   wopan: {
     name: "联通云盘",
     app: "联通云盘 App",
-    loginDescription: "使用联通云盘 App 扫码获取 Token",
     credentials: ["access_token", "refresh_token"],
     options: ["root_id", "family_id"],
-    clearField: "wopan_clear_tokens",
     supportsQr: true,
   },
   baidu: {
     name: "百度网盘",
-    app: "百度网盘 App",
-    loginDescription: "使用百度网盘 App 扫码，无需手动填写 Token",
-    supportsQr: true,
-    credentials: ["cookie", "access_token", "refresh_token", "client_id", "client_secret"],
+    loginLabel: "在线授权",
+    startLogin: startBaiduOpenListLogin,
+    supportsQr: false,
+    credentials: ["access_token", "refresh_token", "client_id", "client_secret"],
     options: [],
-    clearField: "baidu_clear_credentials",
   },
   pan115: {
     name: "115网盘",
     app: "115 App",
-    loginDescription: "使用 115 App 扫码，或填写 Cookie / Open Token",
     supportsQr: true,
     credentials: ["cookie", "access_token", "refresh_token"],
     options: ["root_id"],
-    clearField: "pan115_clear_credentials",
   },
   guangya: {
     name: "光鸭网盘",
     app: "光鸭云盘 App",
-    loginDescription: "使用光鸭云盘 App 扫码，无需手动填写 Token",
     supportsQr: true,
     credentials: ["client_id", "device_id", "access_token", "refresh_token"],
     options: ["root_id"],
-    clearField: "guangya_clear_credentials",
   },
 };
 
@@ -253,18 +243,6 @@ function render(value) {
   renderLastRun(cloud.last_run);
 }
 
-function updateProviderCredentialHint(kind) {
-  const provider = providerFor(kind);
-  if (!provider) return;
-  const configured = credentialConfigured(kind, provider);
-  providerCredentialHint.textContent = configured
-    ? "凭据已保存，可作为归档目标使用"
-    : metaFor(kind).supportsQr
-      ? "尚未登录，扫码后即可上传"
-      : "尚未配置，请填写手动凭据";
-  providerCredentialHint.classList.toggle("is-ok", configured);
-}
-
 function metaFor(kind) {
   return providerMeta[kind] || {};
 }
@@ -282,8 +260,9 @@ function populateProviderForm(kind) {
   const pathField = field("upload_path");
   if (pathField) pathField.value = provider.upload_path || "";
   const supportsQr = provider.supports_qr_login ?? meta.supportsQr;
+  const hasLogin = supportsQr || Boolean(meta.startLogin);
   providerForm.querySelectorAll("details").forEach((details) => {
-    details.open = !supportsQr;
+    details.open = !hasLogin;
   });
   providerForm.querySelectorAll("[data-provider-fields]").forEach((section) => {
     section.classList.toggle("hidden", section.dataset.providerFields !== kind);
@@ -292,11 +271,11 @@ function populateProviderForm(kind) {
   providerLogo.className = `provider-logo ${kind} has-image`;
   providerLogo.innerHTML = `<img class="provider-logo-image" src="${escapeHtml(providerIcon(kind))}" alt="" />`;
   providerTitle.textContent = meta.name;
-  providerLoginDescription.textContent = meta.loginDescription;
+  providerLoginLabel.textContent = meta.loginLabel || "扫码登录";
   providerLoginButton.dataset.cloudLogin = kind;
-  providerAuthRow.classList.toggle("hidden", !supportsQr);
-  providerLoginButton.disabled = !supportsQr;
-  updateProviderCredentialHint(kind);
+  providerAuthRow.classList.toggle("hidden", !hasLogin);
+  providerLoginButton.disabled = !hasLogin;
+  providerClearButton.disabled = !credentialConfigured(kind, provider);
 }
 
 function openProviderConfig(kind) {
@@ -323,7 +302,6 @@ function providerPayload() {
   return {
     enabled: fields.enabled.checked,
     credentials,
-    clear_credentials: Boolean(fields[meta.clearField]?.checked),
     options,
   };
 }
@@ -351,6 +329,31 @@ async function saveProviderConfig(event) {
   }
 }
 
+async function clearProviderCredentials() {
+  const provider = activeProvider;
+  if (!provider) return;
+  const proceed = await confirmAction({
+    title: "清理已配置凭证",
+    message: `将删除${providerMeta[provider].name}已保存的登录凭据，并停用该归档目标。`,
+    confirmLabel: "清理凭证",
+  });
+  if (!proceed || activeProvider !== provider) return;
+  providerClearButton.disabled = true;
+  try {
+    render(
+      await api(`/api/cloud/archive/providers/${provider}/config`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: false, clear_credentials: true }),
+      }),
+    );
+    if (providerDialog.open && activeProvider === provider) populateProviderForm(provider);
+    toast(`${providerMeta[provider].name}凭据已清除`, "success");
+  } catch (error) {
+    toast(error.message, "error");
+    providerClearButton.disabled = false;
+  }
+}
+
 function clearLoginPoll() {
   if (loginPollTimer) window.clearTimeout(loginPollTimer);
   loginPollTimer = null;
@@ -375,7 +378,6 @@ async function cancelActiveLogin() {
 
 function renderLogin(value) {
   const provider = providerMeta[value.provider];
-  loginDialog.querySelector("#cloud-login-title").textContent = `${provider.name}登录`;
   loginStatus.textContent = value.message;
   loginTip.textContent = `使用 ${provider.app} 扫描并确认`;
   if (value.qr_image && loginImage.src !== value.qr_image) loginImage.src = value.qr_image;
@@ -397,9 +399,7 @@ async function finishSuccessfulLogin(value) {
         const input = providerForm.elements[`${value.provider}_${name}`];
         if (input) input.value = "";
       });
-      const clearInput = providerForm.elements[meta.clearField];
-      if (clearInput) clearInput.checked = false;
-      updateProviderCredentialHint(value.provider);
+      providerClearButton.disabled = false;
     }
     toast(`${providerMeta[value.provider].name}登录成功`, "success");
   } catch (error) {
@@ -439,7 +439,6 @@ async function startCloudLogin(provider) {
   await cancelActiveLogin();
   const generation = ++loginGeneration;
   setLoginButtonDisabled(true);
-  loginDialog.querySelector("#cloud-login-title").textContent = `${providerMeta[provider].name}登录`;
   loginStatus.textContent = "正在生成二维码";
   loginStatus.classList.remove("is-ok");
   loginTip.textContent = "";
@@ -466,7 +465,7 @@ async function startCloudLogin(provider) {
 }
 
 async function startBaiduOpenListLogin() {
-  baiduOpenListButton.disabled = true;
+  setLoginButtonDisabled(true);
   baiduOpenListStatus.textContent = "正在准备百度授权地址…";
   baiduOpenListAuthorize.classList.add("hidden");
   baiduOpenListAuthorize.removeAttribute("href");
@@ -481,7 +480,7 @@ async function startBaiduOpenListLogin() {
     baiduOpenListStatus.textContent = error.message;
     toast(error.message, "error");
   } finally {
-    baiduOpenListButton.disabled = false;
+    setLoginButtonDisabled(false);
   }
 }
 
@@ -498,7 +497,6 @@ async function exchangeBaiduOpenListCode(event) {
     }));
     baiduOpenListCode.value = "";
     baiduOpenListDialog.close();
-    updateProviderCredentialHint("baidu");
     toast("百度 OAuth2 授权成功", "success");
   } catch (error) {
     baiduOpenListStatus.textContent = error.message;
@@ -551,19 +549,23 @@ document.querySelectorAll("[data-provider-configure]").forEach((button) => {
   button.addEventListener("click", () => openProviderConfig(button.dataset.providerConfigure));
 });
 providerForm.addEventListener("submit", saveProviderConfig);
+providerClearButton.addEventListener("click", clearProviderCredentials);
 providerCloseButton.addEventListener("click", () => providerDialog.close());
 providerCancelButton.addEventListener("click", () => providerDialog.close());
 providerDialog.addEventListener("close", () => {
   activeProvider = null;
   providerForm.reset();
 });
-providerLoginButton.addEventListener("click", () => startCloudLogin(activeProvider));
+providerLoginButton.addEventListener("click", () => {
+  const start = metaFor(activeProvider).startLogin;
+  if (start) start();
+  else startCloudLogin(activeProvider);
+});
 loginRefresh.addEventListener("click", () => startCloudLogin(activeLogin?.provider || activeProvider));
 loginClose.addEventListener("click", () => loginDialog.close());
 loginDialog.addEventListener("close", () => {
   cancelActiveLogin();
 });
-baiduOpenListButton.addEventListener("click", startBaiduOpenListLogin);
 baiduOpenListForm.addEventListener("submit", exchangeBaiduOpenListCode);
 document.querySelector("#baidu-openlist-close").addEventListener("click", () => baiduOpenListDialog.close());
 document.querySelector("#baidu-openlist-cancel").addEventListener("click", () => baiduOpenListDialog.close());

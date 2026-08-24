@@ -6,7 +6,7 @@ from typing import Any
 from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
 CLOUD_PROVIDER_ORDER = ("quark", "wopan", "baidu", "pan115", "guangya")
-QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "baidu", "guangya"})
+QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "guangya"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,8 +40,7 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
     "baidu": CloudProviderSpec(
         name="baidu",
         label="百度网盘",
-        credential_keys=("cookie", "access_token", "refresh_token", "client_id", "client_secret"),
-        supports_qr_login=True,
+        credential_keys=("access_token", "refresh_token", "client_id", "client_secret"),
     ),
     "pan115": CloudProviderSpec(
         name="pan115",
@@ -92,8 +91,7 @@ class CloudProviderConfig:
             return bool(values.get("access_token") or values.get("refresh_token"))
         if self.name == "baidu":
             return bool(
-                values.get("cookie")
-                or values.get("access_token")
+                values.get("access_token")
                 or (values.get("refresh_token") and values.get("client_id") and values.get("client_secret"))
             )
         if self.name == "pan115":
@@ -130,30 +128,18 @@ class CloudProviderConfig:
 
         access_token = self.credentials.get("access_token", "")
         refresh_token = self.credentials.get("refresh_token", "")
-        cookie = self.credentials.get("cookie", "")
         if self.name == "wopan" and access_token and len(access_token.encode()) < 16:
             raise ValueError("联通云盘 access token 长度不能小于 16 字节")
-        if self.name == "pan115" and self.enabled and not cookie and not (access_token or refresh_token):
-            raise ValueError("启用 115 网盘前必须填写 Cookie 或 Access/Refresh Token")
-        if self.name == "baidu" and not self.credentials.get("cookie"):
+        if self.name == "baidu":
             client_id = self.credentials.get("client_id", "")
             client_secret = self.credentials.get("client_secret", "")
             if bool(client_id) != bool(client_secret):
                 raise ValueError("百度网盘 Client ID 和 Client Secret 必须同时填写")
             if refresh_token and not (client_id and client_secret):
                 raise ValueError("配置百度 Refresh Token 时必须填写 Client ID 和 Client Secret")
-        if self.name == "guangya" and self.enabled and not self.credentials.get("client_id"):
-            raise ValueError("启用光鸭网盘前必须填写 Client ID")
 
         if self.enabled and not self.credential_configured:
-            requirements = {
-                "quark": "Cookie",
-                "wopan": "至少一个 Token",
-                "baidu": "Cookie、Access Token，或 Refresh Token 与客户端凭据",
-                "pan115": "Cookie 或 Access/Refresh Token",
-                "guangya": "Client ID 和 Access/Refresh Token",
-            }
-            raise ValueError(f"启用{spec.label}前必须填写{requirements[self.name]}")
+            raise ValueError(f"启用{spec.label}前必须配置凭证")
 
 
 def default_provider_configs() -> tuple[CloudProviderConfig, ...]:
@@ -255,14 +241,23 @@ class CloudArchiveConfig:
                     continue
                 credentials = raw.get("credentials", {})
                 options = raw.get("options", {})
-                providers.append(
-                    CloudProviderConfig(
-                        name=name,
-                        enabled=bool(raw.get("enabled", False)),
-                        credentials=credentials if isinstance(credentials, dict) else {},
-                        options=options if isinstance(options, dict) else {},
-                    )
+                # Stored rows may predate the current spec (e.g. Baidu cookies
+                # from the removed QR login), so retired keys are dropped here
+                # instead of failing validation on every load; a provider whose
+                # remaining credentials no longer justify the enabled flag is
+                # disabled rather than bricking the whole config.
+                spec = CLOUD_PROVIDER_SPECS[name]
+                if isinstance(credentials, dict):
+                    credentials = {key: value for key, value in credentials.items() if key in spec.credential_keys}
+                provider = CloudProviderConfig(
+                    name=name,
+                    enabled=bool(raw.get("enabled", False)),
+                    credentials=credentials if isinstance(credentials, dict) else {},
+                    options=options if isinstance(options, dict) else {},
                 )
+                if provider.enabled and not provider.credential_configured:
+                    provider = replace(provider, enabled=False)
+                providers.append(provider)
         else:
             # Import the pre-registry SQLite shape once, then save operations use
             # the canonical nested representation.

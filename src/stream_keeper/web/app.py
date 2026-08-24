@@ -334,11 +334,11 @@ def create_app(
         await event_log.success("auth", f"{CLOUD_PROVIDER_LABELS[provider]}扫码登录成功，凭据已保存")
 
     async def save_baidu_openlist_credentials(credentials: dict[str, str]) -> CloudArchiveConfig:
-        """Switch Baidu from cookie auth to the OAuth credentials returned by OpenList."""
+        """Store the OAuth credentials returned by OpenList for Baidu."""
 
         def build(current: CloudArchiveConfig) -> CloudArchiveConfig:
             previous = current.provider("baidu")
-            merged = {key: value for key, value in previous.credentials.items() if key != "cookie"}
+            merged = dict(previous.credentials)
             merged.update(credentials)
             return current.with_provider(replace(previous, credentials=merged))
 
@@ -1163,11 +1163,12 @@ def create_app(
     async def system_info() -> SystemInfo:
         usage = shutil.disk_usage(settings.recordings_dir)
         pending_bytes = await asyncio.to_thread(pending_upload_bytes, settings.recordings_dir)
+        remux_bytes = await recording_preview_cache.total_bytes()
         return SystemInfo(
             ffmpeg_available=bool(shutil.which(settings.ffmpeg)),
             recordings_dir=str(settings.recordings_dir),
             free_space_gb=round(usage.free / (1024**3), 2),
-            pending_upload_bytes=pending_bytes,
+            local_usage_bytes=pending_bytes + remux_bytes,
             active_tasks=scheduler.active_task_count,
             recording_tasks=scheduler.recording_task_count,
             max_concurrent_recordings=scheduler.max_concurrent_recordings,

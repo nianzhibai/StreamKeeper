@@ -263,8 +263,8 @@ class SystemInfo(StrictModel):
     ffmpeg_available: bool
     recordings_dir: str
     free_space_gb: float
-    # Recordings are deleted once archived, so what is left is what still has to go up.
-    pending_upload_bytes: int = Field(ge=0)
+    # Recordings still on disk (deleted once archived) plus their finished playback remuxes.
+    local_usage_bytes: int = Field(ge=0)
     active_tasks: int
     recording_tasks: int
     max_concurrent_recordings: int
@@ -454,7 +454,7 @@ class CloudArchiveView(StrictModel):
 
 class CloudLoginView(StrictModel):
     session_id: str
-    provider: Literal["quark", "wopan", "pan115", "baidu", "guangya"]
+    provider: Literal["quark", "wopan", "pan115", "guangya"]
     state: Literal["waiting", "scanned", "success", "expired", "error", "cancelled"]
     message: str
     qr_image: str | None

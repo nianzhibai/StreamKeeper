@@ -289,7 +289,7 @@ function closePlayer() {
 async function deleteRecording(entry, button) {
   const proceed = await confirmAction({
     title: "删除录像文件",
-    message: `将永久删除“${entry.name}”及对应的转码文件，此操作无法撤销。`,
+    message: `将永久删除“${entry.name}”及可能存在的转码文件，此操作无法撤销。`,
     confirmLabel: "删除文件",
   });
   if (!proceed) return;

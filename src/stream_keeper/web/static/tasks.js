@@ -134,9 +134,9 @@ function renderTask(task) {
         ${task.enabled
           ? `<button class="btn btn-sm btn-ghost" type="button" data-action="stop" data-id="${escapeHtml(task.id)}">${icon("stop", "ic-xs")}停止</button>`
           : `<button class="btn btn-sm btn-ghost is-positive" type="button" data-action="start" data-id="${escapeHtml(task.id)}">${icon("play", "ic-xs")}启动</button>`}
-        <a class="btn btn-icon btn-sm btn-ghost" href="/logs?task=${encodeURIComponent(task.id)}" aria-label="查看 ${escapeHtml(title)} 的运行日志" title="查看这个任务的运行日志">${icon("logs", "ic-sm")}</a>
-        <button class="btn btn-icon btn-sm btn-ghost is-negative" type="button" data-action="delete" data-id="${escapeHtml(task.id)}" aria-label="删除 ${escapeHtml(title)}" title="删除">
-          ${icon("trash", "ic-sm")}
+        <a class="btn btn-sm btn-ghost" href="/logs?task=${encodeURIComponent(task.id)}" aria-label="查看 ${escapeHtml(title)} 的运行日志" title="查看这个任务的运行日志">${icon("logs", "ic-xs")}日志</a>
+        <button class="btn btn-sm btn-ghost is-negative" type="button" data-action="delete" data-id="${escapeHtml(task.id)}" aria-label="删除 ${escapeHtml(title)}">
+          ${icon("trash", "ic-xs")}删除
         </button>
       </div>
     </article>`;

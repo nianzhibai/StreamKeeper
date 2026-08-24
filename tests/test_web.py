@@ -106,7 +106,7 @@ class FakeCloudLoginFlow:
         return "data:image/png;base64,dGVzdC1xci1pbWFnZQ=="
 
     async def poll(self) -> CloudLoginPoll:
-        if self.provider in {"quark", "baidu"}:
+        if self.provider == "quark":
             return CloudLoginPoll("success", {"cookie": f"qr-{self.provider}-secret-cookie"})
         if self.provider == "pan115":
             return CloudLoginPoll("success", {"cookie": "UID=qr-uid; CID=qr-cid; SEID=qr-seid"})
@@ -946,23 +946,30 @@ class WebTests(TestCase):
             2,
         )
 
-    def test_system_reports_the_size_of_recordings_still_waiting_to_be_archived(self) -> None:
+    def test_system_reports_local_usage_of_recordings_and_their_remuxes(self) -> None:
         self.login()
-        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 0)
+        self.assertEqual(self.client.get("/api/system").json()["local_usage_bytes"], 0)
 
         recording_dir = self.settings.recordings_dir / "主播" / "2026-08-22"
         recording_dir.mkdir(parents=True)
         (recording_dir / "a.mp4").write_bytes(b"0" * 1024)
         (recording_dir / "b.ts").write_bytes(b"0" * 512)
-        # Neither a non-video sidecar nor an empty file adds to the pending total.
+        # Neither a non-video sidecar nor an empty file adds to the total.
         (recording_dir / "notes.txt").write_text("ignored", encoding="utf-8")
         (recording_dir / "empty.flv").touch()
 
-        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 1536)
+        self.assertEqual(self.client.get("/api/system").json()["local_usage_bytes"], 1536)
 
-        # An archived recording is deleted locally, so the pending total drops with it.
+        # A finished playback remux occupies disk too; in-flight temporaries do not count.
+        preview_dir = self.settings.data_dir / "preview-cache"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        (preview_dir / "abcd1234-ef567890.mp4").write_bytes(b"0" * 256)
+        (preview_dir / ".tmp-remux.mp4").write_bytes(b"0" * 4096)
+        self.assertEqual(self.client.get("/api/system").json()["local_usage_bytes"], 1792)
+
+        # An archived recording is deleted locally, so the total drops with it.
         (recording_dir / "a.mp4").unlink()
-        self.assertEqual(self.client.get("/api/system").json()["pending_upload_bytes"], 512)
+        self.assertEqual(self.client.get("/api/system").json()["local_usage_bytes"], 768)
 
     def test_create_task_accepts_share_text_and_stores_clean_url(self) -> None:
         self.login()
@@ -1650,7 +1657,7 @@ class WebTests(TestCase):
         rejected = self.client.post("/api/cloud/login/quark")
         self.assertEqual(rejected.status_code, 403)
 
-        for provider in ("quark", "wopan", "pan115", "baidu", "guangya"):
+        for provider in ("quark", "wopan", "pan115", "guangya"):
             created = self.client.post(
                 f"/api/cloud/login/{provider}",
                 headers=self.csrf_headers,
@@ -1682,28 +1689,17 @@ class WebTests(TestCase):
         self.assertTrue(archive["wopan"]["refresh_token_configured"])
         self.assertTrue(archive["pan115"]["credential_configured"])
         self.assertEqual(archive["pan115"]["configured_credentials"], ["cookie"])
-        self.assertTrue(archive["baidu"]["credential_configured"])
-        self.assertEqual(archive["baidu"]["configured_credentials"], ["cookie"])
         self.assertTrue(archive["guangya"]["credential_configured"])
         self.assertNotIn("qr-seid", json.dumps(archive))
 
-    def test_baidu_openlist_online_api_switches_cookie_auth_to_oauth(self) -> None:
+    def test_baidu_openlist_online_api_saves_oauth_credentials(self) -> None:
         self.login()
         archive_page = self.client.get("/archive")
-        self.assertIn('id="baidu-openlist-login"', archive_page.text)
+        self.assertIn('id="provider-login-button"', archive_page.text)
         self.assertIn('id="baidu-openlist-dialog"', archive_page.text)
 
-        configured = self.client.put(
-            "/api/cloud/archive/providers/baidu/config",
-            headers=self.csrf_headers,
-            json={
-                "enabled": True,
-                "credentials": {"cookie": "BDUSS=old-cookie; STOKEN=old-stoken"},
-                "clear_credentials": False,
-                "options": {},
-            },
-        )
-        self.assertEqual(configured.status_code, 200)
+        rejected = self.client.post("/api/cloud/login/baidu", headers=self.csrf_headers)
+        self.assertEqual(rejected.status_code, 404)
 
         started = self.client.post("/api/cloud/login/baidu/openlist", headers=self.csrf_headers)
         self.assertEqual(started.status_code, 200)
@@ -1727,5 +1723,4 @@ class WebTests(TestCase):
             stored = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()[0]
             raw = json.loads(stored)
         credentials = raw["providers"]["baidu"]["credentials"]
-        self.assertNotIn("cookie", credentials)
         self.assertEqual(credentials["access_token"], "openlist-baidu-access-token")

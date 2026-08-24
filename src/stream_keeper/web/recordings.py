@@ -324,6 +324,27 @@ class RecordingPreviewCache:
     async def discard(self, relative_path: str) -> int:
         return await asyncio.to_thread(self._discard_sync, relative_path)
 
+    def _total_bytes_sync(self) -> int:
+        total = 0
+        try:
+            children = tuple(self.directory.iterdir())
+        except OSError:
+            return 0
+        for path in children:
+            # Dot-prefixed in-flight temporaries are transient and stay out of the total.
+            if path.name.startswith(".") or path.suffix != ".mp4":
+                continue
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    async def total_bytes(self) -> int:
+        """Disk footprint of the finished remuxes. Blocking scan: runs in a thread."""
+        return await asyncio.to_thread(self._total_bytes_sync)
+
     @staticmethod
     async def _stop_process(process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:

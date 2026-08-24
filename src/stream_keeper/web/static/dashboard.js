@@ -127,10 +127,7 @@ function renderSystem(system) {
     `${system.recording_tasks} / ${system.max_concurrent_recordings}`,
   );
   setTextIfChanged(document.querySelector("#system-ffmpeg"), system.ffmpeg_available ? "可用" : "未安装");
-  setTextIfChanged(
-    document.querySelector("#system-pending-upload"),
-    system.pending_upload_bytes > 0 ? formatBytes(system.pending_upload_bytes) : "已全部归档",
-  );
+  setTextIfChanged(document.querySelector("#system-local-usage"), formatBytes(system.local_usage_bytes));
   const directory = document.querySelector("#system-directory");
   setTextIfChanged(directory, system.recordings_dir);
   directory.title = system.recordings_dir;
