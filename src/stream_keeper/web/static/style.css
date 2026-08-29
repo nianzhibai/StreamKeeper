@@ -669,26 +669,11 @@ img, svg {
 }
 
 .update-check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-  transition: color var(--fast) var(--ease);
-}
-
-.update-check:hover {
-  color: var(--text-2);
+  flex: 1;
 }
 
 .update-check:disabled {
   cursor: wait;
-  opacity: 0.7;
-}
-
-.update-check.is-busy .ic {
-  animation: update-check-spin 0.8s linear infinite;
 }
 
 .account {
@@ -789,8 +774,19 @@ img, svg {
     left: calc(var(--s4) * -1);
   }
 
+  :root[data-sidebar="rail"] .update-check {
+    width: 31px;
+    flex: none;
+    padding: 0;
+  }
+
   :root[data-sidebar="rail"] .update-check span {
-    display: none;
+    font-size: 0;
+  }
+
+  :root[data-sidebar="rail"] .update-check span::after {
+    content: "更新";
+    font-size: var(--t-xs);
   }
 
   :root[data-sidebar="rail"] .account {
@@ -830,10 +826,6 @@ img, svg {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
-}
-
-@keyframes update-check-spin {
-  to { transform: rotate(-360deg); }
 }
 
 /* ==========================================================================

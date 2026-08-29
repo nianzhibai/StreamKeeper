@@ -19,6 +19,7 @@ let searchTerm = "";
 let sortMode = "name";
 let requestController = null;
 let playerInstance = null;
+let archiveState = null;
 
 const listNode = document.querySelector("#recording-list");
 const headNode = document.querySelector(".file-head");
@@ -29,6 +30,7 @@ const playerDialog = document.querySelector("#recording-player-dialog");
 const playerContainer = document.querySelector("#recording-player");
 const playerError = document.querySelector("#recording-player-error");
 const playerHint = document.querySelector("#recording-player-hint");
+const archiveButton = document.querySelector("#recording-archive-button");
 const Artplayer = window.Artplayer;
 
 if (Artplayer) {
@@ -135,6 +137,45 @@ function renderList() {
     const detail = document.querySelector("#recording-empty-detail");
     detail.textContent = searchTerm ? "换一个关键词再试试" : "";
     toggle(detail, Boolean(searchTerm));
+  }
+}
+
+function renderArchiveAction(value) {
+  archiveState = value;
+  archiveButton.disabled = value.running || !value.enabled;
+  archiveButton.innerHTML = value.running
+    ? '<span class="spinner"></span>归档中…'
+    : `${icon("upload", "ic-sm")}立即归档`;
+  archiveButton.title = value.enabled ? (value.running ? "网盘归档正在运行" : "") : "请先在网盘归档页面启用存储目标";
+}
+
+async function loadArchiveState() {
+  try {
+    renderArchiveAction(await api("/api/cloud/archive"));
+  } catch (error) {
+    archiveButton.disabled = true;
+    archiveButton.title = `无法读取归档状态：${error.message}`;
+  }
+}
+
+async function runArchive() {
+  if (!archiveState?.enabled || archiveState.running) return;
+  const proceed = await confirmAction({
+    title: "立即执行归档",
+    message: "归档成功后，自动删除本地对应文件",
+    confirmLabel: "开始归档",
+    tone: "warn",
+  });
+  if (!proceed) return;
+
+  archiveButton.disabled = true;
+  archiveButton.innerHTML = '<span class="spinner"></span>正在启动';
+  try {
+    renderArchiveAction(await api("/api/cloud/archive/run", { method: "POST" }));
+    toast("归档任务已启动", "success");
+  } catch (error) {
+    toast(error.message, "error");
+    await loadArchiveState();
   }
 }
 
@@ -310,6 +351,7 @@ document.querySelector("#recording-up")?.addEventListener("click", () => {
   if (!currentPath) return;
   navigate(currentPath.split("/").slice(0, -1).join("/"));
 });
+archiveButton?.addEventListener("click", runArchive);
 document.querySelector("#recording-breadcrumbs")?.addEventListener("click", (event) => {
   const target = event.target.closest("[data-path]");
   if (target) navigate(target.dataset.path || "");
@@ -364,5 +406,5 @@ let firstLoad = true;
 bootstrap(async (options = {}) => {
   const history = firstLoad ? "replace" : null;
   firstLoad = false;
-  await load({ ...options, history });
-}, { interval: 15000 });
+  await Promise.all([load({ ...options, history }), loadArchiveState()]);
+}, { interval: 5000 });

@@ -8,6 +8,7 @@ import {
   formatRelative,
   formatTime,
   icon,
+  paintProgress,
   providerIcon,
   providerLogoHtml,
   providerStatus,
@@ -152,12 +153,13 @@ function renderRunTargets(lastRun) {
           <div class="run-target-info">
             <strong>${escapeHtml(target.label || providerMeta[target.name]?.name || target.name)}</strong>
             <small title="${escapeHtml(detail)}">${escapeHtml(detail)}</small>
-            ${active ? `<span class="run-target-progress" aria-hidden="true"><i style="width:${percent.toFixed(1)}%"></i></span>` : ""}
+            ${active ? `<span class="run-target-progress" data-progress-ratio="${(percent / 100).toFixed(4)}" aria-hidden="true"><i></i></span>` : ""}
           </div>
           <span class="pill tone-${state.tone}"><i class="dot"></i>${escapeHtml(state.label)}</span>
         </article>`;
     })
     .join("");
+  paintProgress(container);
 }
 
 function renderLastRun(lastRun) {
@@ -525,7 +527,7 @@ async function runArchive() {
   if (!cloud?.enabled || cloud.running) return;
   const proceed = await confirmAction({
     title: "立即执行归档",
-    message: "将扫描本地录像并上传到已启用的网盘，上传成功的本地文件会被删除。",
+    message: "归档成功后，自动删除本地对应文件",
     confirmLabel: "开始归档",
     tone: "warn",
   });

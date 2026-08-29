@@ -388,12 +388,12 @@ class WebTests(TestCase):
         ui = self.client.get("/static/ui.js").text
         style = self.client.get("/static/style.css").text
         self.assertIn('data-check-update', shell)
-        self.assertIn('icon("rotateCcw", "ic-sm")', shell)
+        self.assertIn('class="btn btn-soft btn-sm update-check"', shell)
+        self.assertNotIn('icon("rotateCcw", "ic-sm")', shell)
         self.assertIn('api("/api/system/update")', ui)
         self.assertIn('window.open(result.release_url', ui)
         self.assertNotIn("docker compose pull", ui)
-        self.assertIn("animation: update-check-spin 0.8s linear infinite", style)
-        self.assertIn("to { transform: rotate(-360deg); }", style)
+        self.assertNotIn("update-check-spin", style)
 
         self.update_checker.error = UpdateCheckError("无法连接 GitHub 检查更新")
         failed = self.client.get("/api/system/update")
@@ -876,13 +876,17 @@ class WebTests(TestCase):
         self.assertEqual(raised.exception.status_code, 507)
         self.assertEqual(tuple(directory.iterdir()), ())
 
-    def test_recordings_delegate_cloud_uploads_to_the_archive_page(self) -> None:
+    def test_recordings_reuse_the_cloud_archive_workflow(self) -> None:
         self.login()
         recordings = self.client.get("/recordings")
+        self.assertIn('id="recording-archive-button"', recordings.text)
         self.assertNotIn('id="upload-all-button"', recordings.text)
         self.assertNotIn('id="upload-queue"', recordings.text)
 
         recordings_script = self.client.get("/static/recordings.js").text
+        self.assertIn('api("/api/cloud/archive")', recordings_script)
+        self.assertIn('api("/api/cloud/archive/run", { method: "POST" })', recordings_script)
+        self.assertIn("归档成功后，自动删除本地对应文件", recordings_script)
         self.assertNotIn("/api/recordings/uploads", recordings_script)
         self.assertNotIn("EventSource", recordings_script)
 
@@ -890,6 +894,9 @@ class WebTests(TestCase):
         self.assertIn('id="cloud-run-button"', archive.text)
         archive_script = self.client.get("/static/archive.js").text
         self.assertIn("/api/cloud/archive/run", archive_script)
+        self.assertIn('data-progress-ratio="${(percent / 100).toFixed(4)}"', archive_script)
+        self.assertIn("paintProgress(container)", archive_script)
+        self.assertNotIn('style="width:', archive_script)
 
         self.assertFalse(any("/api/recordings/uploads" in route.path for route in self.app.routes))
         self.assertEqual(self.client.get("/api/recordings/uploads").status_code, 404)

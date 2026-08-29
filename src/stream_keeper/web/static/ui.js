@@ -175,7 +175,7 @@ export function recordingProgressMarkup(task, now = Date.now()) {
   return `
     <div class="progress" title="${escapeHtml(`${progress.caption} ${progress.clock}`)}">
       <span class="progress-text"><b>${escapeHtml(progress.caption)}</b><em>${escapeHtml(progress.clock)}</em></span>
-      <span class="progress-track" data-ratio="${progress.ratio.toFixed(4)}" aria-hidden="true"><i></i></span>
+      <span class="progress-track" data-progress-ratio="${progress.ratio.toFixed(4)}" aria-hidden="true"><i></i></span>
     </div>`;
 }
 
@@ -184,10 +184,11 @@ export function recordingProgressMarkup(task, now = Date.now()) {
  * style attributes, so the ratio travels in a data attribute instead.
  */
 export function paintProgress(root = document) {
-  root.querySelectorAll(".progress-track[data-ratio]").forEach((track) => {
+  root.querySelectorAll("[data-progress-ratio]").forEach((track) => {
     const fill = track.firstElementChild;
     if (!fill) return;
-    const width = `${(Number(track.dataset.ratio) * 100).toFixed(2)}%`;
+    const ratio = Math.min(1, Math.max(0, Number(track.dataset.progressRatio) || 0));
+    const width = `${(ratio * 100).toFixed(2)}%`;
     if (fill.style.width !== width) fill.style.width = width;
   });
 }

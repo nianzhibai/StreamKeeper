@@ -99,8 +99,8 @@
       '<nav class="nav" id="main-nav" aria-label="主要导航">' + navigationMarkup(current) + "</nav>" +
       '<div class="sidebar-foot">' +
       '<div class="sidebar-tools">' + themeSwitchMarkup() +
-      '<button class="update-check" type="button" data-check-update title="检查更新">' +
-      icon("rotateCcw", "ic-sm") + "<span>检查更新</span></button></div>" +
+      '<button class="btn btn-soft btn-sm update-check" type="button" data-check-update title="检查更新">' +
+      "<span>检查更新</span></button></div>" +
       '<div class="account">' +
       '<span class="avatar avatar-sm" data-account-avatar aria-hidden="true">A</span>' +
       '<span class="account-text"><strong data-account-name>—</strong><small>管理员</small></span>' +
