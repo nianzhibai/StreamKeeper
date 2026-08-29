@@ -1487,8 +1487,13 @@ class WebTests(TestCase):
         self.assertEqual(initial.json()["schedule"]["mode"], "scheduled")
         self.assertEqual(
             [provider["name"] for provider in initial.json()["providers"]],
-            ["quark", "wopan", "baidu", "pan115", "guangya"],
+            ["quark", "baidu", "pan115", "guangya", "wopan"],
         )
+        provider_positions = [
+            archive_page.text.index(f'data-provider-configure="{provider}"')
+            for provider in ("quark", "baidu", "pan115", "guangya", "wopan")
+        ]
+        self.assertEqual(provider_positions, sorted(provider_positions))
         quark_payload = {
             "enabled": True,
             "cookie": "session=quark-secret-cookie",

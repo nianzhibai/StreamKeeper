@@ -6,13 +6,13 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="description" content="把本地录像同步到多个网盘，并按需清理磁盘" />
     <title>网盘归档 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260881"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260881" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260881" />
+    <script src="/static/theme.js?v=20260882"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260882" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260882" />
   </head>
   <body data-page="archive">
-    <script src="/static/sprite.js?v=20260881"></script>
-    <script src="/static/shell.js?v=20260881"></script>
+    <script src="/static/sprite.js?v=20260882"></script>
+    <script src="/static/shell.js?v=20260882"></script>
     <div class="app" id="app">
       <main class="main" id="main">
         <header class="page-head">
@@ -71,31 +71,12 @@
                 aria-label="配置夸克网盘"
               >
                 <span class="provider-logo quark has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-quark.png?v=20260881" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-quark.png?v=20260882" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>夸克网盘</strong>
                 </span>
                 <span id="quark-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
-                <span class="provider-row-action" aria-hidden="true">
-                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
-                </span>
-              </button>
-              <button
-                id="wopan-configure"
-                class="provider-row provider-target"
-                type="button"
-                data-provider-configure="wopan"
-                aria-haspopup="dialog"
-                aria-label="配置联通云盘"
-              >
-                <span class="provider-logo wopan has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260881" alt="" />
-                </span>
-                <span class="provider-info">
-                  <strong>联通云盘</strong>
-                </span>
-                <span id="wopan-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
                 </span>
@@ -109,7 +90,7 @@
                 aria-label="配置百度网盘"
               >
                 <span class="provider-logo baidu has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260881" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-baidu.png?v=20260882" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>百度网盘</strong>
@@ -128,7 +109,7 @@
                 aria-label="配置115网盘"
               >
                 <span class="provider-logo pan115 has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260881" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-pan115.png?v=20260882" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>115网盘</strong>
@@ -147,12 +128,31 @@
                 aria-label="配置光鸭网盘"
               >
                 <span class="provider-logo guangya has-image" aria-hidden="true">
-                  <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260881" alt="" />
+                  <img class="provider-logo-image" src="/static/provider-guangya.png?v=20260882" alt="" />
                 </span>
                 <span class="provider-info">
                   <strong>光鸭网盘</strong>
                 </span>
                 <span id="guangya-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <span class="provider-row-action" aria-hidden="true">
+                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
+                </span>
+              </button>
+              <button
+                id="wopan-configure"
+                class="provider-row provider-target"
+                type="button"
+                data-provider-configure="wopan"
+                aria-haspopup="dialog"
+                aria-label="配置联通云盘"
+              >
+                <span class="provider-logo wopan has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-wopan.png?v=20260882" alt="" />
+                </span>
+                <span class="provider-info">
+                  <strong>联通云盘</strong>
+                </span>
+                <span id="wopan-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
                 <span class="provider-row-action" aria-hidden="true">
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
                 </span>
@@ -378,6 +378,6 @@
       </div>
     </dialog>
 
-    <script type="module" src="/static/archive.js?v=20260881"></script>
+    <script type="module" src="/static/archive.js?v=20260882"></script>
   </body>
 </html>

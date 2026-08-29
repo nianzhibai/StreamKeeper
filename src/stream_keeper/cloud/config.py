@@ -5,7 +5,7 @@ from typing import Any
 
 from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
-CLOUD_PROVIDER_ORDER = ("quark", "wopan", "baidu", "pan115", "guangya")
+CLOUD_PROVIDER_ORDER = ("quark", "baidu", "pan115", "guangya", "wopan")
 QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "guangya"})
 
 
@@ -30,13 +30,6 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
         option_defaults=(("root_id", "0"),),
         supports_qr_login=True,
     ),
-    "wopan": CloudProviderSpec(
-        name="wopan",
-        label="联通云盘",
-        credential_keys=("access_token", "refresh_token"),
-        option_defaults=(("root_id", "0"), ("family_id", "")),
-        supports_qr_login=True,
-    ),
     "baidu": CloudProviderSpec(
         name="baidu",
         label="百度网盘",
@@ -54,6 +47,13 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
         label="光鸭网盘",
         credential_keys=("access_token", "refresh_token", "client_id", "device_id"),
         option_defaults=(("root_id", ""),),
+        supports_qr_login=True,
+    ),
+    "wopan": CloudProviderSpec(
+        name="wopan",
+        label="联通云盘",
+        credential_keys=("access_token", "refresh_token"),
+        option_defaults=(("root_id", "0"), ("family_id", "")),
         supports_qr_login=True,
     ),
 }
@@ -177,15 +177,6 @@ class CloudArchiveConfig:
                     options={"root_id": settings.quark_root_id},
                 ),
                 CloudProviderConfig(
-                    name="wopan",
-                    enabled=bool(settings.wopan_access_token or settings.wopan_refresh_token),
-                    credentials={
-                        "access_token": settings.wopan_access_token,
-                        "refresh_token": settings.wopan_refresh_token,
-                    },
-                    options={"root_id": settings.wopan_root_id, "family_id": settings.wopan_family_id},
-                ),
-                CloudProviderConfig(
                     name="baidu",
                     enabled=bool(
                         settings.baidu_access_token
@@ -222,6 +213,15 @@ class CloudArchiveConfig:
                         "device_id": settings.guangya_device_id,
                     },
                     options={"root_id": settings.guangya_root_id},
+                ),
+                CloudProviderConfig(
+                    name="wopan",
+                    enabled=bool(settings.wopan_access_token or settings.wopan_refresh_token),
+                    credentials={
+                        "access_token": settings.wopan_access_token,
+                        "refresh_token": settings.wopan_refresh_token,
+                    },
+                    options={"root_id": settings.wopan_root_id, "family_id": settings.wopan_family_id},
                 ),
             ),
             upload_mode=settings.upload_mode,

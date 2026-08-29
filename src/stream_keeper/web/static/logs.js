@@ -12,7 +12,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260881";
+} from "/static/ui.js?v=20260882";
 
 /** Small first paint; older pages stream in on demand as the reader scrolls. */
 const PAGE_SIZE = 50;

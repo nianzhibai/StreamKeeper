@@ -10,7 +10,7 @@ import {
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260881";
+} from "/static/ui.js?v=20260882";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };

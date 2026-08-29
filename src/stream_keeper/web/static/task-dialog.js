@@ -1,4 +1,4 @@
-import { api, confirmAction, icon, toast } from "/static/ui.js?v=20260881";
+import { api, confirmAction, icon, toast } from "/static/ui.js?v=20260882";
 
 const FALLBACK_RECORDING_DEFAULTS = {
   output_format: "ts",
