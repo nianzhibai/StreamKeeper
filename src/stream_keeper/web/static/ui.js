@@ -65,6 +65,38 @@ export function toggle(element, visible) {
   element?.classList.toggle("hidden", !visible);
 }
 
+function copyTextWithSelection(text) {
+  const previousFocus = document.activeElement;
+  const textarea = document.createElement("textarea");
+  textarea.className = "clipboard-fallback";
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+    if (previousFocus instanceof HTMLElement) previousFocus.focus({ preventScroll: true });
+  }
+  if (!copied) throw new Error("浏览器不支持复制到剪贴板");
+}
+
+export async function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Permission policies can reject the modern API even on HTTPS. The
+      // selection fallback still works in browsers that retain user activation.
+    }
+  }
+  copyTextWithSelection(text);
+}
+
 export function formatTime(value, { seconds = false } = {}) {
   if (!value) return "—";
   const date = new Date(value);

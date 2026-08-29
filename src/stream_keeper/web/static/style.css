@@ -347,6 +347,16 @@ img, svg {
   white-space: nowrap;
 }
 
+.clipboard-fallback {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .skip-link {
   position: fixed;
   top: var(--s3);

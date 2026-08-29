@@ -252,7 +252,7 @@ class TaskScheduler:
             detail = (
                 f"每 {record.interval_seconds} 秒检查一次开播状态"
                 if record.monitor
-                else "仅检查一次，录制结束后自动停止"
+                else "录制结束后自动停止"
             )
             await self.events.info("task", f"「{_task_name(record)}」已启动", detail, task_id=record.id)
         return record

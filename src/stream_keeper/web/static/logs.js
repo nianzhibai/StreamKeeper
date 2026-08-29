@@ -3,6 +3,7 @@ import {
   bootstrap,
   clearPageError,
   confirmAction,
+  copyText,
   escapeHtml,
   formatTime,
   icon,
@@ -420,7 +421,7 @@ async function copyRow(id) {
     event.detail ? `| ${event.detail}` : "",
   ].filter(Boolean).join(" ");
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     toast("已复制这条记录", "success");
   } catch {
     toast("浏览器拒绝了剪贴板访问", "error");

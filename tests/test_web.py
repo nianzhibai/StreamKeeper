@@ -1299,6 +1299,14 @@ class WebTests(TestCase):
         self.assertIn("运行日志", page.text)
         self.assertIn('id="log-list"', page.text)
         self.assertIn("运行日志", self.client.get("/static/shell.js").text)
+        logs_script = self.client.get("/static/logs.js").text
+        ui_script = self.client.get("/static/ui.js").text
+        style = self.client.get("/static/style.css").text
+        self.assertIn("await copyText(text)", logs_script)
+        self.assertNotIn("navigator.clipboard.writeText(text)", logs_script)
+        self.assertIn("navigator.clipboard?.writeText", ui_script)
+        self.assertIn('document.execCommand("copy")', ui_script)
+        self.assertIn(".clipboard-fallback", style)
 
         self.client.post("/api/auth/login", json={"username": "admin", "password": "wrong-password"})
 
