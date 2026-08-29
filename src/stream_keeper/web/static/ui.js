@@ -1,4 +1,4 @@
-import { icon } from "/static/icons.js?v=20260878";
+import { icon } from "/static/icons.js?v=20260881";
 
 const sessionState = {
   value: null,
@@ -31,11 +31,11 @@ export const SOURCE_LABELS = {
 // overview card cannot drift apart. The static provider buttons in archive.html
 // still carry their own copies; markup cannot import from here.
 const PROVIDER_ICONS = {
-  quark: "/static/provider-quark.png?v=20260878",
-  wopan: "/static/provider-wopan.png?v=20260878",
-  baidu: "/static/provider-baidu.png?v=20260878",
-  pan115: "/static/provider-pan115.png?v=20260878",
-  guangya: "/static/provider-guangya.png?v=20260878",
+  quark: "/static/provider-quark.png?v=20260881",
+  wopan: "/static/provider-wopan.png?v=20260881",
+  baidu: "/static/provider-baidu.png?v=20260881",
+  pan115: "/static/provider-pan115.png?v=20260881",
+  guangya: "/static/provider-guangya.png?v=20260881",
 };
 
 export function escapeHtml(value) {
@@ -387,6 +387,35 @@ async function logout() {
   }
 }
 
+async function checkForUpdates(event) {
+  const button = event.currentTarget;
+  const label = button.querySelector("span");
+  button.disabled = true;
+  button.classList.add("is-busy");
+  label.textContent = "检查中…";
+  try {
+    const result = await api("/api/system/update");
+    if (!result.update_available) {
+      toast(`当前版本 v${result.current_version} 已是最新版本`, "success");
+      return;
+    }
+    const viewRelease = await confirmAction({
+      title: `发现新版本 v${result.latest_version}`,
+      message: `当前版本为 v${result.current_version}，可前往 GitHub 查看更新内容。`,
+      confirmLabel: "查看更新",
+      cancelLabel: "稍后再说",
+      tone: "info",
+    });
+    if (viewRelease) window.open(result.release_url, "_blank", "noopener,noreferrer");
+  } catch (error) {
+    toast(error.message || "检查更新失败", "error");
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-busy");
+    label.textContent = "检查更新";
+  }
+}
+
 function initializeShell(session) {
   const name = session.username || "admin";
   document.querySelectorAll("[data-account-name]").forEach((element) => {
@@ -396,6 +425,9 @@ function initializeShell(session) {
     element.textContent = [...name][0]?.toUpperCase() || "A";
   });
   document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", logout));
+  document.querySelectorAll("[data-check-update]").forEach((button) => {
+    button.addEventListener("click", checkForUpdates);
+  });
 }
 
 export async function bootstrap(load, { interval = 5000 } = {}) {

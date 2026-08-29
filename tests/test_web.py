@@ -24,6 +24,7 @@ from stream_keeper.web.cloud_login import CloudLoginPoll
 from stream_keeper.web.recordings import RecordingPreviewCache, build_remux_command
 from stream_keeper.web.schemas import TaskStatus
 from stream_keeper.web.store import TaskStore
+from stream_keeper.web.updates import UpdateCheckError, UpdateCheckResult
 
 
 class FakeScheduler:
@@ -149,6 +150,22 @@ class FakeBaiduOpenListAuth:
 
     async def aclose(self) -> None:
         pass
+
+
+class FakeUpdateChecker:
+    def __init__(self) -> None:
+        self.error: UpdateCheckError | None = None
+
+    async def check(self) -> UpdateCheckResult:
+        if self.error is not None:
+            raise self.error
+        return UpdateCheckResult(
+            current_version="0.0.1",
+            latest_version="0.0.2",
+            update_available=True,
+            release_url="https://github.com/nianzhibai/StreamKeeper/releases/tag/v0.0.2",
+            checked_at=datetime(2026, 8, 29, tzinfo=timezone.utc),
+        )
 
 
 class WebSetupTests(TestCase):
@@ -304,6 +321,7 @@ class WebTests(TestCase):
         asyncio.run(self.store.initialize_web_credentials("admin", "secret-password"))
         self.scheduler = FakeScheduler(self.store)
         self.baidu_openlist_auth = FakeBaiduOpenListAuth()
+        self.update_checker = FakeUpdateChecker()
         app = create_app(
             self.settings,
             store=self.store,
@@ -312,6 +330,7 @@ class WebTests(TestCase):
             cloud_login_flow_factory=FakeCloudLoginFlow,
             cloud_login_poll_interval=0.01,
             baidu_openlist_auth=self.baidu_openlist_auth,
+            update_checker=self.update_checker,
         )
         self.app = app
         self.client_context = TestClient(app)
@@ -348,6 +367,38 @@ class WebTests(TestCase):
         unauthorized_api = self.client.get("/api/tasks")
         self.assertEqual(unauthorized_api.status_code, 401)
         self.assertNotIn("www-authenticate", unauthorized_api.headers)
+
+    def test_sidebar_checks_latest_release_without_offering_automatic_upgrade(self) -> None:
+        self.login()
+
+        response = self.client.get("/api/system/update")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "current_version": "0.0.1",
+                "latest_version": "0.0.2",
+                "update_available": True,
+                "release_url": "https://github.com/nianzhibai/StreamKeeper/releases/tag/v0.0.2",
+                "checked_at": "2026-08-29T00:00:00Z",
+            },
+        )
+        shell = self.client.get("/static/shell.js").text
+        ui = self.client.get("/static/ui.js").text
+        style = self.client.get("/static/style.css").text
+        self.assertIn('data-check-update', shell)
+        self.assertIn('icon("rotateCcw", "ic-sm")', shell)
+        self.assertIn('api("/api/system/update")', ui)
+        self.assertIn('window.open(result.release_url', ui)
+        self.assertNotIn("docker compose pull", ui)
+        self.assertIn("animation: update-check-spin 0.8s linear infinite", style)
+        self.assertIn("to { transform: rotate(-360deg); }", style)
+
+        self.update_checker.error = UpdateCheckError("无法连接 GitHub 检查更新")
+        failed = self.client.get("/api/system/update")
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(failed.json()["detail"], "无法连接 GitHub 检查更新")
 
         rejected = self.client.post(
             "/api/auth/login",

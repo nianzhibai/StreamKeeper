@@ -19,8 +19,8 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260878";
-import { createTaskDialog } from "/static/task-dialog.js?v=20260878";
+} from "/static/ui.js?v=20260881";
+import { createTaskDialog } from "/static/task-dialog.js?v=20260881";
 
 const state = {
   tasks: [],

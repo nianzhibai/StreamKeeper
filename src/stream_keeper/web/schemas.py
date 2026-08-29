@@ -256,6 +256,14 @@ class SystemInfo(StrictModel):
     max_concurrent_recordings: int
 
 
+class UpdateInfo(StrictModel):
+    current_version: str
+    latest_version: str
+    update_available: bool
+    release_url: str
+    checked_at: datetime
+
+
 class RecordingEntry(StrictModel):
     name: str
     path: str

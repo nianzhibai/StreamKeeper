@@ -84,10 +84,12 @@ from .schemas import (
     TaskCreate,
     TaskRecord,
     TaskUpdate,
+    UpdateInfo,
     WebAccountUpdate,
     WebAccountUpdateResult,
 )
 from .store import CloudCredentialSnapshot, CredentialUpdateStatus, TaskStore, WebSession, utc_now
+from .updates import UpdateChecker, UpdateCheckError
 from .uploader import RecordingUploadService, pending_upload_bytes
 
 # The activity-log page judges "is everything fine" over the last day.
@@ -239,6 +241,7 @@ def create_app(
     cloud_login_poll_interval: float = 2,
     baidu_openlist_auth: BaiduOpenListAuth | None = None,
     inspection_handoffs: InspectionHandoffStore | None = None,
+    update_checker: UpdateChecker | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     store = store or TaskStore(settings.database_path)
@@ -260,6 +263,7 @@ def create_app(
     if inspection_handoffs is None:
         inspection_handoffs = InspectionHandoffStore()
     baidu_openlist_auth = baidu_openlist_auth or BaiduOpenListAuth()
+    update_checker = update_checker or UpdateChecker(__version__)
     static_dir = Path(__file__).resolve().parent / "static"
     cloud_config_lock = asyncio.Lock()
     recording_settings_lock = asyncio.Lock()
@@ -411,6 +415,7 @@ def create_app(
     app.state.inspection_handoffs = inspection_handoffs
     app.state.recording_preview_cache = recording_preview_cache
     app.state.event_log = event_log
+    app.state.update_checker = update_checker
 
     @app.get("/health", include_in_schema=False)
     async def health() -> dict[str, str]:
@@ -1182,6 +1187,20 @@ def create_app(
             active_tasks=scheduler.active_task_count,
             recording_tasks=scheduler.recording_task_count,
             max_concurrent_recordings=scheduler.max_concurrent_recordings,
+        )
+
+    @app.get("/api/system/update", response_model=UpdateInfo)
+    async def check_for_update() -> UpdateInfo:
+        try:
+            result = await update_checker.check()
+        except UpdateCheckError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return UpdateInfo(
+            current_version=result.current_version,
+            latest_version=result.latest_version,
+            update_available=result.update_available,
+            release_url=result.release_url,
+            checked_at=result.checked_at,
         )
 
     return app

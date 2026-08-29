@@ -668,6 +668,29 @@ img, svg {
   height: 14px;
 }
 
+.update-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  color: var(--text-4);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+  transition: color var(--fast) var(--ease);
+}
+
+.update-check:hover {
+  color: var(--text-2);
+}
+
+.update-check:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.update-check.is-busy .ic {
+  animation: update-check-spin 0.8s linear infinite;
+}
+
 .account {
   display: flex;
   align-items: center;
@@ -766,6 +789,10 @@ img, svg {
     left: calc(var(--s4) * -1);
   }
 
+  :root[data-sidebar="rail"] .update-check span {
+    display: none;
+  }
+
   :root[data-sidebar="rail"] .account {
     padding: 0;
     border: 0;
@@ -803,6 +830,10 @@ img, svg {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes update-check-spin {
+  to { transform: rotate(-360deg); }
 }
 
 /* ==========================================================================
