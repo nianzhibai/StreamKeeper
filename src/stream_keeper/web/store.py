@@ -279,6 +279,15 @@ class TaskStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS cloud_archive_last_execution (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    execution_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS runtime_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -479,6 +488,33 @@ class TaskStore:
         with self._connect() as connection:
             row = connection.execute("SELECT config_json FROM cloud_upload_config WHERE id = 1").fetchone()
         return self._decode_json_object(row["config_json"]) if row is not None else None
+
+    async def get_cloud_archive_last_execution(self) -> dict[str, Any] | None:
+        return await self._run_sync(self._get_cloud_archive_last_execution_sync)
+
+    def _get_cloud_archive_last_execution_sync(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT execution_json FROM cloud_archive_last_execution WHERE id = 1"
+            ).fetchone()
+        return self._decode_json_object(row["execution_json"]) if row is not None else None
+
+    async def save_cloud_archive_last_execution(self, execution: dict[str, Any]) -> None:
+        await self._run_sync(self._save_cloud_archive_last_execution_sync, execution)
+
+    def _save_cloud_archive_last_execution_sync(self, execution: dict[str, Any]) -> None:
+        execution_json = json.dumps(execution, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO cloud_archive_last_execution (id, execution_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    execution_json = excluded.execution_json,
+                    updated_at = excluded.updated_at
+                """,
+                (execution_json, utc_now().isoformat()),
+            )
 
     async def save_cloud_upload_config(
         self,

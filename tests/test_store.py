@@ -428,6 +428,21 @@ class StoreTests(IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_latest_cloud_archive_execution_is_persisted(self) -> None:
+        execution = {
+            "trigger": "manual",
+            "status": "success",
+            "started_at": "2026-07-12T01:00:00+08:00",
+            "finished_at": "2026-07-12T01:01:00+08:00",
+            "summary": {"scanned_files": 2},
+            "targets": [{"name": "quark", "status": "success"}],
+        }
+
+        await self.store.save_cloud_archive_last_execution(execution)
+        await self.store.initialize()
+
+        self.assertEqual(await self.store.get_cloud_archive_last_execution(), execution)
+
     async def test_initialize_adds_revisions_to_legacy_cloud_credentials(self) -> None:
         database_path = Path(self.temp_dir.name) / "legacy-cloud.db"
         with closing(sqlite3.connect(database_path)) as connection:

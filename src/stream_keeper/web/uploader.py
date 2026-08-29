@@ -177,6 +177,62 @@ class UploadExecution:
     targets: tuple[UploadTargetExecution, ...] = ()
 
 
+def _execution_to_dict(execution: UploadExecution) -> dict[str, object]:
+    summary = execution.summary
+    return {
+        "trigger": execution.trigger,
+        "status": execution.status,
+        "started_at": execution.started_at.isoformat(),
+        "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
+        "summary": (
+            {
+                "scanned_files": summary.scanned_files,
+                "skipped_files": summary.skipped_files,
+                "uploaded_copies": summary.uploaded_copies,
+                "deleted_files": summary.deleted_files,
+                "failed_files": summary.failed_files,
+            }
+            if summary is not None
+            else None
+        ),
+        "error": execution.error,
+        "targets": [
+            {
+                "name": target.name,
+                "status": target.status,
+                "current_file": target.current_file,
+                "transferred_bytes": target.transferred_bytes,
+                "total_bytes": target.total_bytes,
+                "verified_files": target.verified_files,
+                "uploaded_copies": target.uploaded_copies,
+                "failed_files": target.failed_files,
+                "error": target.error,
+            }
+            for target in execution.targets
+        ],
+    }
+
+
+def _execution_from_dict(raw: dict[str, object]) -> UploadExecution:
+    summary_raw = raw.get("summary")
+    targets_raw = raw.get("targets", [])
+    if summary_raw is not None and not isinstance(summary_raw, dict):
+        raise ValueError("归档摘要格式无效")
+    if not isinstance(targets_raw, list):
+        raise ValueError("归档目标格式无效")
+    return UploadExecution(
+        trigger=str(raw["trigger"]),
+        status=str(raw["status"]),
+        started_at=datetime.fromisoformat(str(raw["started_at"])),
+        finished_at=(
+            datetime.fromisoformat(str(raw["finished_at"])) if raw.get("finished_at") is not None else None
+        ),
+        summary=UploadRunSummary(**summary_raw) if summary_raw is not None else None,
+        error=str(raw["error"]) if raw.get("error") is not None else None,
+        targets=tuple(UploadTargetExecution(**target) for target in targets_raw),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class UploadRequest:
     trigger: str
@@ -229,6 +285,7 @@ class RecordingUploadService:
         self._active_run: asyncio.Task[None] | None = None
         self._requests: deque[UploadRequest] = deque()
         self._last_execution: UploadExecution | None = None
+        self._history_loaded = False
         self._shutting_down = False
 
     @staticmethod
@@ -293,6 +350,27 @@ class RecordingUploadService:
 
     async def startup(self) -> None:
         self._shutting_down = False
+        if not self._history_loaded:
+            self._history_loaded = True
+            raw_execution = await self.store.get_cloud_archive_last_execution()
+            if raw_execution is not None:
+                try:
+                    self._last_execution = _execution_from_dict(raw_execution)
+                except (KeyError, TypeError, ValueError):
+                    logger.warning("忽略无法解析的最近归档记录")
+                if self._last_execution is not None and self._last_execution.status == "running":
+                    for target in self._last_execution.targets:
+                        if target.status in {"pending", "preparing", "uploading", "verifying"}:
+                            target.cancel()
+                    self._last_execution = UploadExecution(
+                        trigger=self._last_execution.trigger,
+                        status="cancelled",
+                        started_at=self._last_execution.started_at,
+                        finished_at=self._clock(),
+                        error="服务重启，归档任务已中断，本地文件保持不变",
+                        targets=self._last_execution.targets,
+                    )
+                    await self._persist_last_execution()
         config = await self.initialize_config()
         if (
             config.enabled
@@ -401,6 +479,7 @@ class RecordingUploadService:
             started_at=started_at,
             targets=execution_targets,
         )
+        await self._persist_last_execution()
         label = TRIGGER_LABELS.get(trigger, trigger)
         target_labels = "、".join(CLOUD_PROVIDER_LABELS.get(name, name) for name in target_states)
         await self.events.info(
@@ -425,6 +504,7 @@ class RecordingUploadService:
                 error="任务已取消，本地文件保持不变",
                 targets=execution_targets,
             )
+            await self._persist_last_execution()
             raise
         except Exception as exc:
             message = _error_message(exc)
@@ -441,6 +521,7 @@ class RecordingUploadService:
                 error=message,
                 targets=execution_targets,
             )
+            await self._persist_last_execution()
             logger.exception("网盘归档任务执行失败，本地文件保持不变")
             await self.events.error("upload", f"{label}归档执行失败，本地文件保持不变", message)
             return
@@ -452,6 +533,7 @@ class RecordingUploadService:
             summary=summary,
             targets=execution_targets,
         )
+        await self._persist_last_execution()
         detail = (
             f"扫描 {summary.scanned_files} 个文件 · 跳过 {summary.skipped_files} 个 · "
             f"上传 {summary.uploaded_copies} 个副本 · 清理本地 {summary.deleted_files} 个"
@@ -464,6 +546,10 @@ class RecordingUploadService:
             )
         else:
             await self.events.success("upload", f"{label}归档完成", detail)
+
+    async def _persist_last_execution(self) -> None:
+        if self._last_execution is not None:
+            await self.store.save_cloud_archive_last_execution(_execution_to_dict(self._last_execution))
 
     async def resolve_provider_credentials(
         self,

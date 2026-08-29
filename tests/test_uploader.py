@@ -404,6 +404,83 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
         self.assertEqual(service.last_execution.summary.deleted_files, 1)
         self.assertEqual(service.last_execution.summary.skipped_files, 1)
 
+    async def test_latest_execution_is_restored_after_service_restart(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "restart.ts", b"video", self.now)
+        service = RecordingUploadService(
+            self.settings,
+            self.store,
+            client_factory=lambda _target: FakeUploadClient(),
+            clock=lambda: self.now,
+        )
+
+        self.assertTrue(await service.trigger("manual"))
+        assert service._active_run is not None
+        await service._active_run
+        self.assertFalse(recording.exists())
+
+        restored = RecordingUploadService(self.settings, self.store, clock=lambda: self.now)
+        await restored.startup()
+        try:
+            execution = restored.last_execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            self.assertEqual(execution.trigger, "manual")
+            self.assertEqual(execution.status, "success")
+            self.assertEqual(execution.started_at, self.now)
+            self.assertEqual(execution.finished_at, self.now)
+            self.assertIsNotNone(execution.summary)
+            assert execution.summary is not None
+            self.assertEqual(execution.summary.deleted_files, 1)
+            self.assertEqual(
+                [(target.name, target.status) for target in execution.targets],
+                [("quark", "success"), ("wopan", "success")],
+            )
+        finally:
+            await restored.shutdown()
+
+    async def test_running_execution_is_marked_interrupted_after_restart(self) -> None:
+        await self.store.save_cloud_archive_last_execution(
+            {
+                "trigger": "scheduled",
+                "status": "running",
+                "started_at": self.now.isoformat(),
+                "finished_at": None,
+                "summary": None,
+                "error": None,
+                "targets": [
+                    {
+                        "name": "quark",
+                        "status": "uploading",
+                        "current_file": "主播/live.ts",
+                        "transferred_bytes": 3,
+                        "total_bytes": 5,
+                        "verified_files": 0,
+                        "uploaded_copies": 0,
+                        "failed_files": 0,
+                        "error": None,
+                    }
+                ],
+            }
+        )
+        service = RecordingUploadService(self.settings, self.store, clock=lambda: self.now)
+
+        await service.startup()
+        try:
+            execution = service.last_execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            self.assertEqual(execution.status, "cancelled")
+            self.assertEqual(execution.finished_at, self.now)
+            self.assertIn("服务重启", execution.error or "")
+            self.assertEqual(execution.targets[0].status, "cancelled")
+            self.assertIsNone(execution.targets[0].current_file)
+            self.assertEqual(
+                (await self.store.get_cloud_archive_last_execution())["status"],
+                "cancelled",
+            )
+        finally:
+            await service.shutdown()
+
     async def test_active_execution_exposes_per_target_byte_progress(self) -> None:
         recording = make_old_file(self.settings.recordings_dir / "主播" / "progress.ts", b"video", self.now)
         started = asyncio.Event()
