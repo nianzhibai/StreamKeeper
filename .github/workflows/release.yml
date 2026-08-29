@@ -144,7 +144,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
         run: |
-          gh release create "$RELEASE_TAG" docker-compose.yml streamkeeper-source.tar.gz \
+          gh release create "$RELEASE_TAG" streamkeeper-source.tar.gz \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \

@@ -26,7 +26,7 @@ mkdir -p StreamKeeper && cd StreamKeeper
 ```
 **2. 拉取仓库内置`docker-compose.yml`**
 ```bash
-curl -fLO https://github.com/nianzhibai/StreamKeeper/releases/latest/download/docker-compose.yml
+curl -fLO https://raw.githubusercontent.com/nianzhibai/StreamKeeper/main/docker-compose.yml
 ```
 **3. 启动**
 ```bash
