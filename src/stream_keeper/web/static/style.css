@@ -627,41 +627,6 @@ img, svg {
   margin-top: auto;
 }
 
-.health {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: 0 var(--s2);
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-}
-
-.health i {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--warn);
-  box-shadow: 0 0 0 3px var(--warn-soft);
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
-}
-
-.health.is-online i {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
-}
-
-.health.is-offline {
-  color: var(--bad);
-}
-
-.health.is-offline i {
-  background: var(--bad);
-  box-shadow: 0 0 0 3px var(--bad-soft);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
 .sidebar-tools {
   display: flex;
   align-items: center;
@@ -768,14 +733,12 @@ img, svg {
   :root[data-sidebar="rail"] .brand-text,
   :root[data-sidebar="rail"] .nav-label,
   :root[data-sidebar="rail"] .nav-title,
-  :root[data-sidebar="rail"] .health span,
   :root[data-sidebar="rail"] .account-text {
     display: none;
   }
 
   :root[data-sidebar="rail"] .sidebar-head,
   :root[data-sidebar="rail"] .sidebar-tools,
-  :root[data-sidebar="rail"] .health,
   :root[data-sidebar="rail"] .account {
     justify-content: center;
   }

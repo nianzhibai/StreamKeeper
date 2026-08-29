@@ -98,7 +98,6 @@
       '<div class="sidebar-panel">' +
       '<nav class="nav" id="main-nav" aria-label="主要导航">' + navigationMarkup(current) + "</nav>" +
       '<div class="sidebar-foot">' +
-      '<div id="server-health" class="health" title="服务连接状态"><i></i><span>正在连接</span></div>' +
       '<div class="sidebar-tools">' + themeSwitchMarkup() + "</div>" +
       '<div class="account">' +
       '<span class="avatar avatar-sm" data-account-avatar aria-hidden="true">A</span>' +

@@ -7,11 +7,10 @@ import {
   formatBytes,
   formatTime,
   icon,
-  setHealth,
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260877";
+} from "/static/ui.js?v=20260878";
 
 let currentPath = new URLSearchParams(window.location.search).get("path") || "";
 let directory = { path: currentPath, entries: [] };
@@ -164,10 +163,8 @@ async function load({ quiet = false, path = currentPath, history = null } = {}) 
     renderBreadcrumbs();
     renderList();
     clearPageError();
-    setHealth(true);
   } catch (error) {
     if (error.name === "AbortError") return;
-    setHealth(false);
     showPageError(`无法读取录像：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;

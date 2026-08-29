@@ -7,13 +7,12 @@ import {
   formatTime,
   icon,
   setBusy,
-  setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260877";
+} from "/static/ui.js?v=20260878";
 
 /** Small first paint; older pages stream in on demand as the reader scrolls. */
 const PAGE_SIZE = 50;
@@ -308,9 +307,7 @@ async function load({ quiet = false } = {}) {
     renderList();
     applyExportLink();
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法读取运行日志：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;
@@ -347,9 +344,7 @@ async function poll() {
       renderList();
     }
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法读取运行日志：${error.message}`);
   } finally {
     state.loading = false;

@@ -1,4 +1,4 @@
-import { icon } from "/static/icons.js?v=20260877";
+import { icon } from "/static/icons.js?v=20260878";
 
 const sessionState = {
   value: null,
@@ -31,11 +31,11 @@ export const SOURCE_LABELS = {
 // overview card cannot drift apart. The static provider buttons in archive.html
 // still carry their own copies; markup cannot import from here.
 const PROVIDER_ICONS = {
-  quark: "/static/provider-quark.png?v=20260877",
-  wopan: "/static/provider-wopan.png?v=20260877",
-  baidu: "/static/provider-baidu.png?v=20260877",
-  pan115: "/static/provider-pan115.png?v=20260877",
-  guangya: "/static/provider-guangya.png?v=20260877",
+  quark: "/static/provider-quark.png?v=20260878",
+  wopan: "/static/provider-wopan.png?v=20260878",
+  baidu: "/static/provider-baidu.png?v=20260878",
+  pan115: "/static/provider-pan115.png?v=20260878",
+  guangya: "/static/provider-guangya.png?v=20260878",
 };
 
 export function escapeHtml(value) {
@@ -353,13 +353,6 @@ export async function api(path, options = {}) {
   return body;
 }
 
-export function setHealth(online) {
-  const health = document.querySelector("#server-health");
-  if (!health) return;
-  health.className = `health ${online ? "is-online" : "is-offline"}`;
-  health.innerHTML = `<i></i><span>${online ? "服务正常" : "连接失败"}</span>`;
-}
-
 export function showPageError(message) {
   const banner = document.querySelector("#page-error");
   if (!banner) return;
@@ -410,16 +403,13 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
     sessionState.value = await api("/api/auth/session");
     initializeShell(sessionState.value);
     await load();
-    setHealth(true);
     document.body.classList.add("is-ready");
     if (interval > 0) {
       window.setInterval(async () => {
         if (document.hidden) return;
         try {
           await load({ quiet: true });
-          setHealth(true);
         } catch (error) {
-          setHealth(false);
           showPageError(error.message || "无法读取服务器状态");
         }
       }, interval);
@@ -427,7 +417,6 @@ export async function bootstrap(load, { interval = 5000 } = {}) {
   } catch (error) {
     document.body.classList.add("is-ready");
     if (!String(error.message).includes("登录已过期")) {
-      setHealth(false);
       showPageError(error.message || "页面加载失败");
     }
   }

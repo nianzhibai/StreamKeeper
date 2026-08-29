@@ -12,7 +12,6 @@ import {
   providerLogoHtml,
   providerStatus,
   recordingProgressMarkup,
-  setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
   showPageError,
@@ -21,8 +20,8 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260877";
-import { createTaskDialog } from "/static/task-dialog.js?v=20260877";
+} from "/static/ui.js?v=20260878";
+import { createTaskDialog } from "/static/task-dialog.js?v=20260878";
 
 const MAX_VISIBLE_TASKS = 6;
 const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
@@ -158,9 +157,7 @@ async function load({ quiet = false } = {}) {
     renderArchive(cloud);
     renderSystem(system);
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法刷新数据：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;

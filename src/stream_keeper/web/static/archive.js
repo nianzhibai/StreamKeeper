@@ -11,12 +11,11 @@ import {
   providerIcon,
   providerLogoHtml,
   providerStatus,
-  setHealth,
   setTextIfChanged,
   showPageError,
   toast,
   toggle,
-} from "/static/ui.js?v=20260877";
+} from "/static/ui.js?v=20260878";
 
 const runButton = document.querySelector("#cloud-run-button");
 const providerDialog = document.querySelector("#provider-config-dialog");
@@ -513,9 +512,7 @@ async function load({ quiet = false } = {}) {
   try {
     render(await api("/api/cloud/archive"));
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法读取归档状态：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;

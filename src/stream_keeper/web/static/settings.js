@@ -3,10 +3,9 @@ import {
   bootstrap,
   clearPageError,
   confirmAction,
-  setHealth,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260877";
+} from "/static/ui.js?v=20260878";
 
 const form = document.querySelector("#archive-schedule-form");
 const accountCard = document.querySelector("#account-settings-card");
@@ -101,9 +100,7 @@ async function load() {
     populate(cloudValue, recordingValue, runtimeValue);
     populateAccount(accountSession);
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法读取设置：${error.message}`);
     throw error;
   }

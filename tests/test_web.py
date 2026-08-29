@@ -459,6 +459,8 @@ class WebTests(TestCase):
         self.assertIn('sidebar.classList.toggle("is-drawer-open", open)', shell)
         self.assertIn('window.matchMedia("(min-width: 901px)")', shell)
         self.assertIn('aria-current="page"', shell)
+        self.assertNotIn('server-health', shell)
+        self.assertNotIn('setHealth', self.client.get("/static/ui.js").text)
 
         page_header_style = style.split('.page-head {', 1)[1].split('}', 1)[0]
         page_title_style = style.split('.page-heading h1 {', 1)[1].split('}', 1)[0]

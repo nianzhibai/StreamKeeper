@@ -10,7 +10,6 @@ import {
   paintProgress,
   QUALITY_LABELS,
   recordingProgressMarkup,
-  setHealth,
   setHtmlIfChanged,
   setTextIfChanged,
   showPageError,
@@ -20,8 +19,8 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260877";
-import { createTaskDialog } from "/static/task-dialog.js?v=20260877";
+} from "/static/ui.js?v=20260878";
+import { createTaskDialog } from "/static/task-dialog.js?v=20260878";
 
 const state = {
   tasks: [],
@@ -185,9 +184,7 @@ async function load({ quiet = false } = {}) {
     state.tasks = syncProgressClock(tasks);
     render();
     clearPageError();
-    setHealth(true);
   } catch (error) {
-    setHealth(false);
     showPageError(`无法读取任务：${error.message}`);
     if (!quiet) toast(error.message, "error");
     throw error;
