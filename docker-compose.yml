@@ -1,7 +1,9 @@
+name: streamkeeper
+
 services:
   recorder:
-    build: .
-    image: stream-keeper:local
+    image: "${STREAM_KEEPER_IMAGE:-ghcr.io/nianzhibai/streamkeeper:latest}"
+    pull_policy: always
     restart: unless-stopped
     init: true
     ports:
@@ -13,8 +15,6 @@ services:
       # published port to reach it; host-side exposure is decided above.
       STREAM_KEEPER_WEB_HOST: 0.0.0.0
       STREAM_KEEPER_WEB_PORT: 8000
-      STREAM_KEEPER_WEB_USERNAME: "${STREAM_KEEPER_WEB_USERNAME:-admin}"
-      STREAM_KEEPER_WEB_PASSWORD: "${STREAM_KEEPER_WEB_PASSWORD:?请在 .env 中设置 STREAM_KEEPER_WEB_PASSWORD}"
       STREAM_KEEPER_SESSION_TTL_HOURS: "${STREAM_KEEPER_SESSION_TTL_HOURS:-168}"
       STREAM_KEEPER_LOGIN_MAX_ATTEMPTS: "${STREAM_KEEPER_LOGIN_MAX_ATTEMPTS:-3}"
       STREAM_KEEPER_LOGIN_WINDOW_SECONDS: "${STREAM_KEEPER_LOGIN_WINDOW_SECONDS:-3600}"

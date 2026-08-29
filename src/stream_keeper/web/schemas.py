@@ -7,12 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from ..platforms import LiveStreamClient
-from ..settings import (
-    CLOUD_ARCHIVE_ROOT,
-    DEFAULT_MAX_CONCURRENT_RECORDINGS,
-    MAX_RECORDING_CONCURRENCY,
-    WEB_SETUP_PASSWORD,
-)
+from ..settings import CLOUD_ARCHIVE_ROOT, DEFAULT_MAX_CONCURRENT_RECORDINGS, MAX_RECORDING_CONCURRENCY
 
 Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
@@ -58,13 +53,6 @@ class WebAccountUpdate(StrictModel):
             raise ValueError("用户名不能为空")
         return normalized
 
-    @model_validator(mode="after")
-    def validate_new_password(self) -> WebAccountUpdate:
-        if self.new_password is not None and self.new_password.get_secret_value() == WEB_SETUP_PASSWORD:
-            raise ValueError("不能使用默认占位密码")
-        return self
-
-
 class WebAccountUpdateResult(StrictModel):
     username: str
     sessions_revoked: Literal[True] = True
@@ -90,8 +78,6 @@ class AuthSetupRequest(StrictModel):
     @model_validator(mode="after")
     def validate_passwords(self) -> AuthSetupRequest:
         password = self.password.get_secret_value()
-        if password == WEB_SETUP_PASSWORD:
-            raise ValueError("请设置不同于默认占位值的密码")
         if password != self.password_confirmation.get_secret_value():
             raise ValueError("两次输入的密码不一致")
         return self

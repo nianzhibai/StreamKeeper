@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from stream_keeper import LiveStreamClient
 from stream_keeper.cloud import CloudArchiveConfig
-from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, WEB_SETUP_PASSWORD, Settings
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, Settings
 from stream_keeper.web.events import _retention_from_env
 
 
@@ -15,7 +15,6 @@ def make_settings(root: Path, **overrides) -> Settings:
         "data_dir": root,
         "recordings_dir": root / "recordings",
         "database_path": root / "tasks.db",
-        "web_password": "test-password",
         "validate_binaries": False,
     }
     values.update(overrides)
@@ -33,10 +32,6 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.upload_mode, "scheduled")
         self.assertEqual(settings.max_concurrent_recordings, 3)
 
-    def test_documented_placeholder_enables_web_setup_mode(self) -> None:
-        self.assertTrue(Settings(web_password=WEB_SETUP_PASSWORD).web_setup_mode)
-        self.assertFalse(Settings(web_password="custom-secure-password").web_setup_mode)
-
     def test_legacy_archive_config_defaults_to_scheduled_mode(self) -> None:
         config = CloudArchiveConfig.from_dict({"providers": {}})
 
@@ -48,18 +43,6 @@ class SettingsTests(TestCase):
             settings.prepare()
             self.assertTrue(settings.recordings_dir.is_dir())
             self.assertTrue(settings.database_path.parent.is_dir())
-
-    def test_password_is_required(self) -> None:
-        with TemporaryDirectory() as tmp:
-            settings = make_settings(Path(tmp), web_password="")
-            with self.assertRaisesRegex(RuntimeError, "STREAM_KEEPER_WEB_PASSWORD"):
-                settings.prepare()
-
-    def test_short_password_is_rejected(self) -> None:
-        with TemporaryDirectory() as tmp:
-            settings = make_settings(Path(tmp), web_password="too-short")
-            with self.assertRaisesRegex(RuntimeError, "至少需要 10"):
-                settings.prepare()
 
     def test_multiple_web_workers_are_rejected(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -153,8 +136,6 @@ class SettingsTests(TestCase):
             "STREAM_KEEPER_DATA_DIR": "/tmp/stream-keeper-data",
             "STREAM_KEEPER_BIND_ADDRESS": "127.0.0.1",
             "STREAM_KEEPER_WEB_PORT": "55554",
-            "STREAM_KEEPER_WEB_USERNAME": "operator",
-            "STREAM_KEEPER_WEB_PASSWORD": "long-test-password",
             "STREAM_KEEPER_WEB_WORKERS": "1",
             "STREAM_KEEPER_UPLOAD_MODE": "recording_completed",
             "STREAM_KEEPER_MAX_CONCURRENT_RECORDINGS": "8",
@@ -171,8 +152,6 @@ class SettingsTests(TestCase):
         self.assertEqual(settings.data_dir, Path("/tmp/stream-keeper-data"))
         self.assertEqual(settings.web_host, "127.0.0.1")
         self.assertEqual(settings.web_port, 55554)
-        self.assertEqual(settings.web_username, "operator")
-        self.assertEqual(settings.web_password, "long-test-password")
         self.assertEqual(settings.upload_mode, "recording_completed")
         self.assertEqual(settings.max_concurrent_recordings, 8)
         self.assertEqual(settings.proxy, "http://127.0.0.1:7890")
@@ -195,8 +174,6 @@ class SettingsTests(TestCase):
         with patch.dict(os.environ, legacy_environment, clear=True):
             settings = Settings.from_env()
 
-        self.assertEqual(settings.web_username, "admin")
-        self.assertEqual(settings.web_password, "")
         self.assertEqual(settings.upload_mode, "scheduled")
         self.assertIsNone(settings.douyin_cookies)
         self.assertIsNone(settings.bilibili_cookies)
@@ -246,19 +223,19 @@ class SettingsTests(TestCase):
         }
         self.assertTrue(env_keys)
         self.assertTrue(all(key == "TZ" or key.startswith(ENV_PREFIX) for key in env_keys))
-        self.assertIn(f"STREAM_KEEPER_WEB_PASSWORD={WEB_SETUP_PASSWORD}", env_lines)
+        self.assertNotIn("STREAM_KEEPER_WEB_USERNAME", env_keys)
+        self.assertNotIn("STREAM_KEEPER_WEB_PASSWORD", env_keys)
 
         compose = (project_root / "docker-compose.yml").read_text(encoding="utf-8")
         dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
         readme = (project_root / "README.md").read_text(encoding="utf-8")
-        self.assertIn("STREAM_KEEPER_WEB_PASSWORD", compose)
+        self.assertNotIn("STREAM_KEEPER_WEB_USERNAME", compose)
+        self.assertNotIn("STREAM_KEEPER_WEB_PASSWORD", compose)
         self.assertIn("STREAM_KEEPER_DOUYIN_COOKIE", compose)
         self.assertIn("STREAM_KEEPER_DATA_DIR=/data", dockerfile)
-        self.assertIn("nianzhibai/StreamKeeper.git", readme)
-        self.assertIn("STREAM_KEEPER_WEB_USERNAME=admin", readme)
-        self.assertIn(f"STREAM_KEEPER_WEB_PASSWORD={WEB_SETUP_PASSWORD}", readme)
+        self.assertIn("releases/latest/download/streamkeeper-source.tar.gz", readme)
         self.assertIn("首次打开登录页会要求设置管理员用户名和密码", readme)
-        self.assertIn("STREAM_KEEPER_DOUYIN_COOKIE=", readme)
+        self.assertIn("STREAM_KEEPER_*_COOKIE", readme)
         self.assertNotIn("nianzhibai/DouYinStreamKeeper.git", readme)
         self.assertNotIn("\nDOUYIN_WEB_USERNAME=", readme)
         for obsolete in ("DOUYIN_WEB_USERNAME", "DOUYIN_WEB_PASSWORD", "WEB_CONCURRENCY"):

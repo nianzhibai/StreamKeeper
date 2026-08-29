@@ -20,7 +20,6 @@ def make_settings(root: Path, **overrides) -> Settings:
         "data_dir": root,
         "recordings_dir": root / "recordings",
         "database_path": root / "tasks.db",
-        "web_password": "test-password",
         "quark_cookie": "cookie=value",
         "quark_upload_path": "/QuarkArchive",
         "wopan_access_token": "1234567890abcdef-access",

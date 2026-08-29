@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cloud.config import CLOUD_PROVIDER_ORDER, CLOUD_PROVIDER_SPECS
-from ..settings import MAX_RECORDING_CONCURRENCY, WEB_SETUP_PASSWORD
+from ..settings import MAX_RECORDING_CONCURRENCY
 from .schemas import (
     EventCategory,
     EventLevel,
@@ -221,23 +221,10 @@ class TaskStore:
                     username TEXT NOT NULL,
                     password_salt BLOB NOT NULL,
                     password_digest BLOB NOT NULL,
-                    credential_source TEXT NOT NULL DEFAULT 'legacy'
-                        CHECK (credential_source IN ('legacy', 'environment', 'web')),
                     updated_at TEXT NOT NULL
                 )
                 """
             )
-            auth_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(web_auth_state)").fetchall()
-            }
-            if "credential_source" not in auth_columns:
-                connection.execute(
-                    """
-                    ALTER TABLE web_auth_state
-                    ADD COLUMN credential_source TEXT NOT NULL DEFAULT 'legacy'
-                        CHECK (credential_source IN ('legacy', 'environment', 'web'))
-                    """
-                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS web_login_failures (
@@ -811,8 +798,6 @@ class TaskStore:
             raise ValueError("用户名不能为空")
         if new_password is not None and len(new_password) < 10:
             raise ValueError("新密码至少需要 10 个字符")
-        if new_password == WEB_SETUP_PASSWORD:
-            raise ValueError("不能使用默认占位密码")
         return await self._run_sync(
             self._update_web_credentials_sync,
             current_username,
@@ -857,8 +842,7 @@ class TaskStore:
             connection.execute(
                 """
                 UPDATE web_auth_state
-                SET username = ?, password_salt = ?, password_digest = ?,
-                    credential_source = 'web', updated_at = ?
+                SET username = ?, password_salt = ?, password_digest = ?, updated_at = ?
                 WHERE id = 1
                 """,
                 (new_username, salt, digest, utc_now().isoformat()),
@@ -874,8 +858,6 @@ class TaskStore:
             raise ValueError("用户名不能为空")
         if len(password) < 10:
             raise ValueError("密码至少需要 10 个字符")
-        if password == WEB_SETUP_PASSWORD:
-            raise ValueError("不能使用默认占位密码")
         return await self._run_sync(self._initialize_web_credentials_sync, normalized_username, password)
 
     def _initialize_web_credentials_sync(self, username: str, password: str) -> bool:
@@ -887,82 +869,14 @@ class TaskStore:
             connection.execute(
                 """
                 INSERT INTO web_auth_state (
-                    id, username, password_salt, password_digest, credential_source, updated_at
-                ) VALUES (1, ?, ?, ?, 'web', ?)
+                    id, username, password_salt, password_digest, updated_at
+                ) VALUES (1, ?, ?, ?, ?)
                 """,
                 (username, salt, self._credential_digest(password, salt), utc_now().isoformat()),
             )
             connection.execute("DELETE FROM web_sessions")
             connection.execute("DELETE FROM web_login_failures")
             connection.execute("DELETE FROM web_login_blacklist")
-        return True
-
-    async def discard_web_credentials_if_match(self, username: str, password: str) -> bool:
-        """Remove a legacy placeholder account without touching real persisted credentials."""
-
-        return await self._run_sync(self._discard_web_credentials_if_match_sync, username, password)
-
-    def _discard_web_credentials_if_match_sync(self, username: str, password: str) -> bool:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT username, password_salt, password_digest FROM web_auth_state WHERE id = 1"
-            ).fetchone()
-            if not self._stored_credentials_match(row, username, password):
-                if row is not None:
-                    # A real account created by an older setup-mode release is
-                    # Web-managed even though its source column was not present.
-                    connection.execute(
-                        "UPDATE web_auth_state SET credential_source = 'web' WHERE id = 1"
-                    )
-                return False
-            connection.execute("DELETE FROM web_auth_state WHERE id = 1")
-            connection.execute("DELETE FROM web_sessions")
-            connection.execute("DELETE FROM web_login_failures")
-            connection.execute("DELETE FROM web_login_blacklist")
-        return True
-
-    async def sync_web_credentials(self, username: str, password: str) -> bool:
-        """Persist environment-managed credentials and revoke sessions when they change."""
-
-        return await self._run_sync(self._sync_web_credentials_sync, username, password)
-
-    def _sync_web_credentials_sync(self, username: str, password: str) -> bool:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT username, password_salt, password_digest, credential_source
-                FROM web_auth_state
-                WHERE id = 1
-                """
-            ).fetchone()
-            if row is not None and row["credential_source"] == "web":
-                return False
-            if self._stored_credentials_match(row, username, password):
-                if row is not None and row["credential_source"] != "environment":
-                    connection.execute(
-                        "UPDATE web_auth_state SET credential_source = 'environment' WHERE id = 1"
-                    )
-                return False
-
-            salt = secrets.token_bytes(16)
-            digest = self._credential_digest(password, salt)
-            connection.execute(
-                """
-                INSERT INTO web_auth_state (
-                    id, username, password_salt, password_digest, credential_source, updated_at
-                ) VALUES (1, ?, ?, ?, 'environment', ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    username = excluded.username,
-                    password_salt = excluded.password_salt,
-                    password_digest = excluded.password_digest,
-                    credential_source = excluded.credential_source,
-                    updated_at = excluded.updated_at
-                """,
-                (username, salt, digest, utc_now().isoformat()),
-            )
-            connection.execute("DELETE FROM web_sessions")
         return True
 
     async def is_login_blacklisted(self, client_key: str) -> bool:

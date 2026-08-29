@@ -13,19 +13,23 @@ StreamKeeper一个直播录制工具，支持抖音、快手、哔哩哔哩三�
 
 ### 方式一：Docker 启动（推荐）
 
-**1. 部署并启动**
+**1. 下载部署文件并启动**
+
 ```bash
-git clone https://github.com/nianzhibai/StreamKeeper.git
-cd StreamKeeper
-cp .env.example .env
-docker compose up -d --build
+mkdir -p StreamKeeper && cd StreamKeeper
+curl -fLO https://github.com/nianzhibai/StreamKeeper/releases/latest/download/docker-compose.yml
+docker compose pull
+docker compose up -d
 ```
+
+默认使用最新 Release 镜像。首次打开登录页会要求设置管理员用户名和密码；需要自定义其他配置时再下载 `.env.example` 并保存为 `.env`。
 
 **2. 常用指令**
 
 ```bash
 docker compose logs -f recorder                       # 查看日志
-docker compose pull && docker compose up -d --build   # 更新
+docker compose ps                                     # 查看容器和健康状态
+docker compose pull && docker compose up -d            # 更新到最新 Release
 ```
 
 部署完成后访问：`http://服务器IP:8000/`
@@ -33,10 +37,10 @@ docker compose pull && docker compose up -d --build   # 更新
 ### 方式二：Python 启动
 
 ```bash
-git clone https://github.com/nianzhibai/StreamKeeper.git
+curl -fL https://github.com/nianzhibai/StreamKeeper/releases/latest/download/streamkeeper-source.tar.gz \
+  | tar -xz
 cd StreamKeeper
 pip install .
-export STREAM_KEEPER_WEB_PASSWORD=replace-with-a-long-random-password
 stream-keeper
 ```
 
@@ -52,7 +56,7 @@ stream-keeper
 
 ## .env.example简单说明
 
-- `STREAM_KEEPER_WEB_USERNAME`、`STREAM_KEEPER_WEB_PASSWORD`：Web 管理账号和密码。
+- `STREAM_KEEPER_IMAGE`：Docker 镜像，默认使用最新 Release。
 - `STREAM_KEEPER_BIND_ADDRESS`、`STREAM_KEEPER_WEB_PORT`：Web 服务监听地址和端口。
 - `STREAM_KEEPER_MAX_CONCURRENT_RECORDINGS`：最大同时录制数量。
 - `STREAM_KEEPER_*_COOKIE`：抖音、哔哩哔哩、快手的可选登录 Cookie。
@@ -61,7 +65,7 @@ stream-keeper
 - `STREAM_KEEPER_UPLOAD_*`：网盘上传模式、执行时间、文件等待时间和超时时间。
 - `TZ`：程序时区，默认 `Asia/Shanghai`。
 
-详细配置项和默认值请查看项目中的 `.env.example` 文件。首次使用默认占位密码启动时，登录页会引导设置管理员账号和密码。
+详细配置项和默认值请查看项目中的 `.env.example` 文件。首次访问登录页时会引导设置管理员账号和密码。
 
 ## 致谢
 

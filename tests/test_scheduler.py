@@ -17,7 +17,6 @@ def make_settings(root: Path) -> Settings:
         data_dir=root,
         recordings_dir=root / "recordings",
         database_path=root / "tasks.db",
-        web_password="test-password",
         validate_binaries=False,
     )
 

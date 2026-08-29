@@ -372,13 +372,6 @@ def create_app(
             RecordingRuntimeSettings(max_concurrent_recordings=settings.max_concurrent_recordings)
         )
         scheduler.set_max_concurrent_recordings(runtime_settings.max_concurrent_recordings)
-        if settings.web_setup_mode:
-            # Older releases persisted the documented placeholder as if it
-            # were a real password. Remove only that exact legacy row; once
-            # setup stores real credentials, subsequent restarts preserve it.
-            await store.discard_web_credentials_if_match(settings.web_username, settings.web_password)
-        else:
-            await store.sync_web_credentials(settings.web_username, settings.web_password)
         await event_log.info(
             "system",
             f"服务已启动（v{__version__}）",
@@ -447,13 +440,10 @@ def create_app(
 
     @app.get("/api/auth/status", response_model=AuthStatus)
     async def auth_status() -> AuthStatus:
-        setup_required = settings.web_setup_mode and not await store.web_credentials_configured()
-        return AuthStatus(setup_required=setup_required)
+        return AuthStatus(setup_required=not await store.web_credentials_configured())
 
     @app.post("/api/auth/setup", response_model=AuthSession, status_code=status.HTTP_201_CREATED)
     async def setup_auth(payload: AuthSetupRequest, request: Request, response: Response) -> AuthSession:
-        if not settings.web_setup_mode:
-            raise HTTPException(status_code=409, detail="当前实例不允许通过网页初始化管理员账号")
         created = await store.initialize_web_credentials(
             payload.username,
             payload.password.get_secret_value(),

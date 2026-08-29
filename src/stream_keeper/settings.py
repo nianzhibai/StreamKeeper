@@ -12,8 +12,6 @@ UPLOAD_MODE_SCHEDULED = "scheduled"
 UPLOAD_MODE_RECORDING_COMPLETED = "recording_completed"
 UPLOAD_MODES = frozenset({UPLOAD_MODE_SCHEDULED, UPLOAD_MODE_RECORDING_COMPLETED})
 ENV_PREFIX = "STREAM_KEEPER_"
-DEFAULT_WEB_USERNAME = "admin"
-WEB_SETUP_PASSWORD = "replace-with-a-long-random-password"
 DEFAULT_MAX_CONCURRENT_RECORDINGS = 3
 MAX_RECORDING_CONCURRENCY = 100
 
@@ -34,8 +32,6 @@ class Settings:
     database_path: Path = Path("data/tasks.db")
     web_host: str = "0.0.0.0"
     web_port: int = 8000
-    web_username: str = DEFAULT_WEB_USERNAME
-    web_password: str = ""
     web_workers: int = 1
     session_ttl_hours: int = 24 * 7
     login_max_attempts: int = 3
@@ -89,8 +85,6 @@ class Settings:
             # when running the Python entrypoint directly unless WEB_HOST is set.
             web_host=_env("WEB_HOST") or _env("BIND_ADDRESS") or "0.0.0.0",
             web_port=int(_env("WEB_PORT", "8000")),
-            web_username=_env("WEB_USERNAME", DEFAULT_WEB_USERNAME),
-            web_password=_env("WEB_PASSWORD"),
             web_workers=int(_env("WEB_WORKERS", "1")),
             session_ttl_hours=int(_env("SESSION_TTL_HOURS", str(24 * 7))),
             login_max_attempts=int(_env("LOGIN_MAX_ATTEMPTS", "3")),
@@ -132,16 +126,7 @@ class Settings:
             ffmpeg=_env("FFMPEG", "ffmpeg"),
         )
 
-    @property
-    def web_setup_mode(self) -> bool:
-        """Whether the environment deliberately delegates initial credentials to the Web UI."""
-        return self.web_password == WEB_SETUP_PASSWORD
-
     def prepare(self) -> None:
-        if not self.web_password:
-            raise RuntimeError("必须设置 STREAM_KEEPER_WEB_PASSWORD")
-        if self.web_password and len(self.web_password) < 10:
-            raise RuntimeError("STREAM_KEEPER_WEB_PASSWORD 至少需要 10 个字符")
         if self.web_workers != 1:
             raise RuntimeError("录制调度器只支持单 Web worker，请将 STREAM_KEEPER_WEB_WORKERS 设置为 1")
         if not 1 <= self.session_ttl_hours <= 24 * 30:

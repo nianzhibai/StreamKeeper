@@ -39,7 +39,7 @@ function setMode(status) {
   password.autocomplete = setupRequired ? "new-password" : "current-password";
   if (setupRequired) {
     password.minLength = 10;
-    securityText.textContent = "首次访问，请设置管理员密码";
+    securityText.textContent = "首次访问，请设置管理员账号和密码";
     submit.textContent = "保存并进入";
   } else {
     password.removeAttribute("minlength");

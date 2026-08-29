@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from stream_keeper.errors import InsufficientDiskSpaceError
 from stream_keeper.models import LiveInfo
-from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, WEB_SETUP_PASSWORD, Settings
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 from stream_keeper.web import app as web_app
 from stream_keeper.web.app import create_app
 from stream_keeper.web.auth import SESSION_COOKIE_NAME
@@ -159,15 +159,9 @@ class WebSetupTests(TestCase):
             data_dir=root,
             recordings_dir=root / "recordings",
             database_path=root / "tasks.db",
-            web_username="admin",
-            web_password=WEB_SETUP_PASSWORD,
             validate_binaries=False,
         )
         self.store = TaskStore(self.settings.database_path)
-        # Simulate an upgrade from the release that persisted the documented
-        # placeholder as a real account. Startup must turn it back into setup.
-        asyncio.run(self.store.initialize())
-        asyncio.run(self.store.sync_web_credentials("admin", WEB_SETUP_PASSWORD))
         self.scheduler = FakeScheduler(self.store)
         app = create_app(
             self.settings,
@@ -184,7 +178,7 @@ class WebSetupTests(TestCase):
         self.client_context.__exit__(None, None, None)
         self.temp_dir.cleanup()
 
-    def test_default_environment_credentials_trigger_one_time_web_setup(self) -> None:
+    def test_empty_database_triggers_one_time_web_setup(self) -> None:
         status_response = self.client.get("/api/auth/status")
         self.assertEqual(status_response.status_code, 200)
         self.assertEqual(
@@ -201,7 +195,7 @@ class WebSetupTests(TestCase):
 
         login_before_setup = self.client.post(
             "/api/auth/login",
-            json={"username": "admin", "password": WEB_SETUP_PASSWORD},
+            json={"username": "admin", "password": "not-configured"},
         )
         self.assertEqual(login_before_setup.status_code, 409)
 
@@ -214,15 +208,15 @@ class WebSetupTests(TestCase):
             },
         )
         self.assertEqual(mismatch.status_code, 422)
-        placeholder = self.client.post(
+        short_password = self.client.post(
             "/api/auth/setup",
             json={
                 "username": "chosen-admin",
-                "password": WEB_SETUP_PASSWORD,
-                "password_confirmation": WEB_SETUP_PASSWORD,
+                "password": "too-short",
+                "password_confirmation": "too-short",
             },
         )
-        self.assertEqual(placeholder.status_code, 422)
+        self.assertEqual(short_password.status_code, 422)
 
         setup = self.client.post(
             "/api/auth/setup",
@@ -257,11 +251,11 @@ class WebSetupTests(TestCase):
 
         csrf_headers = {"X-CSRF-Token": setup.json()["csrf_token"]}
         self.assertEqual(self.client.post("/api/auth/logout", headers=csrf_headers).status_code, 204)
-        rejected_placeholder = self.client.post(
+        rejected_unconfigured_account = self.client.post(
             "/api/auth/login",
-            json={"username": "admin", "password": WEB_SETUP_PASSWORD},
+            json={"username": "admin", "password": "not-configured"},
         )
-        self.assertEqual(rejected_placeholder.status_code, 401)
+        self.assertEqual(rejected_unconfigured_account.status_code, 401)
         accepted = self.client.post(
             "/api/auth/login",
             json={"username": "chosen-admin", "password": "chosen-secure-password"},
@@ -303,11 +297,11 @@ class WebTests(TestCase):
             data_dir=root,
             recordings_dir=root / "recordings",
             database_path=root / "tasks.db",
-            web_username="admin",
-            web_password="secret-password",
             validate_binaries=False,
         )
         self.store = TaskStore(self.settings.database_path)
+        asyncio.run(self.store.initialize())
+        asyncio.run(self.store.initialize_web_credentials("admin", "secret-password"))
         self.scheduler = FakeScheduler(self.store)
         self.baidu_openlist_auth = FakeBaiduOpenListAuth()
         app = create_app(
@@ -454,21 +448,17 @@ class WebTests(TestCase):
         events = self.client.get("/api/events").json()["events"]
         self.assertTrue(any(event["message"] == "管理员登录账号已更新" for event in events))
 
-    def test_phone_navigation_groups_secondary_pages_under_more_sheet(self) -> None:
+    def test_phone_navigation_reuses_sidebar_as_off_canvas_drawer(self) -> None:
         self.login()
         shell = self.client.get("/static/shell.js").text
         style = self.client.get("/static/style.css").text
         sprite = self.client.get("/static/sprite.js").text
 
-        self.assertEqual(shell.count('mobile: "primary"'), 3)
-        self.assertEqual(shell.count('mobile: "more"'), 3)
-        self.assertIn('data-mobile-more-toggle', shell)
-        self.assertIn('id="mobile-more-dialog"', shell)
-        self.assertIn('dialog.showModal()', shell)
-        self.assertIn('dialog.addEventListener("touchend"', shell)
-        self.assertIn('window.matchMedia("(max-width: 640px)")', shell)
-        self.assertIn('mobileLabel: "任务"', shell)
-        self.assertIn('mobileLabel: "录像"', shell)
+        self.assertIn('data-drawer-toggle', shell)
+        self.assertIn('data-drawer-close', shell)
+        self.assertIn('id="main-nav"', shell)
+        self.assertIn('sidebar.classList.toggle("is-drawer-open", open)', shell)
+        self.assertIn('window.matchMedia("(min-width: 901px)")', shell)
         self.assertIn('aria-current="page"', shell)
 
         page_header_style = style.split('.page-head {', 1)[1].split('}', 1)[0]
@@ -476,12 +466,12 @@ class WebTests(TestCase):
         self.assertIn('align-items: center;', page_header_style)
         self.assertIn('min-height: 38px;', page_title_style)
         self.assertIn('align-items: center;', page_title_style)
-        self.assertIn('@media (max-width: 640px)', style)
-        self.assertIn('grid-template-columns: repeat(4, minmax(0, 1fr))', style)
-        self.assertIn('.nav-link[data-nav="archive"]', style)
-        self.assertIn('.mobile-more[open]', style)
+        self.assertIn('@media (max-width: 900px)', style)
+        self.assertIn('.sidebar.is-drawer-open .sidebar-panel', style)
+        self.assertIn('.sidebar.is-drawer-open .nav-scrim', style)
         self.assertIn('env(safe-area-inset-bottom)', style)
-        self.assertIn('more:', sprite)
+        self.assertIn('menu:', sprite)
+        self.assertIn('close:', sprite)
 
         for path in ("/", "/tasks", "/recordings", "/archive", "/logs", "/settings"):
             with self.subTest(path=path):
