@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .platforms import LiveStreamClient
 
@@ -14,6 +16,21 @@ UPLOAD_MODES = frozenset({UPLOAD_MODE_SCHEDULED, UPLOAD_MODE_RECORDING_COMPLETED
 ENV_PREFIX = "STREAM_KEEPER_"
 DEFAULT_MAX_CONCURRENT_RECORDINGS = 3
 MAX_RECORDING_CONCURRENCY = 100
+APPLICATION_DIRECTORY_NAME = ".streamkeeper"
+
+
+def _application_directory() -> Path:
+    return Path.home() / APPLICATION_DIRECTORY_NAME
+
+
+def _default_data_directory() -> Path:
+    return _application_directory() / "data"
+
+
+def load_environment_file(path: Path | None = None) -> bool:
+    """Load user configuration without overriding the process environment."""
+    environment_file = path if path is not None else _application_directory() / ".env"
+    return load_dotenv(dotenv_path=environment_file, override=False)
 
 
 def _env_name(suffix: str) -> str:
@@ -27,9 +44,9 @@ def _env(suffix: str, default: str = "") -> str:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    data_dir: Path = Path("data")
-    recordings_dir: Path = Path("data/recordings")
-    database_path: Path = Path("data/tasks.db")
+    data_dir: Path = field(default_factory=_default_data_directory)
+    recordings_dir: Path = field(default_factory=lambda: _default_data_directory() / "recordings")
+    database_path: Path = field(default_factory=lambda: _default_data_directory() / "tasks.db")
     web_host: str = "0.0.0.0"
     web_port: int = 8000
     web_workers: int = 1
@@ -73,7 +90,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        data_dir = Path(_env("DATA_DIR", "data")).expanduser()
+        data_dir = Path(_env("DATA_DIR", str(_default_data_directory()))).expanduser()
         recordings_dir = Path(_env("RECORDINGS_DIR", str(data_dir / "recordings"))).expanduser()
         database_path = Path(_env("DATABASE_PATH", str(data_dir / "tasks.db"))).expanduser()
         cookie_file_value = _env("DOUYIN_COOKIE_FILE")

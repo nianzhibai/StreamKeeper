@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from stream_keeper import LiveStreamClient
 from stream_keeper.cloud import CloudArchiveConfig
-from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, Settings
+from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, ENV_PREFIX, Settings, load_environment_file
+from stream_keeper.web import server
 from stream_keeper.web.events import _retention_from_env
 
 
@@ -22,6 +23,73 @@ def make_settings(root: Path, **overrides) -> Settings:
 
 
 class SettingsTests(TestCase):
+    def test_environment_file_is_loaded_without_overriding_process_environment(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            env_file.write_text(
+                "STREAM_KEEPER_WEB_PORT=9000\n"
+                'STREAM_KEEPER_DOUYIN_COOKIE="session=from-file; token=a#b"\n',
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"STREAM_KEEPER_WEB_PORT": "9100"}, clear=True):
+                loaded = load_environment_file(env_file)
+                settings = Settings.from_env()
+
+        self.assertTrue(loaded)
+        self.assertEqual(settings.web_port, 9100)
+        self.assertEqual(settings.douyin_cookies, "session=from-file; token=a#b")
+
+    def test_missing_environment_file_preserves_defaults(self) -> None:
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            loaded = load_environment_file(Path(tmp) / ".env")
+            settings = Settings.from_env()
+
+        self.assertFalse(loaded)
+        self.assertEqual(settings.web_port, 8000)
+
+    def test_default_configuration_and_data_paths_do_not_depend_on_working_directory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            application_directory = root / ".streamkeeper"
+            application_directory.mkdir()
+            (application_directory / ".env").write_text("STREAM_KEEPER_WEB_PORT=9000\n", encoding="utf-8")
+            first_working_directory = root / "first"
+            second_working_directory = root / "second"
+            first_working_directory.mkdir()
+            second_working_directory.mkdir()
+            original_working_directory = Path.cwd()
+            try:
+                settings_by_working_directory = []
+                for working_directory in (first_working_directory, second_working_directory):
+                    os.chdir(working_directory)
+                    with (
+                        patch("stream_keeper.settings._application_directory", return_value=application_directory),
+                        patch.dict(os.environ, {}, clear=True),
+                    ):
+                        self.assertTrue(load_environment_file())
+                        settings_by_working_directory.append(Settings.from_env())
+            finally:
+                os.chdir(original_working_directory)
+
+        for settings in settings_by_working_directory:
+            self.assertEqual(settings.web_port, 9000)
+            self.assertEqual(settings.data_dir, application_directory / "data")
+            self.assertEqual(settings.recordings_dir, application_directory / "data" / "recordings")
+            self.assertEqual(settings.database_path, application_directory / "data" / "tasks.db")
+
+    def test_python_entrypoint_loads_environment_file_before_reading_settings(self) -> None:
+        calls: list[str] = []
+        settings = Settings(validate_binaries=False)
+        with (
+            patch.object(server, "load_environment_file", side_effect=lambda: calls.append("load")),
+            patch.object(Settings, "from_env", side_effect=lambda: (calls.append("settings"), settings)[1]),
+            patch.object(server, "create_app", return_value=object()),
+            patch.object(server.uvicorn, "run"),
+        ):
+            self.assertEqual(server.main(), 0)
+
+        self.assertEqual(calls, ["load", "settings"])
+
     def test_session_defaults_to_seven_days(self) -> None:
         settings = Settings()
         self.assertEqual(settings.session_ttl_hours, 24 * 7)
@@ -234,7 +302,8 @@ class SettingsTests(TestCase):
         self.assertIn("STREAM_KEEPER_DOUYIN_COOKIE", compose)
         self.assertIn("STREAM_KEEPER_DATA_DIR=/data", dockerfile)
         self.assertIn("releases/latest/download/streamkeeper-source.tar.gz", readme)
-        self.assertIn("首次打开登录页会要求设置管理员用户名和密码", readme)
+        self.assertIn("首次访问", readme)
+        self.assertIn("管理员用户名和密码", readme)
         self.assertIn("STREAM_KEEPER_*_COOKIE", readme)
         self.assertNotIn("nianzhibai/DouYinStreamKeeper.git", readme)
         self.assertNotIn("\nDOUYIN_WEB_USERNAME=", readme)

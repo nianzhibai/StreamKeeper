@@ -13,6 +13,7 @@ dependencies = [
     "fastapi==0.139.0",
     "httpx==0.28.1",
     "pycryptodome==3.23.0",
+    "python-dotenv==1.2.3",
     "qrcode==8.2",
     "uvicorn==0.51.0",
 ]

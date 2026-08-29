@@ -4,11 +4,12 @@ import logging
 
 import uvicorn
 
-from ..settings import Settings
+from ..settings import Settings, load_environment_file
 from .app import create_app
 
 
 def main() -> int:
+    load_environment_file()
     settings = Settings.from_env()
     logging.basicConfig(
         level=logging.INFO,
