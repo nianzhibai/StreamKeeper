@@ -6,13 +6,13 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="description" content="管理抖音、哔哩哔哩和快手直播录制任务：自动值守、开播即录、分段保存" />
     <title>录制任务 · Stream Keeper</title>
-    <script src="/static/theme.js?v=20260876"></script>
-    <link rel="icon" href="/static/favicon.svg?v=20260876" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/style.css?v=20260876" />
+    <script src="/static/theme.js?v=20260877"></script>
+    <link rel="icon" href="/static/favicon.svg?v=20260877" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=20260877" />
   </head>
   <body data-page="tasks">
-    <script src="/static/sprite.js?v=20260876"></script>
-    <script src="/static/shell.js?v=20260876"></script>
+    <script src="/static/sprite.js?v=20260877"></script>
+    <script src="/static/shell.js?v=20260877"></script>
     <div class="app" id="app">
       <main class="main" id="main">
         <header class="page-head">
@@ -63,106 +63,6 @@
       </main>
     </div>
 
-    <dialog id="task-dialog" class="modal" aria-labelledby="dialog-title">
-      <form id="task-form" method="dialog">
-        <header class="modal-head">
-          <div class="modal-heading">
-            <h2 id="dialog-title">抖音 | 快手 | 哔哩哔哩</h2>
-          </div>
-          <button class="btn btn-icon btn-ghost" type="button" data-close-dialog aria-label="关闭">
-            <svg class="ic" aria-hidden="true"><use href="#ic-close" /></svg>
-          </button>
-        </header>
-
-        <div class="modal-body">
-          <label class="field span-2">
-            <span class="field-label">直播间地址<b aria-hidden="true">*</b></span>
-            <span class="input-row">
-              <input id="task-url" class="input" name="url" type="text" required maxlength="1000" inputmode="url"
-                placeholder="粘贴直播间链接或平台分享文案" autocomplete="off" />
-              <button id="inspect-button" class="btn btn-soft" type="button">检测</button>
-            </span>
-          </label>
-          <div id="inspect-result" class="inspect hidden" role="status"></div>
-
-          <div class="form-grid">
-            <label class="field span-2">
-              <span class="field-label">任务名称<em>选填</em></span>
-              <input class="input" name="label" type="text" maxlength="80" placeholder="留空时使用主播昵称" />
-            </label>
-            <label class="field">
-              <span class="field-label">画质</span>
-              <select class="input" name="quality">
-                <option value="OD">原画</option>
-                <option value="UHD">超清</option>
-                <option value="HD">高清</option>
-                <option value="SD">标清</option>
-                <option value="LD">流畅</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-label">保存格式</span>
-              <select class="input" name="output_format">
-                <option value="ts">TS</option>
-                <option value="mp4">MP4</option>
-                <option value="mkv">MKV</option>
-                <option value="flv">FLV</option>
-              </select>
-            </label>
-          </div>
-
-          <div class="form-grid">
-            <label class="field">
-              <span class="field-label">录制段数</span>
-              <span class="suffix"><input class="input" name="segment_count" type="number" min="0" max="10000" step="1" value="0" /><em>段</em></span>
-            </label>
-            <label class="field">
-              <span class="field-label">分段时长</span>
-              <span class="suffix"><input class="input" name="segment_minutes" type="number" min="0" max="1440" step="any" value="30" /><em>分钟</em></span>
-            </label>
-            <label class="field">
-              <span class="field-label">直播源</span>
-              <select class="input" name="source">
-                <option value="auto">自动选择</option>
-                <option value="flv">优先 FLV</option>
-                <option value="hls">使用 HLS</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field-label">检查间隔</span>
-              <span class="suffix"><input class="input" name="interval_seconds" type="number" min="10" max="86400" step="1" value="60" /><em>秒</em></span>
-            </label>
-          </div>
-
-          <div class="option-row">
-            <label id="monitor-field" class="option">
-              <input name="monitor" type="checkbox" aria-describedby="monitor-hint segment-hint" checked />
-              <span class="switch" aria-hidden="true"></span>
-              <span class="option-text"><strong>持续值守</strong></span>
-            </label>
-            <label id="auto-start-field" class="option">
-              <input name="auto_start" type="checkbox" checked />
-              <span class="switch" aria-hidden="true"></span>
-              <span class="option-text"><strong>立即启动</strong></span>
-            </label>
-          </div>
-          <p id="monitor-hint" class="field-hint">
-            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-info" /></svg>
-            <span>持续值守会一直监听直播状态，只要开播就录制</span>
-          </p>
-          <p id="segment-hint" class="field-hint">
-            <svg class="ic ic-sm" aria-hidden="true"><use href="#ic-alert" /></svg>
-            <span>配置录制段数，持续值守功能将禁用</span>
-          </p>
-        </div>
-
-        <footer class="modal-foot">
-          <button class="btn btn-soft" type="button" data-close-dialog>取消</button>
-          <button id="task-submit" class="btn btn-primary" type="submit">创建任务</button>
-        </footer>
-      </form>
-    </dialog>
-
-    <script type="module" src="/static/tasks.js?v=20260876"></script>
+    <script type="module" src="/static/tasks.js?v=20260877"></script>
   </body>
 </html>

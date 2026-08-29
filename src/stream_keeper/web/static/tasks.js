@@ -20,20 +20,14 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260876";
+} from "/static/ui.js?v=20260877";
+import { createTaskDialog } from "/static/task-dialog.js?v=20260877";
 
 const state = {
   tasks: [],
   filter: "all",
   search: "",
   loading: false,
-  editingTaskId: null,
-  inspection: null,
-  recordingDefaults: {
-    output_format: "ts",
-    segment_seconds: 1800,
-    segment_count: 0,
-  },
   progressTimer: 0,
 };
 
@@ -44,14 +38,6 @@ const elements = {
   emptyTitle: document.querySelector("#task-empty-title"),
   emptyDetail: document.querySelector("#task-empty-detail"),
   search: document.querySelector("#task-search"),
-  dialog: document.querySelector("#task-dialog"),
-  dialogTitle: document.querySelector("#dialog-title"),
-  form: document.querySelector("#task-form"),
-  submit: document.querySelector("#task-submit"),
-  autoStartField: document.querySelector("#auto-start-field"),
-  monitorField: document.querySelector("#monitor-field"),
-  inspectButton: document.querySelector("#inspect-button"),
-  inspectResult: document.querySelector("#inspect-result"),
 };
 
 function taskTitle(task) {
@@ -195,12 +181,8 @@ async function load({ quiet = false } = {}) {
   if (state.loading) return;
   state.loading = true;
   try {
-    const [tasks, recordingDefaults] = await Promise.all([
-      api("/api/tasks"),
-      api("/api/settings/recording-defaults"),
-    ]);
+    const tasks = await api("/api/tasks");
     state.tasks = syncProgressClock(tasks);
-    state.recordingDefaults = recordingDefaults;
     render();
     clearPageError();
     setHealth(true);
@@ -214,208 +196,15 @@ async function load({ quiet = false } = {}) {
   }
 }
 
-function showTaskDialog() {
-  elements.dialog.showModal();
-  window.setTimeout(() => document.querySelector("#task-url").focus(), 60);
-}
-
-function resetDialog() {
-  state.inspection = null;
-  elements.form.reset();
-  elements.form.elements.segment_count.setCustomValidity("");
-  syncMonitorAvailability();
-  elements.inspectResult.className = "inspect hidden";
-  elements.inspectResult.innerHTML = "";
-}
-
-function openCreateDialog() {
-  state.editingTaskId = null;
-  resetDialog();
-  const form = elements.form.elements;
-  form.output_format.value = state.recordingDefaults.output_format;
-  form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60);
-  form.segment_count.value = String(state.recordingDefaults.segment_count);
-  validateSegmentSettings();
-  elements.dialogTitle.textContent = "抖音 | 快手 | 哔哩哔哩";
-  elements.submit.textContent = "创建任务";
-  elements.autoStartField.classList.remove("hidden");
-  showTaskDialog();
-}
-
-function openEditDialog(task) {
-  state.editingTaskId = task.id;
-  resetDialog();
-  const form = elements.form.elements;
-  form.url.value = task.url;
-  form.label.value = task.label || "";
-  form.quality.value = task.quality;
-  form.output_format.value = task.output_format;
-  form.source.value = task.source;
-  form.segment_minutes.value = String(task.segment_seconds / 60);
-  form.segment_count.value = String(task.segment_count);
-  form.monitor.checked = task.monitor;
-  form.interval_seconds.value = String(task.interval_seconds);
-  syncMonitorAvailability();
-  elements.dialogTitle.textContent = "编辑任务";
-  elements.submit.textContent = "保存更改";
-  elements.autoStartField.classList.add("hidden");
-  showTaskDialog();
-}
-
-function closeDialog() {
-  elements.dialog.close();
-  state.editingTaskId = null;
-}
-
-function renderInspectResult({ tone, glyph, title, detail }) {
-  elements.inspectResult.className = `inspect is-${tone}`;
-  elements.inspectResult.innerHTML = `
-    <span class="inspect-icon">${icon(glyph, "ic-sm")}</span>
-    <span class="inspect-copy"><strong></strong><small></small></span>`;
-  elements.inspectResult.querySelector("strong").textContent = title;
-  elements.inspectResult.querySelector("small").textContent = detail;
-}
-
-function invalidateInspection() {
-  state.inspection = null;
-  elements.inspectResult.className = "inspect hidden";
-  elements.inspectResult.innerHTML = "";
-}
-
-async function inspectRoom() {
-  const urlInput = document.querySelector("#task-url");
-  const url = urlInput.value.trim();
-  if (!url) {
-    urlInput.reportValidity();
-    return;
-  }
-  const quality = elements.form.elements.quality.value;
-  state.inspection = null;
-  elements.inspectButton.disabled = true;
-  elements.inspectButton.textContent = "检测中";
-  renderInspectResult({ tone: "loading", glyph: "clock", title: "正在检测直播间", detail: "识别平台并读取直播状态…" });
-  try {
-    const result = await api("/api/inspect", {
-      method: "POST",
-      body: JSON.stringify({ url, quality }),
-    });
-    if (urlInput.value.trim() !== url || elements.form.elements.quality.value !== quality) return;
-    state.inspection = { token: result.inspection_token, url, quality };
-    const sources = [result.has_flv && "FLV", result.has_hls && "HLS"].filter(Boolean).join(" / ");
-    renderInspectResult({
-      tone: "success",
-      glyph: result.is_live ? "record" : "checkCircle",
-      title: result.anchor_name || "未知主播",
-      detail: [result.platform, result.is_live ? "直播中" : "当前未开播", result.title, sources && `可用源 ${sources}`]
-        .filter(Boolean)
-        .join(" · "),
-    });
-  } catch (error) {
-    if (urlInput.value.trim() === url && elements.form.elements.quality.value === quality) {
-      renderInspectResult({ tone: "error", glyph: "alert", title: "检测失败", detail: error.message });
-    }
-  } finally {
-    elements.inspectButton.disabled = false;
-    elements.inspectButton.textContent = "检测";
-  }
-}
-
-function validateSegmentSettings() {
-  const segmentMinutes = Number(elements.form.elements.segment_minutes.value);
-  const segmentCount = Number(elements.form.elements.segment_count.value);
-  elements.form.elements.segment_count.setCustomValidity(
-    segmentCount > 0 && segmentMinutes <= 0 ? "设置段数时，分段时长必须大于 0" : "",
-  );
-  syncMonitorAvailability();
-}
-
-function syncMonitorAvailability() {
-  const monitor = elements.form.elements.monitor;
-  const segmentCount = Number(elements.form.elements.segment_count.value);
-  const hasSegmentLimit = segmentCount > 0;
-  monitor.disabled = hasSegmentLimit;
-  if (hasSegmentLimit) monitor.checked = false;
-  elements.monitorField.classList.toggle("is-disabled", hasSegmentLimit);
-}
-
-async function submitTask(event) {
-  event.preventDefault();
-  validateSegmentSettings();
-  if (!elements.form.reportValidity()) return;
-
-  const editingTaskId = state.editingTaskId;
-  const isEditing = Boolean(editingTaskId);
-  const editingTask = isEditing ? state.tasks.find((task) => task.id === editingTaskId) : null;
-  const data = new FormData(elements.form);
-  const segmentCount = Number(data.get("segment_count"));
-  const payload = {
-    url: String(data.get("url") || "").trim(),
-    label: String(data.get("label") || "").trim() || null,
-    quality: data.get("quality"),
-    output_format: data.get("output_format"),
-    source: data.get("source"),
-    segment_seconds: Math.round(Number(data.get("segment_minutes")) * 60),
-    segment_count: segmentCount,
-    monitor: segmentCount === 0 && data.get("monitor") === "on",
-    interval_seconds: Number(data.get("interval_seconds")),
-  };
-  const restartsRecording = editingTask && (
-    payload.url !== editingTask.url
-    || payload.quality !== editingTask.quality
-    || payload.output_format !== editingTask.output_format
-    || payload.source !== editingTask.source
-    || payload.segment_seconds !== editingTask.segment_seconds
-    || payload.segment_count !== editingTask.segment_count
-    || payload.monitor !== editingTask.monitor
-    || payload.interval_seconds !== editingTask.interval_seconds
-  );
-  if (editingTask?.status === "recording" && restartsRecording) {
-    const proceed = await confirmAction({
-      title: "保存后将重新开始录制",
-      message: `“${taskTitle(editingTask)}”正在录制中，修改录制参数会中断当前片段并立即重新开始。`,
-      confirmLabel: "保存并重启",
-      tone: "warn",
-    });
-    if (!proceed) return;
-  }
-  if (!isEditing) {
-    payload.auto_start = data.get("auto_start") === "on";
-    const inspection = state.inspection;
-    if (
-      payload.auto_start
-      && inspection
-      && inspection.url === payload.url
-      && inspection.quality === payload.quality
-    ) {
-      payload.inspection_token = inspection.token;
-    }
-  }
-
-  elements.submit.disabled = true;
-  const originalLabel = isEditing ? "保存更改" : "创建任务";
-  elements.submit.textContent = isEditing ? "保存中…" : "创建中…";
-  try {
-    if (isEditing) {
-      await api(`/api/tasks/${editingTaskId}`, { method: "PATCH", body: JSON.stringify(payload) });
-    } else {
-      await api("/api/tasks", { method: "POST", body: JSON.stringify(payload) });
-    }
-    closeDialog();
-    toast(isEditing ? "任务已更新" : "任务已创建", "success");
-    await load({ quiet: true });
-  } catch (error) {
-    toast(error.message, "error");
-  } finally {
-    elements.submit.disabled = false;
-    elements.submit.textContent = originalLabel;
-  }
-}
+const taskDialog = createTaskDialog({
+  onSaved: () => load({ quiet: true }),
+});
 
 async function taskAction(action, taskId) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
   if (action === "edit") {
-    openEditDialog(task);
+    taskDialog.openEdit(task);
     return;
   }
   if (action === "delete") {
@@ -440,25 +229,7 @@ async function taskAction(action, taskId) {
   }
 }
 
-document.querySelectorAll("[data-open-create]").forEach((button) => button.addEventListener("click", openCreateDialog));
-document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", closeDialog));
-elements.inspectButton.addEventListener("click", inspectRoom);
-elements.form.addEventListener("submit", submitTask);
-elements.form.elements.url.addEventListener("input", invalidateInspection);
-elements.form.elements.quality.addEventListener("change", invalidateInspection);
-elements.form.elements.segment_minutes.addEventListener("input", validateSegmentSettings);
-elements.form.elements.segment_count.addEventListener("input", validateSegmentSettings);
-document.querySelector("#task-url").addEventListener("paste", () => {
-  window.setTimeout(() => {
-    if (document.querySelector("#task-url").value.trim()) inspectRoom();
-  }, 120);
-});
-elements.dialog.addEventListener("click", (event) => {
-  if (event.target === elements.dialog) closeDialog();
-});
-elements.dialog.addEventListener("close", () => {
-  state.editingTaskId = null;
-});
+document.querySelectorAll("[data-open-create]").forEach((button) => button.addEventListener("click", taskDialog.openCreate));
 elements.list.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (button) taskAction(button.dataset.action, button.dataset.id);
@@ -477,22 +248,15 @@ document.querySelectorAll("[data-filter]").forEach((button) => {
 });
 document.addEventListener("keydown", (event) => {
   const typing = event.target instanceof Element && event.target.closest("input, select, textarea");
-  if (typing || elements.dialog.open || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (typing || taskDialog.isOpen() || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.key === "/") {
     event.preventDefault();
     elements.search?.focus();
   }
   if (event.key === "n") {
     event.preventDefault();
-    openCreateDialog();
+    taskDialog.openCreate();
   }
 });
 
-bootstrap(async (options) => {
-  await load(options);
-  const query = new URLSearchParams(window.location.search);
-  if (query.get("create") === "1" && !elements.dialog.open) {
-    openCreateDialog();
-    window.history.replaceState({}, "", "/tasks");
-  }
-});
+bootstrap((options) => Promise.all([load(options), taskDialog.prepare()]));

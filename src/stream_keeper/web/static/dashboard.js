@@ -21,7 +21,8 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260876";
+} from "/static/ui.js?v=20260877";
+import { createTaskDialog } from "/static/task-dialog.js?v=20260877";
 
 const MAX_VISIBLE_TASKS = 6;
 const STATUS_PRIORITY = { recording: 0, error: 1, checking: 2, queued: 3, waiting: 4, stopped: 5 };
@@ -168,4 +169,10 @@ async function load({ quiet = false } = {}) {
   }
 }
 
-bootstrap(load);
+const taskDialog = createTaskDialog({
+  onSaved: () => load({ quiet: true }),
+});
+
+document.querySelector("[data-open-create]").addEventListener("click", taskDialog.openCreate);
+
+bootstrap((options) => Promise.all([load(options), taskDialog.prepare()]));

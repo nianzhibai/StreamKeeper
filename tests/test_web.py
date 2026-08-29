@@ -508,10 +508,10 @@ class WebTests(TestCase):
 
     def test_task_url_input_keeps_standard_field_size_on_phones(self) -> None:
         self.login()
-        task_page = self.client.get("/tasks").text
+        task_dialog_script = self.client.get("/static/task-dialog.js").text
         style = self.client.get("/static/style.css").text
 
-        self.assertIn('<span class="input-row">', task_page)
+        self.assertIn('<span class="input-row">', task_dialog_script)
         self.assertIn('grid-template-columns: minmax(0, 1fr) auto', style)
         self.assertIn('.input-row .input {\n  min-width: 0;', style)
         self.assertIn('.input-row { grid-template-columns: minmax(0, 1fr); }', style)
@@ -521,9 +521,12 @@ class WebTests(TestCase):
     def test_recording_defaults_are_available_in_settings_and_new_task_dialog(self) -> None:
         self.login()
         settings_page = self.client.get("/settings").text
+        dashboard_page = self.client.get("/").text
         task_page = self.client.get("/tasks").text
         settings_script = self.client.get("/static/settings.js").text
         tasks_script = self.client.get("/static/tasks.js").text
+        dashboard_script = self.client.get("/static/dashboard.js").text
+        task_dialog_script = self.client.get("/static/task-dialog.js").text
 
         self.assertIn("管理员账号", settings_page)
         self.assertIn('id="account-settings-form"', settings_page)
@@ -544,10 +547,17 @@ class WebTests(TestCase):
         self.assertIn("form.elements.max_concurrent_recordings.value", settings_script)
         self.assertIn("form.elements.recording_output_format.value", settings_script)
 
+        self.assertIn('type="button" data-open-create', dashboard_page)
+        self.assertNotIn('/tasks?create=1', dashboard_page)
         self.assertRegex(task_page, r"/static/tasks\.js\?v=\d+")
-        self.assertIn("form.output_format.value = state.recordingDefaults.output_format", tasks_script)
-        self.assertIn("form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60)", tasks_script)
-        self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", tasks_script)
+        self.assertIn('from "/static/task-dialog.js?v=', tasks_script)
+        self.assertIn('from "/static/task-dialog.js?v=', dashboard_script)
+        self.assertIn("form.output_format.value = state.recordingDefaults.output_format", task_dialog_script)
+        self.assertIn(
+            "form.segment_minutes.value = String(state.recordingDefaults.segment_seconds / 60)",
+            task_dialog_script,
+        )
+        self.assertIn("form.segment_count.value = String(state.recordingDefaults.segment_count)", task_dialog_script)
 
     def test_recording_library_browses_and_streams_only_safe_video_files(self) -> None:
         self.login()
@@ -1179,10 +1189,10 @@ class WebTests(TestCase):
         self.assertEqual(reused.status_code, 201)
         self.assertIsNone(self.scheduler.initial_infos[-1])
 
-        tasks_script = self.client.get("/static/tasks.js").text
-        self.assertIn("payload.inspection_token = inspection.token", tasks_script)
-        self.assertIn('elements.form.elements.url.addEventListener("input", invalidateInspection)', tasks_script)
-        self.assertIn('elements.form.elements.quality.addEventListener("change", invalidateInspection)', tasks_script)
+        task_dialog_script = self.client.get("/static/task-dialog.js").text
+        self.assertIn("payload.inspection_token = inspection.token", task_dialog_script)
+        self.assertIn('elements.form.elements.url.addEventListener("input", clearInspection)', task_dialog_script)
+        self.assertIn('elements.form.elements.quality.addEventListener("change", clearInspection)', task_dialog_script)
         self.assertRegex(self.client.get("/tasks").text, r"/static/tasks\.js\?v=\d+")
 
     def test_failed_logins_permanently_blacklist_ip(self) -> None:
