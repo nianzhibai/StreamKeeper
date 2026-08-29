@@ -391,7 +391,8 @@ def create_app(
     app = FastAPI(
         title="StreamKeeper",
         version=__version__,
-        docs_url="/api/docs",
+        openapi_url=None,
+        docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
     )

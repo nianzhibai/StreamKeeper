@@ -381,9 +381,8 @@ class WebTests(TestCase):
         self.assertEqual(current.status_code, 200)
         self.assertEqual(current.json()["username"], "admin")
 
-        docs = self.client.get("/api/docs")
-        self.assertEqual(docs.status_code, 200)
-        self.assertIn("cdn.jsdelivr.net", docs.headers["content-security-policy"])
+        self.assertEqual(self.client.get("/api/docs").status_code, 404)
+        self.assertEqual(self.client.get("/openapi.json").status_code, 404)
 
         logout = self.client.post("/api/auth/logout", headers=self.csrf_headers)
         self.assertEqual(logout.status_code, 204)

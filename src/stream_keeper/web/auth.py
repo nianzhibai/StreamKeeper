@@ -99,7 +99,7 @@ class SessionAuthMiddleware:
         token = read_session_cookie(scope)
         session = await self.store.get_session(token) if token else None
         if session is None:
-            if path.startswith("/api/") and path != "/api/docs":
+            if path.startswith("/api/"):
                 response = JSONResponse({"detail": "登录已过期，请重新登录"}, status_code=401)
             else:
                 query = scope.get("query_string", b"").decode("latin-1")
@@ -173,20 +173,12 @@ class SecurityHeadersMiddleware:
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
-                if scope.get("path") == "/api/docs":
-                    content_security_policy = (
-                        b"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                        b"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                        b"img-src 'self' data: https://fastapi.tiangolo.com; connect-src 'self'; "
-                        b"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-                    )
-                else:
-                    content_security_policy = (
-                        b"default-src 'self'; script-src 'self'; style-src 'self'; "
-                        b"img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; "
-                        b"connect-src 'self'; frame-ancestors 'none'; "
-                        b"base-uri 'none'; form-action 'self'"
-                    )
+                content_security_policy = (
+                    b"default-src 'self'; script-src 'self'; style-src 'self'; "
+                    b"img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; "
+                    b"connect-src 'self'; frame-ancestors 'none'; "
+                    b"base-uri 'none'; form-action 'self'"
+                )
                 headers.extend(
                     [
                         (b"x-content-type-options", b"nosniff"),

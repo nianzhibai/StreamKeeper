@@ -703,21 +703,6 @@ img, svg {
   height: 14px;
 }
 
-.api-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  color: var(--text-4);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-  text-decoration: none;
-  transition: color var(--fast) var(--ease);
-}
-
-.api-link:hover {
-  color: var(--text-2);
-}
-
 .account {
   display: flex;
   align-items: center;
@@ -784,7 +769,6 @@ img, svg {
   :root[data-sidebar="rail"] .nav-label,
   :root[data-sidebar="rail"] .nav-title,
   :root[data-sidebar="rail"] .health span,
-  :root[data-sidebar="rail"] .api-link,
   :root[data-sidebar="rail"] .account-text {
     display: none;
   }
