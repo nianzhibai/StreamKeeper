@@ -15,6 +15,12 @@
 - **自动值守**：支持监控开播状态，开播就录制
 - **网盘归档**：录制的视频支持自动上传到夸克网盘、百度网盘、115网盘、光鸭网盘和联通网盘
 
+## 预览图
+
+<img src="ReadMeImage/overview.png" alt="概览页面" width="100%" />
+<img src="ReadMeImage/tasks.png" alt="录制任务页面" width="100%" />
+<img src="ReadMeImage/archive.png" alt="网盘归档页面" width="100%" />
+
 ## 快速启动
 
 ### 方式一：Docker 启动（推荐）
