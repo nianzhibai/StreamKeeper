@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 
 import httpx
 
-from stream_keeper.cloud import WoPanClient
+from stream_keeper.cloud import CloudUploadError, WoPanClient
 
 
 async def no_sleep(_seconds: float) -> None:
@@ -66,7 +66,7 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
                     json={
                         "STATUS": "200",
                         "MSG": "expired",
-                        "RSP": {"RSP_CODE": "9999", "RSP_DESC": "expired", "DATA": ""},
+                        "RSP": {"RSP_CODE": "1001", "RSP_DESC": "无效登录信息", "DATA": ""},
                     },
                 )
             if key == "AppRefreshToken":
@@ -151,6 +151,124 @@ class WoPanClientTests(IsolatedAsyncioTestCase):
             credential_updates,
             [{"access_token": "new-access-token-123456", "refresh_token": "new-refresh-token"}],
         )
+
+    async def test_dispatcher_refresh_is_bounded_and_only_handles_auth_errors(self) -> None:
+        for code, refresh_rejected, expected_calls in (
+            (1001, False, ["QueryAllFiles", "AppRefreshToken", "QueryAllFiles"]),
+            ("9999", False, ["QueryAllFiles", "AppRefreshToken", "QueryAllFiles"]),
+            ("1001", True, ["QueryAllFiles", "AppRefreshToken"]),
+            ("1009", False, ["QueryAllFiles"]),
+        ):
+            with self.subTest(code=code, refresh_rejected=refresh_rejected):
+                calls: list[str] = []
+
+                async def handler(
+                    request: httpx.Request,
+                    calls: list[str] = calls,
+                    code: str | int = code,
+                    refresh_rejected: bool = refresh_rejected,
+                ) -> httpx.Response:
+                    key = json.loads(await request.aread())["header"]["key"]
+                    calls.append(key)
+                    result: dict[str, object] = {"RSP_CODE": code, "RSP_DESC": "rejected"}
+                    if key == "AppRefreshToken" and not refresh_rejected:
+                        result = {
+                            "RSP_CODE": "0000",
+                            "DATA": {"access_token": "new-access-token-123456", "refresh_token": "new-refresh"},
+                        }
+                    return httpx.Response(200, json={"STATUS": "200", "RSP": result})
+
+                client = WoPanClient(
+                    "old-access-token-123456", "old-refresh", transport=httpx.MockTransport(handler)
+                )
+                try:
+                    with self.assertRaisesRegex(CloudUploadError, f"code={code}"):
+                        await client.remote_size("/remote.ts")
+                finally:
+                    await client.aclose()
+                self.assertEqual(calls, expected_calls)
+
+    async def test_invalid_login_without_refresh_token_reports_missing_credential(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, json={"STATUS": "200", "RSP": {"RSP_CODE": "1001", "RSP_DESC": "无效登录信息"}}
+            )
+
+        client = WoPanClient("old-access-token-123456", transport=httpx.MockTransport(handler))
+        try:
+            with self.assertRaisesRegex(CloudUploadError, "未配置 refresh token"):
+                await client.remote_size("/remote.ts")
+        finally:
+            await client.aclose()
+
+    async def test_upload_part_refreshes_and_reencrypts_before_retry(self) -> None:
+        for code in ("1001", "9999"):
+            with self.subTest(code=code):
+                await self._assert_upload_part_refresh(code)
+
+    async def _assert_upload_part_refresh(self, code: str) -> None:
+        calls: list[str] = []
+        updates: list[dict[str, str]] = []
+        old_token = "old-access-token-123456"
+        new_token = "new-access-token-123456"
+        file_info: dict[str, object] = {"fileName": "remote.ts", "fileSize": 6}
+        client: WoPanClient
+
+        async def save_credentials(state: dict[str, str]) -> None:
+            updates.append(state)
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            body = await request.aread()
+            if request.url.host == "upload.example":
+                calls.append("upload")
+                token = old_token if len(calls) == 1 else new_token
+                self.assertIn(b'name="accessToken"\r\n\r\n' + token.encode(), body)
+                encrypted = client._encrypt(file_info, "wohome", access_token=token).encode()
+                self.assertIn(b'name="fileInfo"\r\n\r\n' + encrypted, body)
+                self.assertIn(b"abcdef", body)
+                if len(calls) == 1:
+                    return httpx.Response(200, json={"code": code, "msg": "无效登录信息"})
+                self.assertEqual(len(updates), 1)
+                return httpx.Response(200, json={"code": "0000"})
+            self.assertEqual(json.loads(body)["header"]["key"], "AppRefreshToken")
+            calls.append("refresh")
+            return httpx.Response(
+                200,
+                json={
+                    "STATUS": "200",
+                    "RSP": {
+                        "RSP_CODE": "0000",
+                        "DATA": {"access_token": new_token, "refresh_token": "new-refresh"},
+                    },
+                },
+            )
+
+        client = WoPanClient(
+            old_token,
+            "old-refresh",
+            on_credential_update=save_credentials,
+            transport=httpx.MockTransport(handler),
+            sleep=no_sleep,
+        )
+        try:
+            with TemporaryDirectory() as tmp:
+                path = Path(tmp) / "local.ts"
+                path.write_bytes(b"abcdef")
+                await client._upload_part(
+                    "https://upload.example/openapi/client/upload2C",
+                    path,
+                    fields={},
+                    file_info=file_info,
+                    filename="remote.ts",
+                    content_type="video/mp2t",
+                    offset=0,
+                    size=6,
+                    part_index=1,
+                )
+        finally:
+            await client.aclose()
+        self.assertEqual(calls, ["upload", "refresh", "upload"])
+        self.assertEqual(updates, [{"access_token": new_token, "refresh_token": "new-refresh"}])
 
     async def _capture_create_directory_param(self, family_id: str) -> dict[str, object]:
         created_params: list[dict[str, object]] = []

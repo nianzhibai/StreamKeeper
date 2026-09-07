@@ -36,6 +36,8 @@ _CLIENT_SECRET = "XFmi9GS2hzk98jGX"
 _APP_ID = "10000001"
 _IV = b"wNSOYIB1k1DjY5lA"
 _PART_SIZE = 8 * 1024 * 1024
+# 1001 is invalid login; retain the existing 9999 refresh fallback.
+_TOKEN_REFRESH_CODES = frozenset({"1001", "9999"})
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.37"
@@ -125,6 +127,7 @@ class WoPanClient:
         async def refresh() -> None:
             if not self.refresh_token:
                 raise CloudUploadError("联通云盘 access token 已失效，但未配置 refresh token")
+            logger.info("联通云盘开始刷新凭据")
             data = await self._dispatcher(
                 "api-user",
                 "AppRefreshToken",
@@ -144,6 +147,7 @@ class WoPanClient:
                 await self._on_credential_update(
                     {"access_token": self.access_token, "refresh_token": self.refresh_token}
                 )
+            logger.info("联通云盘凭据刷新成功")
 
         await self._refresh_state.refresh(rejected_generation, refresh)
 
@@ -202,7 +206,7 @@ class WoPanClient:
         if not isinstance(result, dict):
             raise CloudUploadError(f"联通云盘接口 {key} 响应缺少 RSP")
         response_code = str(result.get("RSP_CODE") or "")
-        if channel != "api-user" and allow_refresh and response_code == "9999":
+        if channel != "api-user" and allow_refresh and response_code in _TOKEN_REFRESH_CODES:
             await self._refresh_access_token(rejected_generation=token_generation)
             return await self._dispatcher(channel, key, param, other, allow_refresh=False)
         if response_code != "0000":
@@ -435,7 +439,7 @@ class WoPanClient:
                         f"联通云盘第 {part_index} 片返回无效 JSON：{self._response_detail(response)}"
                     ) from exc
                 response_code = str(payload.get("code")) if isinstance(payload, dict) else ""
-                if response_code == "9999" and attempt < 2:
+                if response_code in _TOKEN_REFRESH_CODES and attempt < 2:
                     await self._refresh_access_token(rejected_generation=token_generation)
                     continue
                 if response.is_error or not isinstance(payload, dict) or response_code != "0000":
