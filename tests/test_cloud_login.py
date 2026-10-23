@@ -1,10 +1,18 @@
 import asyncio
 import base64
+import hashlib
 import json
+import time
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 
+from stream_keeper.cloud.yun139 import Yun139Client
+from stream_keeper.cloud.yun139_protocol import yun139_signature
 from stream_keeper.web.cloud_login import (
     BaiduOpenListAuth,
     CloudLoginError,
@@ -14,6 +22,8 @@ from stream_keeper.web.cloud_login import (
     Pan115QrLoginFlow,
     QuarkQrLoginFlow,
     WoPanQrLoginFlow,
+    Yun139QrLoginFlow,
+    create_cloud_login_flow,
 )
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\nvalid-enough-for-protocol-test"
@@ -274,6 +284,138 @@ class CloudLoginFlowTests(IsolatedAsyncioTestCase):
                     "refresh_token": "refresh-token-1234567890",
                 },
             )
+        finally:
+            await flow.aclose()
+
+
+class Yun139QrLoginTests(IsolatedAsyncioTestCase):
+    @staticmethod
+    def encrypted_response(payload: dict, *, inner: bool = False) -> httpx.Response:
+        payload = dict(payload)
+        if inner:
+            payload["data"] = AES.new(b"qPqDw263XgFgL3u8", AES.MODE_ECB).encrypt(
+                pad(json.dumps(payload["data"]).encode(), 16),
+            ).hex()
+        iv = b"0123456789abcdef"
+        ciphertext = AES.new(b"UqEZkrjCKfa02pP6jntzFmkzOz86zHUC", AES.MODE_CBC, iv=iv).encrypt(
+            pad(json.dumps(payload).encode(), 16),
+        )
+        return httpx.Response(200, content=base64.b64encode(iv + ciphertext))
+
+    async def test_qr_payload_device_binding_and_encrypted_polling_return_upload_credentials(self) -> None:
+        account = "13800000000"
+        token = f"login-token|a|b|{int((time.time() + 30 * 86400) * 1000)}"
+        states = iter(("200059541", "200059548", "0000"))
+        qr_contents = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(str(request.url), "https://user-njs.yun.139.com/user/thirdlogin")
+            encrypted = base64.b64decode(request.content)
+            text = unpad(
+                AES.new(b"UqEZkrjCKfa02pP6jntzFmkzOz86zHUC", AES.MODE_CBC, iv=encrypted[:16]).decrypt(
+                    encrypted[16:],
+                ), 16,
+            ).decode()
+            body = json.loads(text)
+            query = parse_qs(urlsplit(qr_contents[0]).fragment.split("?", 1)[1])
+            self.assertEqual(body["dycpwd"], query["sID"][0])
+            self.assertIn(query["dID"][0], request.headers["X-Yun-Client-Info"])
+            self.assertEqual(query["cType"], ["9"])
+            self.assertEqual(body["msisdn"], "")
+            self.assertEqual(body["pintype"], 21)
+            self.assertEqual(body["clienttype"], 670)
+            self.assertEqual(body["cpid"], 292)
+            self.assertEqual(
+                body["secinfo"], hashlib.sha1(f"fetion.com.cn:{body['dycpwd']}".encode()).hexdigest().upper(),
+            )
+            timestamp, nonce, signature = request.headers["Mcloud-Sign"].split(",")
+            self.assertEqual(signature, yun139_signature(text, timestamp, nonce))
+            self.assertNotIn("Authorization", request.headers)
+            code = next(states)
+            if code == "0000":
+                return self.encrypted_response({"code": code, "data": {"account": account, "token": token}}, inner=True)
+            return self.encrypted_response({"success": False, "code": code, "data": None})
+
+        def render(content: str) -> str:
+            qr_contents.append(content)
+            return "data:image/svg+xml;base64,cXI="
+
+        flow = Yun139QrLoginFlow(transport=httpx.MockTransport(handler))
+        try:
+            with patch("stream_keeper.web.cloud_login._qr_svg_data_uri", side_effect=render):
+                self.assertTrue((await flow.start()).startswith("data:image/"))
+            self.assertTrue(qr_contents[0].startswith("https://yun.139.com/w/#/qrcLogin?"))
+            self.assertEqual((await flow.poll()).state, "waiting")
+            self.assertEqual((await flow.poll()).state, "scanned")
+            completed = await flow.poll()
+            self.assertEqual(completed.state, "success")
+            expected = base64.b64encode(f"pc:{account}:{token}".encode()).decode()
+            self.assertEqual(completed.credentials, {"authorization": expected})
+            # The login output is the exact credential shape consumed by native uploads.
+            uploader = Yun139Client(completed.credentials["authorization"])
+            try:
+                self.assertEqual(uploader.account, account)
+            finally:
+                await uploader.aclose()
+        finally:
+            await flow.aclose()
+
+    async def test_expired_cancelled_and_rejected_states(self) -> None:
+        codes = iter(("200059542", "200059549", "200059543"))
+        flow = Yun139QrLoginFlow(transport=httpx.MockTransport(
+            lambda _request: self.encrypted_response({"success": False, "code": next(codes)}),
+        ))
+        try:
+            await flow.start()
+            self.assertEqual((await flow.poll()).state, "expired")
+            self.assertEqual((await flow.poll()).state, "cancelled")
+            with self.assertRaisesRegex(CloudLoginError, "扫码确认失败"):
+                await flow.poll()
+        finally:
+            await flow.aclose()
+
+    async def test_invalid_encryption_and_incomplete_credentials_cannot_succeed(self) -> None:
+        for response in (
+            httpx.Response(200, content="not-valid-base64"),
+            httpx.Response(200, json={"code": "0000", "data": {"account": "13800000000"}}),
+            self.encrypted_response({"code": "0000", "data": "not-valid-hex"}),
+            self.encrypted_response(
+                {"code": "0000", "data": {"account": "13800000000", "token": "invalid"}}, inner=True,
+            ),
+            self.encrypted_response(
+                {"code": "0000", "data": {"account": "13800000000", "token": "old|a|b|1"}}, inner=True,
+            ),
+            httpx.Response(503, text="private-upstream-response"),
+        ):
+            with self.subTest(response=response):
+                flow = Yun139QrLoginFlow(transport=httpx.MockTransport(lambda _request, response=response: response))
+                try:
+                    await flow.start()
+                    with self.assertRaises(CloudLoginError) as raised:
+                        await flow.poll()
+                    self.assertNotIn("private-upstream-response", str(raised.exception))
+                finally:
+                    await flow.aclose()
+
+    async def test_poll_requires_start_and_transport_errors_are_sanitized(self) -> None:
+        def fail(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("private-network-detail", request=request)
+
+        flow = Yun139QrLoginFlow(transport=httpx.MockTransport(fail))
+        try:
+            with self.assertRaisesRegex(CloudLoginError, "尚未初始化"):
+                await flow.poll()
+            image = await flow.start()
+            self.assertTrue(image.startswith("data:image/svg+xml;base64,"))
+            with self.assertRaisesRegex(CloudLoginError, "扫码服务连接失败"):
+                await flow.poll()
+        finally:
+            await flow.aclose()
+
+    async def test_factory_registers_mobile_cloud(self) -> None:
+        flow = create_cloud_login_flow("yun139")
+        try:
+            self.assertIsInstance(flow, Yun139QrLoginFlow)
         finally:
             await flow.aclose()
 

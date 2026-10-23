@@ -74,6 +74,9 @@ class Settings:
     guangya_client_id: str = ""
     guangya_device_id: str = ""
     guangya_root_id: str = ""
+    yun139_authorization: str = ""
+    yun139_root_id: str = "/"
+    yun139_client_type: str = "web"
     upload_mode: str = UPLOAD_MODE_SCHEDULED
     upload_hour: int = 1
     upload_min_age_minutes: int = 5
@@ -127,6 +130,9 @@ class Settings:
             guangya_client_id=_env("GUANGYA_CLIENT_ID"),
             guangya_device_id=_env("GUANGYA_DEVICE_ID"),
             guangya_root_id=_env("GUANGYA_ROOT_ID"),
+            yun139_authorization=_env("139_AUTHORIZATION"),
+            yun139_root_id=_env("139_ROOT_ID", "/"),
+            yun139_client_type=_env("139_CLIENT_TYPE", "web"),
             upload_mode=_env("UPLOAD_MODE", UPLOAD_MODE_SCHEDULED).strip().lower(),
             upload_hour=int(_env("UPLOAD_HOUR", "1")),
             upload_min_age_minutes=int(_env("UPLOAD_MIN_AGE_MINUTES", "5")),
@@ -198,6 +204,8 @@ class Settings:
             targets.append(("pan115", CLOUD_ARCHIVE_ROOT))
         if self.guangya_client_id and (self.guangya_access_token or self.guangya_refresh_token):
             targets.append(("guangya", CLOUD_ARCHIVE_ROOT))
+        if self.yun139_authorization:
+            targets.append(("yun139", CLOUD_ARCHIVE_ROOT))
         return tuple(targets)
 
     @property
@@ -225,6 +233,12 @@ class Settings:
 
         if not self.pan115_root_id.strip():
             raise RuntimeError("STREAM_KEEPER_115_ROOT_ID 不能为空")
+        if not self.yun139_root_id.strip():
+            raise RuntimeError("STREAM_KEEPER_139_ROOT_ID 不能为空")
+        if self.yun139_client_type not in {"web", "pc"}:
+            raise RuntimeError("STREAM_KEEPER_139_CLIENT_TYPE 必须是 web 或 pc")
+        if not self.yun139_authorization and (self.yun139_root_id != "/" or self.yun139_client_type != "web"):
+            raise RuntimeError("启用移动云盘上传必须设置 STREAM_KEEPER_139_AUTHORIZATION")
         if self.pan115_cookie and ("\r" in self.pan115_cookie or "\n" in self.pan115_cookie):
             raise RuntimeError("STREAM_KEEPER_115_COOKIE 不能包含换行符")
         if bool(self.baidu_client_id) != bool(self.baidu_client_secret):
@@ -254,6 +268,8 @@ class Settings:
             ("STREAM_KEEPER_GUANGYA_REFRESH_TOKEN", self.guangya_refresh_token),
             ("STREAM_KEEPER_GUANGYA_CLIENT_ID", self.guangya_client_id),
             ("STREAM_KEEPER_GUANGYA_DEVICE_ID", self.guangya_device_id),
+            ("STREAM_KEEPER_139_AUTHORIZATION", self.yun139_authorization),
+            ("STREAM_KEEPER_139_ROOT_ID", self.yun139_root_id),
         ):
             if "\r" in value or "\n" in value:
                 raise RuntimeError(f"{name} 不能包含换行符")

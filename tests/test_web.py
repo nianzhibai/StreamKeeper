@@ -111,6 +111,8 @@ class FakeCloudLoginFlow:
             return CloudLoginPoll("success", {"cookie": f"qr-{self.provider}-secret-cookie"})
         if self.provider == "pan115":
             return CloudLoginPoll("success", {"cookie": "UID=qr-uid; CID=qr-cid; SEID=qr-seid"})
+        if self.provider == "yun139":
+            return CloudLoginPoll("success", {"authorization": "qr-yun139-secret-authorization"})
         if self.provider == "guangya":
             return CloudLoginPoll(
                 "success",
@@ -1476,6 +1478,7 @@ class WebTests(TestCase):
         self.assertIn('data-provider-configure="baidu"', archive_page.text)
         self.assertIn('data-provider-configure="pan115"', archive_page.text)
         self.assertIn('data-provider-configure="guangya"', archive_page.text)
+        self.assertIn('data-provider-configure="yun139"', archive_page.text)
         self.assertIn('id="provider-config-dialog"', archive_page.text)
         self.assertIn('id="run-targets"', archive_page.text)
         for icon_path in (
@@ -1484,6 +1487,7 @@ class WebTests(TestCase):
             "/static/provider-baidu.png",
             "/static/provider-pan115.png",
             "/static/provider-guangya.png",
+            "/static/provider-yun139.svg",
         ):
             self.assertIn(icon_path, archive_page.text)
             self.assertEqual(self.client.get(icon_path).status_code, 200)
@@ -1502,11 +1506,11 @@ class WebTests(TestCase):
         self.assertEqual(initial.json()["schedule"]["mode"], "scheduled")
         self.assertEqual(
             [provider["name"] for provider in initial.json()["providers"]],
-            ["quark", "baidu", "pan115", "guangya", "wopan"],
+            ["quark", "baidu", "pan115", "guangya", "wopan", "yun139"],
         )
         provider_positions = [
             archive_page.text.index(f'data-provider-configure="{provider}"')
-            for provider in ("quark", "baidu", "pan115", "guangya", "wopan")
+            for provider in ("quark", "baidu", "pan115", "guangya", "wopan", "yun139")
         ]
         self.assertEqual(provider_positions, sorted(provider_positions))
         quark_payload = {
@@ -1785,6 +1789,37 @@ class WebTests(TestCase):
             )
         )
 
+    def test_mobile_cloud_configuration_persists_and_never_returns_authorization(self) -> None:
+        self.login()
+        endpoint = "/api/cloud/archive/providers/yun139/config"
+        credentials = {"authorization": "private-mobile-authorization"}
+        response = self.client.put(endpoint, headers=self.csrf_headers, json={
+            "enabled": True, "credentials": credentials, "options": {"root_id": "/", "client_type": "pc"},
+        })
+        self.assertEqual(response.status_code, 200)
+        provider = next(item for item in response.json()["providers"] if item["name"] == "yun139")
+        self.assertTrue(provider["credential_configured"])
+        self.assertTrue(provider["supports_qr_login"])
+        self.assertEqual(provider["configured_credentials"], ["authorization"])
+        self.assertEqual(provider["options"], {"root_id": "/", "client_type": "pc"})
+        self.assertNotIn("private-mobile-authorization", response.text)
+
+        preserved = self.client.put(endpoint, headers=self.csrf_headers, json={"enabled": True})
+        self.assertEqual(preserved.status_code, 200)
+        stored = asyncio.run(self.store.get_cloud_upload_config())
+        self.assertEqual(stored["providers"]["yun139"]["credentials"], credentials)
+        invalid = self.client.put(endpoint, headers=self.csrf_headers, json={
+            "enabled": True, "options": {"client_type": "invalid"},
+        })
+        self.assertEqual(invalid.status_code, 422)
+        cleared = self.client.put(endpoint, headers=self.csrf_headers, json={
+            "enabled": False, "clear_credentials": True,
+        })
+        self.assertEqual(cleared.status_code, 200)
+        provider = next(item for item in cleared.json()["providers"] if item["name"] == "yun139")
+        self.assertFalse(provider["credential_configured"])
+        self.assertFalse(provider["enabled"])
+
     def test_cloud_qr_login_saves_credentials_without_returning_secrets(self) -> None:
         self.login()
         archive_page = self.client.get("/archive")
@@ -1796,7 +1831,7 @@ class WebTests(TestCase):
         rejected = self.client.post("/api/cloud/login/quark")
         self.assertEqual(rejected.status_code, 403)
 
-        for provider in ("quark", "wopan", "pan115", "guangya"):
+        for provider in ("quark", "wopan", "pan115", "guangya", "yun139"):
             created = self.client.post(
                 f"/api/cloud/login/{provider}",
                 headers=self.csrf_headers,
@@ -1829,6 +1864,15 @@ class WebTests(TestCase):
         self.assertTrue(archive["pan115"]["credential_configured"])
         self.assertEqual(archive["pan115"]["configured_credentials"], ["cookie"])
         self.assertTrue(archive["guangya"]["credential_configured"])
+        mobile = next(provider for provider in archive["providers"] if provider["name"] == "yun139")
+        self.assertTrue(mobile["credential_configured"])
+        self.assertTrue(mobile["supports_qr_login"])
+        self.assertFalse(mobile["enabled"])
+        self.assertNotIn("qr-yun139-secret-authorization", json.dumps(archive))
+        stored = asyncio.run(self.store.get_cloud_upload_config())
+        self.assertEqual(
+            stored["providers"]["yun139"]["credentials"], {"authorization": "qr-yun139-secret-authorization"},
+        )
         self.assertNotIn("qr-seid", json.dumps(archive))
 
     def test_baidu_openlist_online_api_saves_oauth_credentials(self) -> None:

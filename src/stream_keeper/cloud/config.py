@@ -5,8 +5,7 @@ from typing import Any
 
 from ..settings import CLOUD_ARCHIVE_ROOT, UPLOAD_MODE_SCHEDULED, UPLOAD_MODES, Settings
 
-CLOUD_PROVIDER_ORDER = ("quark", "baidu", "pan115", "guangya", "wopan")
-QR_LOGIN_PROVIDERS = frozenset({"quark", "wopan", "pan115", "guangya"})
+CLOUD_PROVIDER_ORDER = ("quark", "baidu", "pan115", "guangya", "wopan", "yun139")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +55,17 @@ CLOUD_PROVIDER_SPECS: dict[str, CloudProviderSpec] = {
         option_defaults=(("root_id", "0"), ("family_id", "")),
         supports_qr_login=True,
     ),
+    "yun139": CloudProviderSpec(
+        name="yun139",
+        label="移动云盘",
+        credential_keys=("authorization",),
+        option_defaults=(("root_id", "/"), ("client_type", "web")),
+        supports_qr_login=True,
+    ),
 }
 
 CLOUD_PROVIDER_LABELS = {name: spec.label for name, spec in CLOUD_PROVIDER_SPECS.items()}
+QR_LOGIN_PROVIDERS = frozenset(name for name, spec in CLOUD_PROVIDER_SPECS.items() if spec.supports_qr_login)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +94,8 @@ class CloudProviderConfig:
         values = self.credentials
         if self.name == "quark":
             return bool(values.get("cookie"))
+        if self.name == "yun139":
+            return bool(values.get("authorization"))
         if self.name == "wopan":
             return bool(values.get("access_token") or values.get("refresh_token"))
         if self.name == "baidu":
@@ -123,8 +132,10 @@ class CloudProviderConfig:
             self._validate_no_control_characters(f"{spec.label} {key}", value)
 
         root_id = self.options.get("root_id")
-        if self.name in {"quark", "wopan", "pan115"} and not (root_id or "").strip():
+        if self.name in {"quark", "wopan", "pan115", "yun139"} and not (root_id or "").strip():
             raise ValueError(f"{spec.label} Root ID 不能为空")
+        if self.name == "yun139" and self.options["client_type"] not in {"web", "pc"}:
+            raise ValueError("移动云盘客户端类型必须是 web 或 pc")
 
         access_token = self.credentials.get("access_token", "")
         refresh_token = self.credentials.get("refresh_token", "")
@@ -222,6 +233,12 @@ class CloudArchiveConfig:
                         "refresh_token": settings.wopan_refresh_token,
                     },
                     options={"root_id": settings.wopan_root_id, "family_id": settings.wopan_family_id},
+                ),
+                CloudProviderConfig(
+                    name="yun139",
+                    enabled=bool(settings.yun139_authorization),
+                    credentials={"authorization": settings.yun139_authorization},
+                    options={"root_id": settings.yun139_root_id, "client_type": settings.yun139_client_type},
                 ),
             ),
             upload_mode=settings.upload_mode,

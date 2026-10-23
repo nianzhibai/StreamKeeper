@@ -36,6 +36,7 @@ const PROVIDER_ICONS = {
   baidu: "/static/provider-baidu.png?v=20260882",
   pan115: "/static/provider-pan115.png?v=20260882",
   guangya: "/static/provider-guangya.png?v=20260882",
+  yun139: "/static/provider-yun139.svg?v=20260882",
 };
 
 export function escapeHtml(value) {

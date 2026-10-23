@@ -80,6 +80,13 @@ const providerMeta = {
     credentials: ["client_id", "device_id", "access_token", "refresh_token"],
     options: ["root_id"],
   },
+  yun139: {
+    name: "移动云盘",
+    app: "中国移动云盘 App 或微信",
+    supportsQr: true,
+    credentials: ["authorization"],
+    options: ["root_id", "client_type"],
+  },
 };
 
 const targetStatusMeta = {

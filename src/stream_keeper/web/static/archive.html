@@ -157,6 +157,23 @@
                   <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
                 </span>
               </button>
+              <button
+                id="yun139-configure"
+                class="provider-row provider-target"
+                type="button"
+                data-provider-configure="yun139"
+                aria-haspopup="dialog"
+                aria-label="配置移动云盘"
+              >
+                <span class="provider-logo yun139 has-image" aria-hidden="true">
+                  <img class="provider-logo-image" src="/static/provider-yun139.svg?v=20260882" alt="" />
+                </span>
+                <span class="provider-info"><strong>移动云盘</strong></span>
+                <span id="yun139-status" class="pill tone-idle"><i class="dot"></i>读取中</span>
+                <span class="provider-row-action" aria-hidden="true">
+                  <span>配置</span><svg class="ic ic-sm"><use href="#ic-chevronRight" /></svg>
+                </span>
+              </button>
             </div>
           </section>
 
@@ -304,6 +321,21 @@
                 <label class="field"><span class="field-label">Access Token<em>可选</em></span><input class="input" name="pan115_access_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
                 <label class="field"><span class="field-label">Refresh Token<em>可选</em></span><input class="input" name="pan115_refresh_token" type="password" maxlength="4096" autocomplete="new-password" placeholder="115 Open" /></label>
               </div>
+            </details>
+          </section>
+
+          <section data-provider-fields="yun139" class="provider-config-fields hidden">
+            <div class="form-grid">
+              <label class="field"><span class="field-label">Root ID</span><input class="input" name="yun139_root_id" type="text" maxlength="512" value="/" autocomplete="off" /></label>
+              <label class="field"><span class="field-label">上传目录<em>固定</em></span><input class="input" name="yun139_upload_path" type="text" value="/DouYinStreamKeeper" readonly /></label>
+              <label class="field"><span class="field-label">客户端类型</span><select class="input" name="yun139_client_type"><option value="web">网页端</option><option value="pc">电脑客户端</option></select></label>
+            </div>
+            <details class="disclosure">
+              <summary><span>移动云盘登录凭据</span><svg class="ic ic-sm" aria-hidden="true"><use href="#ic-chevronDown" /></svg></summary>
+              <div class="form-grid">
+                <label class="field span-2"><span class="field-label">Authorization</span><input class="input" name="yun139_authorization" type="password" maxlength="32768" autocomplete="new-password" placeholder="可带 Basic 前缀；留空保留已保存的凭据" /></label>
+              </div>
+              <p class="field-hint">支持新版个人云。点击扫码登录后，使用中国移动云盘 App 或微信扫描并确认；也可从已登录网页的网盘 API 请求中手动复制 Authorization，有效期内会自动续期。</p>
             </details>
           </section>
 

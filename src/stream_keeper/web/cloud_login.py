@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import io
 import json
 import secrets
@@ -15,7 +16,12 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 import qrcode
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
 from qrcode.image.svg import SvgPathImage
+
+from ..cloud.config import QR_LOGIN_PROVIDERS
+from ..cloud.yun139_protocol import yun139_signature
 
 _QUARK_CLIENT_ID = "532"
 _QUARK_QR_URL = "https://su.quark.cn/4_eMHBJ"
@@ -39,6 +45,10 @@ _GUANGYA_ACCOUNT_URL = "https://account.guangyapan.com/v1/auth"
 _GUANGYA_CLIENT_ID = "aMe-8VSlkrbQXpUR"
 _GUANGYA_DEVICE_CODE_URL = f"{_GUANGYA_ACCOUNT_URL}/device/code"
 _GUANGYA_TOKEN_URL = f"{_GUANGYA_ACCOUNT_URL}/token"
+_YUN139_LOGIN_URL = "https://user-njs.yun.139.com/user/thirdlogin"
+# Protocol keys shipped in the public web client, not account credentials.
+_YUN139_TRANSPORT_KEY = b"UqEZkrjCKfa02pP6jntzFmkzOz86zHUC"
+_YUN139_LOGIN_DATA_KEY = b"qPqDw263XgFgL3u8"
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 )
@@ -612,6 +622,153 @@ class GuangYaQrLoginFlow:
         await self._client.aclose()
 
 
+class Yun139QrLoginFlow:
+    """The yun.139.com web QR flow: device/session URL and encrypted login polling."""
+
+    qr_ttl_seconds = 5 * 60
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 15,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._session_id = ""
+        self._device_id = ""
+        self._client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(timeout_seconds),
+            transport=transport,
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json;charset=UTF-8",
+                "Origin": "https://yun.139.com",
+                "Referer": "https://yun.139.com/w/",
+                "User-Agent": _USER_AGENT,
+            },
+        )
+
+    async def start(self) -> str:
+        self._session_id = secrets.token_hex(8)
+        self._device_id = uuid.uuid4().hex
+        query = urlencode({"sID": self._session_id, "dID": self._device_id, "cType": "9"})
+        return _qr_svg_data_uri(f"https://yun.139.com/w/#/qrcLogin?{query}")
+
+    @staticmethod
+    def _decode_response(response: httpx.Response) -> dict[str, object]:
+        if response.is_error:
+            raise CloudLoginError(f"移动云盘扫码服务暂时不可用（HTTP {response.status_code}）")
+        try:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = response.text.strip()
+            if isinstance(payload, str):
+                encrypted = base64.b64decode(payload, validate=True)
+                plaintext = unpad(
+                    AES.new(_YUN139_TRANSPORT_KEY, AES.MODE_CBC, iv=encrypted[:16]).decrypt(encrypted[16:]),
+                    AES.block_size,
+                )
+                payload = json.loads(plaintext)
+            if not isinstance(payload, dict):
+                raise ValueError
+            data = payload.get("data")
+            if isinstance(data, str):
+                plaintext = unpad(
+                    AES.new(_YUN139_LOGIN_DATA_KEY, AES.MODE_ECB).decrypt(bytes.fromhex(data)), AES.block_size,
+                )
+                payload["data"] = json.loads(plaintext)
+            return payload
+        except (ValueError, UnicodeError, binascii.Error) as exc:
+            raise CloudLoginError("移动云盘扫码服务返回了无效的加密响应") from exc
+
+    async def poll(self) -> CloudLoginPoll:
+        if not self._session_id:
+            raise CloudLoginError("移动云盘扫码会话尚未初始化")
+        body = {
+            "msisdn": "",
+            "random": "",
+            "dycpwd": self._session_id,
+            "cpid": 292,
+            "clienttype": 670,
+            "version": "mCloud_4.3.0_536",
+            "pintype": 21,
+            "secinfo": hashlib.sha1(f"fetion.com.cn:{self._session_id}".encode()).hexdigest().upper(),
+            "loginMode": "0",
+            "extInfo": {},
+        }
+        text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+        timestamp = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+        nonce = secrets.token_hex(8)
+        iv = secrets.token_bytes(AES.block_size)
+        encrypted = AES.new(_YUN139_TRANSPORT_KEY, AES.MODE_CBC, iv=iv).encrypt(pad(text.encode(), AES.block_size))
+        device_info = f"||9|7.14.0|chrome|139.0.0.0|{self._device_id}||windows 10||zh-CN|||"
+        try:
+            response = await self._client.post(
+                _YUN139_LOGIN_URL,
+                content=base64.b64encode(iv + encrypted),
+                headers={
+                    "Caller": "web",
+                    "Cms-Device": "default",
+                    "Mcloud-Channel": "1000101",
+                    "Mcloud-Client": "10701",
+                    "Mcloud-Route": "001",
+                    "Mcloud-Version": "7.14.0",
+                    "Mcloud-Sign": f"{timestamp},{nonce},{yun139_signature(text, timestamp, nonce)}",
+                    "hcy-cool-flag": "1",
+                    "x-huawei-channelSrc": "10000034",
+                    "x-m4c-caller": "PC",
+                    "x-m4c-src": "10002",
+                    "x-inner-ntwk": "2",
+                    "x-SvcType": "1",
+                    "X-DeviceInfo": device_info,
+                    "X-Yun-Api-Version": "v1",
+                    "X-Yun-App-Channel": "10000034",
+                    "X-Yun-Channel-Source": "10000034",
+                    "X-Yun-Client-Info": device_info + "dW5kZWZpbmVk||",
+                    "X-Yun-Module-Type": "100",
+                    "X-Yun-Svc-Type": "1",
+                    "Inner-Hcy-Router-Https": "1",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise CloudLoginError("移动云盘扫码服务连接失败") from exc
+        payload = self._decode_response(response)
+        code = str(payload.get("code", ""))
+        if code == "200059541":
+            return CloudLoginPoll("waiting")
+        if code == "200059548":
+            return CloudLoginPoll("scanned")
+        if code == "200059542":
+            return CloudLoginPoll("expired")
+        if code == "200059549":
+            return CloudLoginPoll("cancelled")
+        if code not in {"0", "0000"}:
+            raise CloudLoginError(f"移动云盘扫码确认失败（{code or '未知状态'}），请刷新二维码重试")
+        data = payload.get("data")
+        account = data.get("account") if isinstance(data, dict) else None
+        token = data.get("token") if isinstance(data, dict) else None
+        if (
+            not isinstance(account, str) or not account or ":" in account
+            or not isinstance(token, str) or not token or len(token) > 16384
+            or any(ord(char) < 32 for char in account + token)
+        ):
+            raise CloudLoginError("移动云盘扫码成功，但没有返回完整的账号和登录 Token")
+        try:
+            expires_at = int(token.split("|")[3]) / 1000
+        except (ValueError, IndexError) as exc:
+            raise CloudLoginError("移动云盘扫码返回的登录 Token 格式无效") from exc
+        if expires_at <= datetime.now(timezone.utc).timestamp():
+            raise CloudLoginError("移动云盘扫码返回的登录 Token 已过期")
+        authorization = base64.b64encode(f"pc:{account}:{token}".encode()).decode()
+        return CloudLoginPoll("success", {"authorization": authorization})
+
+    async def aclose(self) -> None:
+        self._session_id = ""
+        self._device_id = ""
+        await self._client.aclose()
+
+
 def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
     if provider == "quark":
         return QuarkQrLoginFlow()
@@ -621,6 +778,8 @@ def create_cloud_login_flow(provider: str) -> CloudLoginFlow:
         return Pan115QrLoginFlow()
     if provider == "guangya":
         return GuangYaQrLoginFlow()
+    if provider == "yun139":
+        return Yun139QrLoginFlow()
     raise ValueError(f"不支持的扫码登录类型: {provider}")
 
 
@@ -672,10 +831,10 @@ class CloudLoginManager:
         self._sessions: dict[str, _CloudLoginSession] = {}
         self._provider_sessions: dict[str, str] = {}
         self._lock = asyncio.Lock()
-        self._start_locks = {provider: asyncio.Lock() for provider in ("quark", "wopan", "pan115", "guangya")}
+        self._start_locks = {provider: asyncio.Lock() for provider in QR_LOGIN_PROVIDERS}
 
     async def start(self, provider: str) -> CloudLoginSnapshot:
-        if provider not in {"quark", "wopan", "pan115", "guangya"}:
+        if provider not in QR_LOGIN_PROVIDERS:
             raise ValueError(f"不支持的扫码登录类型: {provider}")
         async with self._start_locks[provider]:
             return await self._start(provider)

@@ -13,6 +13,7 @@ from .pan115 import Pan115Client
 from .pan115_cookie import Pan115CookieClient
 from .quark import QuarkClient
 from .wopan import WoPanClient
+from .yun139 import Yun139Client
 
 _Sleep = Callable[[float], Awaitable[None]]
 
@@ -29,6 +30,16 @@ def create_cloud_client(
     """Build a provider client from the registry's normalized configuration."""
 
     values = credentials
+    if provider.name == "yun139":
+        return Yun139Client(
+            values.get("authorization", ""),
+            root_id=provider.options.get("root_id", "/"),
+            client_type=provider.options.get("client_type", "web"),
+            timeout_seconds=timeout_seconds,
+            on_credential_update=on_credential_update,
+            transport=transport,
+            sleep=sleep,
+        )
     if provider.name == "quark":
         return QuarkClient(
             values.get("cookie", ""),

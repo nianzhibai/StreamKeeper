@@ -23,6 +23,35 @@ def make_settings(root: Path, **overrides) -> Settings:
 
 
 class SettingsTests(TestCase):
+    def test_mobile_cloud_environment_initializes_the_provider_registry(self) -> None:
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+            "STREAM_KEEPER_DATA_DIR": tmp,
+            "STREAM_KEEPER_139_AUTHORIZATION": "Basic mobile-token",
+            "STREAM_KEEPER_139_ROOT_ID": "custom-root",
+            "STREAM_KEEPER_139_CLIENT_TYPE": "pc",
+        }, clear=True):
+            settings = Settings.from_env()
+        self.assertEqual(settings.yun139_authorization, "Basic mobile-token")
+        self.assertEqual(settings.upload_targets, (("yun139", CLOUD_ARCHIVE_ROOT),))
+        config = CloudArchiveConfig.from_settings(settings)
+        config.validate()
+        self.assertEqual(config.targets, settings.upload_targets)
+        provider = config.provider("yun139")
+        self.assertEqual(provider.credentials, {"authorization": "Basic mobile-token"})
+        self.assertEqual(provider.options, {"root_id": "custom-root", "client_type": "pc"})
+        self.assertEqual(CloudArchiveConfig.from_dict(config.to_dict()), config)
+
+    def test_mobile_cloud_rejects_invalid_options_and_header_injection(self) -> None:
+        for options in (
+            {"yun139_authorization": "valid\nInjected: bad"},
+            {"yun139_client_type": "invalid"},
+            {"yun139_root_id": ""},
+            {"yun139_root_id": "custom-root"},
+        ):
+            with self.subTest(options=options), TemporaryDirectory() as tmp:
+                with self.assertRaises(RuntimeError):
+                    make_settings(Path(tmp), **options).prepare()
+
     def test_environment_file_is_loaded_without_overriding_process_environment(self) -> None:
         with TemporaryDirectory() as tmp:
             env_file = Path(tmp) / ".env"

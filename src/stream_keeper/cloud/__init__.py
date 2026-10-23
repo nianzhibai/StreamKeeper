@@ -15,6 +15,7 @@ from .pan115 import Pan115Client
 from .pan115_cookie import Pan115CookieClient
 from .quark import QuarkClient
 from .wopan import WoPanClient
+from .yun139 import Yun139Client
 
 __all__ = [
     "CloudUploadClient",
@@ -35,5 +36,6 @@ __all__ = [
     "UploadProgress",
     "UploadStage",
     "WoPanClient",
+    "Yun139Client",
     "create_cloud_client",
 ]
