@@ -1,4 +1,3 @@
-from .base import QUALITY_VALUES
 from .bilibili import BilibiliClient
 from .douyin import DouyinClient
 from .kuaishou import KuaishouClient
@@ -9,5 +8,4 @@ __all__ = [
     "DouyinClient",
     "KuaishouClient",
     "LiveStreamClient",
-    "QUALITY_VALUES",
 ]

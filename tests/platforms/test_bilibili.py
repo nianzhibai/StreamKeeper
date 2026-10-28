@@ -87,16 +87,38 @@ class BilibiliClientTests(IsolatedAsyncioTestCase):
             cookies="SESSDATA=test",
             transport=httpx.MockTransport(handler),
         )
-        info = await client.fetch("https://live.bilibili.com/123456?from=share", "HD")
+        info = await client.fetch("https://live.bilibili.com/123456?from=share", "250")
 
         self.assertEqual(info.platform, "哔哩哔哩")
         self.assertEqual(info.anchor_name, "哔哩主播")
         self.assertEqual(info.title, "测试哔哩哔哩直播")
-        self.assertEqual(info.quality, "HD")
+        self.assertEqual(info.quality, "250")
         self.assertEqual(info.flv_url, "https://cdn.example/live-selected.flv?token=secret")
         self.assertEqual(info.m3u8_url, "https://cdn.example/live-selected.m3u8?token=secret")
         self.assertEqual(info.live_url, "https://live.bilibili.com/123456")
         self.assertTrue(all(request.headers.get("cookie") == "SESSDATA=test" for request in requests))
+
+    async def test_reports_codec_of_the_selected_quality_for_each_protocol(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("getH5InfoByRoom"):
+                return httpx.Response(200, json=_room_info())
+            payload = _play_info(requested_qn=250)
+            streams = payload["data"]["playurl_info"]["playurl"]["stream"]
+            streams[1]["format"][0]["codec"].append({
+                "codec_name": "av1", "current_qn": 400, "base_url": "/live-av1.m3u8",
+                "url_info": [{"host": "https://cdn.example", "extra": ""}],
+            })
+            return httpx.Response(200, json=payload)
+
+        client = BilibiliClient(transport=httpx.MockTransport(handler))
+        info = await client.fetch("https://live.bilibili.com/123456", "best")
+        self.assertEqual(info.quality, "10000")
+        self.assertEqual(info.flv_codec, "hevc")
+        self.assertEqual(info.hls_codec, "hevc")
+        info = await client.fetch("https://live.bilibili.com/123456", "400")
+        self.assertEqual(info.quality, "400")
+        self.assertIsNone(info.flv_url)
+        self.assertEqual(info.hls_codec, "av1")
 
     async def test_offline_room_does_not_request_stream_urls(self) -> None:
         calls = 0
@@ -112,22 +134,16 @@ class BilibiliClientTests(IsolatedAsyncioTestCase):
         self.assertIsNone(info.record_url)
         self.assertEqual(calls, 1)
 
-    async def test_nearest_quality_wins_when_platform_downgrades_request(self) -> None:
+    async def test_unavailable_quality_is_an_error(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("getH5InfoByRoom"):
                 return httpx.Response(200, json=_room_info())
-            if request.url.path.endswith("getRoomPlayInfo"):
-                # Anonymous playback can return a nearby AVC tier alongside a
-                # much higher HEVC/HDR tier, even when UHD (蓝光) was requested.
-                return httpx.Response(200, json=_play_info(requested_qn=250))
-            raise AssertionError(f"unexpected request: {request.url}")
+            return httpx.Response(200, json=_play_info(requested_qn=250))
 
-        info = await BilibiliClient(transport=httpx.MockTransport(handler)).fetch(
-            "https://live.bilibili.com/123456", "UHD"
-        )
-
-        self.assertIn("selected.flv", info.flv_url or "")
-        self.assertIn("selected.m3u8", info.m3u8_url or "")
+        with self.assertRaisesRegex(BilibiliFetchError, "未提供画质 400"):
+            await BilibiliClient(transport=httpx.MockTransport(handler)).fetch(
+                "https://live.bilibili.com/123456", "400"
+            )
 
     async def test_legacy_play_api_is_used_when_modern_api_fails(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

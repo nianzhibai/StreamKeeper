@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 from ..platforms import LiveStreamClient
 from ..settings import CLOUD_ARCHIVE_ROOT, DEFAULT_MAX_CONCURRENT_RECORDINGS, MAX_RECORDING_CONCURRENCY
 
-Quality = Literal["OD", "UHD", "HD", "SD", "LD"]
 OutputFormat = Literal["ts", "mp4", "mkv", "flv"]
 SourcePreference = Literal["auto", "flv", "hls"]
 EventLevel = Literal["info", "success", "warning", "error"]
@@ -106,7 +105,7 @@ class RecordingRuntimeSettings(StrictModel):
 class TaskConfig(StrictModel):
     url: str = Field(min_length=10, max_length=1000)
     label: str | None = Field(default=None, max_length=80)
-    quality: Quality = "OD"
+    quality: str = Field(default="best", min_length=1, max_length=64)
     output_format: OutputFormat = "ts"
     source: SourcePreference = "auto"
     segment_seconds: int = Field(default=1800, ge=0, le=86400)
@@ -127,6 +126,7 @@ class TaskConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_recording_mode(self) -> TaskConfig:
+        self.quality = LiveStreamClient.validate_quality(self.url, self.quality)
         if self.segment_count and not self.segment_seconds:
             raise ValueError("设置段数时，分段时长必须大于 0")
         # A finite segment cap describes one recording run.  It cannot also
@@ -145,7 +145,7 @@ class TaskCreate(TaskConfig):
 class TaskUpdate(StrictModel):
     url: str | None = Field(default=None, min_length=10, max_length=1000)
     label: str | None = Field(default=None, max_length=80)
-    quality: Quality | None = None
+    quality: str | None = Field(default=None, min_length=1, max_length=64)
     output_format: OutputFormat | None = None
     source: SourcePreference | None = None
     segment_seconds: int | None = Field(default=None, ge=0, le=86400)
@@ -224,12 +224,17 @@ class RuntimeEventListView(StrictModel):
 
 class InspectRequest(StrictModel):
     url: str = Field(min_length=10, max_length=1000)
-    quality: Quality = "OD"
+    quality: str = Field(default="best", min_length=1, max_length=64)
 
     @field_validator("url")
     @classmethod
     def validate_live_url(cls, value: str) -> str:
         return LiveStreamClient.validate_url(value)
+
+    @model_validator(mode="after")
+    def validate_platform_quality(self) -> InspectRequest:
+        self.quality = LiveStreamClient.validate_quality(self.url, self.quality)
+        return self
 
 
 class InspectResponse(StrictModel):

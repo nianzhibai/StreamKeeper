@@ -21,6 +21,8 @@ def _live_state() -> dict:
     def rendition(bitrate: int, extension: str) -> dict:
         return {
             "bitrate": bitrate,
+            "qualityType": {600: "LOW", 1000: "STANDARD", 2000: "HIGH"}[bitrate],
+            "level": bitrate,
             "url": f"https://cdn.example/live-{bitrate}.{extension}?token=secret",
         }
 
@@ -49,7 +51,7 @@ def _live_state() -> dict:
 
 
 class KuaishouClientTests(IsolatedAsyncioTestCase):
-    async def test_live_room_selects_quality_by_bitrate(self) -> None:
+    async def test_live_room_selects_platform_quality(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -57,12 +59,12 @@ class KuaishouClientTests(IsolatedAsyncioTestCase):
             return httpx.Response(200, text=_page(_live_state()))
 
         client = KuaishouClient(cookies="did=test", transport=httpx.MockTransport(handler))
-        info = await client.fetch("https://live.kuaishou.com/u/example?share=1", "HD")
+        info = await client.fetch("https://live.kuaishou.com/u/example?share=1", "STANDARD")
 
         self.assertEqual(info.platform, "快手")
         self.assertEqual(info.anchor_name, "快手主播")
         self.assertEqual(info.title, "测试快手直播")
-        self.assertEqual(info.quality, "HD")
+        self.assertEqual(info.quality, "STANDARD")
         self.assertEqual(info.flv_url, "https://cdn.example/live-1000.flv?token=secret")
         self.assertEqual(info.m3u8_url, "https://cdn.example/live-1000.m3u8?token=secret")
         self.assertEqual(info.record_url, info.flv_url)
@@ -77,15 +79,10 @@ class KuaishouClientTests(IsolatedAsyncioTestCase):
         self.assertTrue(info.is_live)
         self.assertEqual(info.anchor_name, "快手主播")
 
-    def test_quality_index_fallback_matches_platform_order_without_bitrates(self) -> None:
-        representations = [
-            {"url": "https://cdn.example/low.flv"},
-            {"url": "https://cdn.example/middle.flv"},
-            {"url": "https://cdn.example/high.flv"},
-        ]
-
-        self.assertEqual(KuaishouClient._select_url(representations, "OD"), "https://cdn.example/high.flv")
-        self.assertEqual(KuaishouClient._select_url(representations, "HD"), "https://cdn.example/low.flv")
+    def test_missing_quality_is_not_replaced_by_a_different_tier(self) -> None:
+        representations = [{"qualityType": "HIGH", "bitrate": 2000, "url": "https://cdn.example/high.flv"}]
+        self.assertIsNone(KuaishouClient._select_representation(representations, "STANDARD"))
+        self.assertEqual(KuaishouClient._select_representation(representations, "best"), representations[0])
 
     def test_h264_representations_are_preferred(self) -> None:
         play_urls = {

@@ -9,13 +9,13 @@ import httpx
 
 from ...errors import InvalidKuaishouUrl, KuaishouFetchError
 from ...models import LiveInfo
-from ..base import QUALITY_VALUES, iter_url_candidates, normalize_quality
+from ..base import iter_url_candidates
+from ..quality import validate_quality
 
 _DIRECT_HOST = "live.kuaishou.com"
 _SHORT_HOSTS = frozenset({"v.kuaishou.com", "www.v.kuaishou.com"})
 _SUPPORTED_PATHS = frozenset({"u", "profile"})
 _INITIAL_STATE_MARKER = "window.__INITIAL_STATE__="
-_QUALITY_BITRATE = {"OD": 10**18, "UHD": 2000, "HD": 1000, "SD": 800, "LD": 600}
 
 
 def _walk_dicts(value: object) -> Iterator[dict[str, Any]]:
@@ -68,8 +68,6 @@ def _replace_undefined(source: str) -> str:
 
 class KuaishouClient:
     """Resolve Kuaishou Web live pages and select a bitrate rendition."""
-
-    QUALITY_VALUES = QUALITY_VALUES
 
     def __init__(
         self,
@@ -256,33 +254,24 @@ class KuaishouClient:
         return result
 
     @staticmethod
-    def _select_url(representations: Iterable[dict[str, Any]], quality: str) -> str | None:
-        ranked: list[tuple[int | None, str]] = []
-        for item in representations:
-            url = item.get("url")
-            if not isinstance(url, str) or not url:
-                continue
-            try:
-                bitrate = int(item["bitrate"]) if item.get("bitrate") is not None else None
-            except (TypeError, ValueError):
-                bitrate = None
-            ranked.append((bitrate, url))
-        if not ranked:
+    def _select_representation(representations: Iterable[dict[str, Any]], quality: str) -> dict[str, Any] | None:
+        items = [item for item in representations if isinstance(item.get("url"), str) and item["url"]]
+        if quality != "best":
+            items = [item for item in items if item.get("qualityType") == quality]
+        if not items:
             return None
-        with_bitrate = sorted((item for item in ranked if item[0] is not None), reverse=True)
-        if with_bitrate:
-            ceiling = _QUALITY_BITRATE[quality]
-            return next(
-                (url for bitrate, url in with_bitrate if bitrate is not None and bitrate <= ceiling),
-                with_bitrate[-1][1],
-            )
-        quality_index = {"OD": 0, "UHD": 1, "HD": 2, "SD": 3, "LD": 4}[quality]
-        highest_first = list(reversed(ranked))
-        return highest_first[min(quality_index, len(highest_first) - 1)][1]
 
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+        def rank(item: dict[str, Any]) -> tuple[int, int]:
+            try:
+                return int(item.get("level") or 0), int(item.get("bitrate") or 0)
+            except (TypeError, ValueError):
+                return 0, 0
+
+        return max(items, key=rank)
+
+    async def fetch(self, url: str, quality: str = "best") -> LiveInfo:
         normalized_url = self.validate_url(url)
-        normalized_quality = normalize_quality(quality)
+        normalized_quality = validate_quality("kuaishou", quality)
         live_url = await self._resolve_url(normalized_url)
         known_anchor: str | None = None
         try:
@@ -338,8 +327,19 @@ class KuaishouClient:
             raise KuaishouFetchError("快手直播间数据存在但没有可用直播流，可能触发了平台风控")
         flv_items = [item for item in representations if ".flv" in urlparse(str(item.get("url") or "")).path.lower()]
         hls_items = [item for item in representations if ".m3u8" in urlparse(str(item.get("url") or "")).path.lower()]
-        flv_url = self._select_url(flv_items, normalized_quality)
-        hls_url = self._select_url(hls_items, normalized_quality)
+        selected = self._select_representation(flv_items + hls_items, normalized_quality)
+        if selected is None:
+            raise KuaishouFetchError(f"快手直播间未提供画质 {normalized_quality}")
+        actual_quality = str(selected.get("qualityType") or normalized_quality)
+        flv = self._select_representation(flv_items, actual_quality) if selected.get("qualityType") else None
+        hls = self._select_representation(hls_items, actual_quality) if selected.get("qualityType") else None
+        if not selected.get("qualityType"):
+            if selected in flv_items:
+                flv = selected
+            else:
+                hls = selected
+        flv_url = flv.get("url") if flv else None
+        hls_url = hls.get("url") if hls else None
         if not flv_url and not hls_url:
             raise KuaishouFetchError("快手直播间没有返回 FFmpeg 可用的 FLV 或 HLS 地址")
         return LiveInfo(
@@ -347,7 +347,7 @@ class KuaishouClient:
             anchor_name=anchor_name,
             is_live=True,
             title=title,
-            quality=normalized_quality,
+            quality=actual_quality,
             m3u8_url=hls_url,
             flv_url=flv_url,
             record_url=flv_url or hls_url,

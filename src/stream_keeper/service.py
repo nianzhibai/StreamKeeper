@@ -19,7 +19,7 @@ class ServiceResult:
 
 
 class LiveInfoClient(Protocol):
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo: ...
+    async def fetch(self, url: str, quality: str = "best") -> LiveInfo: ...
 
 
 class RecordingService:
@@ -31,7 +31,7 @@ class RecordingService:
         self,
         url: str,
         *,
-        quality: str = "OD",
+        quality: str = "best",
         monitor: bool = False,
         interval: float = 180.0,
     ) -> ServiceResult:

@@ -8,7 +8,7 @@ import {
   formatTime,
   icon,
   paintProgress,
-  QUALITY_LABELS,
+  qualityLabel,
   recordingProgressMarkup,
   setHtmlIfChanged,
   setTextIfChanged,
@@ -19,8 +19,8 @@ import {
   TASK_STATUS,
   toast,
   toggle,
-} from "/static/ui.js?v=20260882";
-import { createTaskDialog } from "/static/task-dialog.js?v=20260882";
+} from "/static/ui.js?v=20261028";
+import { createTaskDialog } from "/static/task-dialog.js?v=20261028";
 
 const state = {
   tasks: [],
@@ -74,7 +74,7 @@ function platformLabel(url) {
 function taskTags(task) {
   const tags = [
     platformLabel(task.url),
-    QUALITY_LABELS[task.quality] || task.quality,
+    qualityLabel(task.url, task.quality),
     task.output_format.toUpperCase(),
     SOURCE_LABELS[task.source] || task.source.toUpperCase(),
   ];
@@ -256,4 +256,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-bootstrap((options) => Promise.all([load(options), taskDialog.prepare()]));
+bootstrap(async (options) => {
+  await taskDialog.prepare();
+  await load(options);
+});

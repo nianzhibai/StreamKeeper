@@ -24,7 +24,7 @@ def make_settings(root: Path) -> Settings:
 def make_config(*, monitor: bool = False, segment_seconds: int = 0, segment_count: int = 0) -> TaskConfig:
     return TaskConfig(
         url="https://live.douyin.com/123456789",
-        quality="OD",
+        quality="best",
         output_format="ts",
         source="auto",
         segment_seconds=segment_seconds,
@@ -40,7 +40,7 @@ def make_info(is_live: bool) -> LiveInfo:
         anchor_name="测试主播",
         is_live=is_live,
         title="测试直播",
-        quality="OD" if is_live else None,
+        quality="best" if is_live else None,
         m3u8_url="https://example.com/live.m3u8" if is_live else None,
         flv_url="https://example.com/live.flv?codec=h264" if is_live else None,
         record_url="https://example.com/live.m3u8" if is_live else None,

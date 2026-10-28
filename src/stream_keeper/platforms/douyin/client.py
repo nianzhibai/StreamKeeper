@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from ...errors import DouyinFetchError, InvalidDouyinUrl, ResolverError, RoomOfflineError
 from ...models import LiveInfo
-from ..base import QUALITY_VALUES
+from ..quality import validate_quality
 from .parser import (
     RoomResult,
     StreamCandidate,
@@ -32,20 +32,10 @@ _URL_CANDIDATE_PATTERN = re.compile(
 _TRAILING_URL_PUNCTUATION = ".,;:!?)]}，。；：！？、）》】」』"
 _FOLLOW_LIVE_PATH = re.compile(r"^/follow/live/(\d+)/?$")
 
-# UI labels: OD=原画 UHD=超清 HD=高清 SD=标清 LD=流畅 → Web sdk_key aliases.
-_QUALITY_GEARS: dict[str, tuple[str, ...]] = {
-    "OD": ("origin", "origion", "original", "source", "uhd", "full_hd1", "fullhd1", "fhd"),
-    "UHD": ("hd", "uhd", "fhd"),
-    "HD": ("sd", "hd"),
-    "SD": ("ld", "sd"),
-    "LD": ("md", "ld"),
-}
 
 
 class DouyinClient:
     """Resolve Douyin live streams through the Web enter-room API."""
-
-    QUALITY_VALUES = QUALITY_VALUES
 
     def __init__(
         self,
@@ -127,34 +117,11 @@ class DouyinClient:
         return flv_url, hls_url
 
     def _choose_quality(self, candidates: list[StreamCandidate], quality: str) -> StreamCandidate:
-        aliases = _QUALITY_GEARS[quality]
-        last_error: Exception | None = None
-        for gear in aliases:
-            try:
-                return choose_candidate(candidates, gear, "auto")
-            except ResolverError as exc:
-                last_error = exc
-        if quality == "OD":
-            return choose_candidate(candidates, "max-bitrate", "auto")
-        if quality == "LD":
-            video = [item for item in candidates if not item.is_audio_only and item.protocol in {"flv", "hls"}]
-            if video:
-                return min(
-                    video,
-                    key=lambda item: (
-                        item.effective_bitrate or 10**18,
-                        item.pixels or 10**18,
-                        0 if item.protocol == "flv" else 1,
-                    ),
-                )
-        available = ", ".join(sorted({item.gear for item in candidates})) or "(无)"
-        raise DouyinFetchError(f"找不到画质 {quality}；可用档位: {available}") from last_error
+        return choose_candidate(candidates, quality, "auto")
 
     def _resolve_live_info(self, url: str, quality: str) -> LiveInfo:
         normalized_url = self.validate_url(url)
-        normalized_quality = quality.upper()
-        if normalized_quality not in self.QUALITY_VALUES:
-            raise ValueError(f"不支持的画质 {quality!r}，可选值: {', '.join(self.QUALITY_VALUES)}")
+        normalized_quality = validate_quality("douyin", quality)
 
         resolver = self._get_resolver()
         try:
@@ -204,20 +171,24 @@ class DouyinClient:
             raise DouyinFetchError(f"解析直播流失败: {exc}") from exc
 
         flv_url, hls_url = self._pick_urls(candidates, selected)
+        flv_codec = next((item.codec for item in candidates if item.url == flv_url and item.codec), None)
+        hls_codec = next((item.codec for item in candidates if item.url == hls_url and item.codec), None)
         return LiveInfo(
             platform="抖音",
             anchor_name=room.owner or None,
             is_live=True,
             title=room.title or None,
-            quality=normalized_quality,
+            quality=selected.gear,
             m3u8_url=hls_url,
             flv_url=flv_url,
             record_url=hls_url or flv_url,
             live_url=room.referer or normalized_url,
             stream_orientation=int(orientation) if orientation is not None else None,
+            flv_codec=flv_codec,
+            hls_codec=hls_codec,
         )
 
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+    async def fetch(self, url: str, quality: str = "best") -> LiveInfo:
         try:
             return await asyncio.to_thread(self._resolve_live_info, url, quality)
         except (DouyinFetchError, InvalidDouyinUrl, RoomOfflineError, ValueError):

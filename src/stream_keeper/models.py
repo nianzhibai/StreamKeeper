@@ -23,6 +23,8 @@ class LiveInfo:
     record_url: str | None
     live_url: str | None
     stream_orientation: int | None = None
+    flv_codec: str | None = None
+    hls_codec: str | None = None
 
     @classmethod
     def from_stream_data(cls, value: object) -> LiveInfo:
@@ -39,6 +41,8 @@ class LiveInfo:
             record_url=_read_field(value, "record_url"),
             live_url=_read_field(value, "live_url"),
             stream_orientation=orientation,
+            flv_codec=_read_field(value, "flv_codec"),
+            hls_codec=_read_field(value, "hls_codec"),
         )
 
 

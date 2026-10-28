@@ -38,26 +38,28 @@ def choose_source(info: LiveInfo, preference: str = "auto") -> SelectedSource:
     flv_url = info.flv_url
     hls_url = info.m3u8_url
     record_url = info.record_url
+    flv_codec = (info.flv_codec or get_codec(flv_url) or "").lower() or None
+    hls_codec = (info.hls_codec or get_codec(hls_url) or "").lower() or None
 
     if preference == "flv":
         if not flv_url:
             raise SourceUnavailableError("当前直播间没有可用的 FLV 地址")
-        return SelectedSource("flv", flv_url, get_codec(flv_url))
+        return SelectedSource("flv", flv_url, flv_codec)
 
     if preference == "hls":
         if not hls_url:
             raise SourceUnavailableError("当前直播间没有可用的 HLS 地址")
-        return SelectedSource("hls", hls_url, get_codec(hls_url))
+        return SelectedSource("hls", hls_url, hls_codec)
 
-    if flv_url and not is_hevc(flv_url):
-        return SelectedSource("flv", flv_url, get_codec(flv_url))
+    if flv_url and flv_codec not in {"h265", "hevc"}:
+        return SelectedSource("flv", flv_url, flv_codec)
     if hls_url:
-        return SelectedSource("hls", hls_url, get_codec(hls_url))
+        return SelectedSource("hls", hls_url, hls_codec)
     if record_url:
         kind = "hls" if ".m3u8" in urlparse(record_url).path.lower() else "flv"
         return SelectedSource(kind, record_url, get_codec(record_url))
     if flv_url:
-        return SelectedSource("flv", flv_url, get_codec(flv_url))
+        return SelectedSource("flv", flv_url, flv_codec)
     raise SourceUnavailableError("直播状态为开播，但没有找到可录制的 FLV/HLS 地址")
 
 

@@ -144,6 +144,8 @@ class Recorder:
 
         executable = self._resolve_ffmpeg()
         selected_source = choose_source(info, self.options.source)
+        if self.options.output_format.lower() == "ts" and selected_source.codec in {"av1", "av01"}:
+            raise FFmpegRecordingError("AV1 直播流无法可靠保存为 TS，请将保存格式改为 MKV 或 MP4")
         output_path = create_output_path(
             self.options.output_dir,
             info,

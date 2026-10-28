@@ -1,4 +1,4 @@
-import { icon } from "/static/icons.js?v=20260882";
+import { icon } from "/static/icons.js?v=20261028";
 
 const sessionState = {
   value: null,
@@ -13,13 +13,31 @@ export const TASK_STATUS = {
   error: { label: "异常", tone: "bad" },
 };
 
-export const QUALITY_LABELS = {
-  OD: "原画",
-  UHD: "超清",
-  HD: "高清",
-  SD: "标清",
-  LD: "流畅",
-};
+let qualityOptions = {};
+
+export async function loadQualityOptions() {
+  qualityOptions = await api("/api/quality-options");
+}
+
+export function qualityPlatform(value) {
+  const match = String(value || "").match(/https?:\/\/[^\s]+/i);
+  if (!match) return null;
+  try {
+    const host = new URL(match[0]).hostname.toLowerCase();
+    if (["live.douyin.com", "v.douyin.com", "www.douyin.com"].includes(host)) return "douyin";
+    if (["live.bilibili.com", "b23.tv", "www.b23.tv"].includes(host)) return "bilibili";
+    if (["live.kuaishou.com", "v.kuaishou.com", "www.v.kuaishou.com"].includes(host)) return "kuaishou";
+  } catch (_error) { /* The server validates the complete URL. */ }
+  return null;
+}
+
+export function qualityChoices(url) {
+  return qualityOptions[qualityPlatform(url)] || [{ value: "best", label: "最高可用画质" }];
+}
+
+export function qualityLabel(url, value) {
+  return qualityChoices(url).find((option) => option.value === value)?.label || value;
+}
 
 export const SOURCE_LABELS = {
   auto: "自动源",
@@ -31,12 +49,12 @@ export const SOURCE_LABELS = {
 // overview card cannot drift apart. The static provider buttons in archive.html
 // still carry their own copies; markup cannot import from here.
 const PROVIDER_ICONS = {
-  quark: "/static/provider-quark.png?v=20260882",
-  wopan: "/static/provider-wopan.png?v=20260882",
-  baidu: "/static/provider-baidu.png?v=20260882",
-  pan115: "/static/provider-pan115.png?v=20260882",
-  guangya: "/static/provider-guangya.png?v=20260882",
-  yun139: "/static/provider-yun139.svg?v=20260882",
+  quark: "/static/provider-quark.png?v=20261028",
+  wopan: "/static/provider-wopan.png?v=20261028",
+  baidu: "/static/provider-baidu.png?v=20261028",
+  pan115: "/static/provider-pan115.png?v=20261028",
+  guangya: "/static/provider-guangya.png?v=20261028",
+  yun139: "/static/provider-yun139.svg?v=20261028",
 };
 
 export function escapeHtml(value) {

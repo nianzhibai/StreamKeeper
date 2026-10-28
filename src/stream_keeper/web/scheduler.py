@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ..models import LiveInfo, RecordingResult
 from ..platforms import LiveStreamClient
+from ..platforms.quality import quality_label
 from ..recorder import Recorder, RecorderOptions
 from ..settings import MAX_RECORDING_CONCURRENCY, Settings
 from .events import EventLog
@@ -429,12 +430,18 @@ class TaskScheduler:
                             status_message="正在录制",
                             started_at=started_at,
                         )
+                        platform = LiveStreamClient._match_url(latest.url)[0]
+                        recorded_quality = quality_label(platform, info.quality or latest.quality)
                         await self.events.success(
                             "task",
                             f"「{name}」已开播，开始录制",
                             " · ".join(
                                 part
-                                for part in (info.title, f"清晰度 {latest.quality}", latest.output_format.upper())
+                                for part in (
+                                    info.title,
+                                    f"清晰度 {recorded_quality}",
+                                    latest.output_format.upper(),
+                                )
                                 if part
                             ),
                             task_id=task_id,

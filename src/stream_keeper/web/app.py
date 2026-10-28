@@ -24,6 +24,7 @@ from ..cloud import (
     CloudUploadError,
 )
 from ..errors import StreamKeeperError
+from ..platforms.quality import QUALITY_OPTIONS
 from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, Settings
 from .auth import (
     SESSION_COOKIE_NAME,
@@ -1054,6 +1055,13 @@ def create_app(
             recording_preview_cache,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/api/quality-options")
+    async def quality_options() -> dict[str, list[dict[str, str]]]:
+        return {
+            platform: [{"value": value, "label": label} for value, label in options]
+            for platform, options in QUALITY_OPTIONS.items()
+        }
 
     @app.get("/api/tasks", response_model=list[TaskRecord])
     async def list_tasks() -> list[TaskRecord]:

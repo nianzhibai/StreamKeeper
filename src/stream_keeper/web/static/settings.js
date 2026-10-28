@@ -5,7 +5,7 @@ import {
   confirmAction,
   showPageError,
   toast,
-} from "/static/ui.js?v=20260882";
+} from "/static/ui.js?v=20261028";
 
 const form = document.querySelector("#archive-schedule-form");
 const accountCard = document.querySelector("#account-settings-card");

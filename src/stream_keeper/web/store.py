@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cloud.config import CLOUD_PROVIDER_ORDER, CLOUD_PROVIDER_SPECS
+from ..platforms import LiveStreamClient
 from ..settings import MAX_RECORDING_CONCURRENCY
 from .schemas import (
     EventCategory,
@@ -154,6 +155,20 @@ class TaskStore:
             task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(recording_tasks)").fetchall()}
             if "segment_count" not in task_columns:
                 connection.execute("ALTER TABLE recording_tasks ADD COLUMN segment_count INTEGER NOT NULL DEFAULT 0")
+            # Convert the old cross-platform tiers before restoring saved tasks.
+            legacy_qualities = {
+                "douyin": {"OD": "best", "UHD": "hd", "HD": "sd", "SD": "ld", "LD": "md"},
+                "bilibili": {"OD": "best", "UHD": "400", "HD": "250", "SD": "150", "LD": "80"},
+                "kuaishou": {"OD": "best", "UHD": "HIGH", "HD": "STANDARD", "SD": "STANDARD", "LD": "STANDARD"},
+            }
+            for row in connection.execute("SELECT id, url, quality FROM recording_tasks").fetchall():
+                if row["quality"] not in {"OD", "UHD", "HD", "SD", "LD"}:
+                    continue
+                platform, _ = LiveStreamClient._match_url(row["url"])
+                connection.execute(
+                    "UPDATE recording_tasks SET quality = ? WHERE id = ?",
+                    (legacy_qualities[platform][row["quality"]], row["id"]),
+                )
             # Earlier releases allowed the contradictory "finite cap +
             # continuous monitoring" combination.  Normalize persisted rows
             # before the scheduler restores enabled tasks at startup.

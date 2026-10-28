@@ -5,10 +5,10 @@ from typing import Any
 
 from ..errors import InvalidLiveUrl
 from ..models import LiveInfo
-from .base import QUALITY_VALUES
 from .bilibili import BilibiliClient
 from .douyin import DouyinClient
 from .kuaishou import KuaishouClient
+from .quality import validate_quality
 
 SupportedClient = DouyinClient | BilibiliClient | KuaishouClient
 PlatformClientFactory = Callable[..., SupportedClient]
@@ -17,7 +17,6 @@ PlatformClientFactory = Callable[..., SupportedClient]
 class LiveStreamClient:
     """Route a supported live-room URL to its platform-specific resolver."""
 
-    QUALITY_VALUES = QUALITY_VALUES
     _CLIENT_TYPES = (DouyinClient, BilibiliClient, KuaishouClient)
 
     def __init__(
@@ -62,6 +61,11 @@ class LiveStreamClient:
     def validate_url(cls, value: str) -> str:
         return cls._match_url(value)[1]
 
+    @classmethod
+    def validate_quality(cls, url: str, quality: str) -> str:
+        key, _ = cls._match_url(url)
+        return validate_quality(key, quality)
+
     def _get_client(self, key: str) -> SupportedClient:
         client = self._clients.get(key)
         if client is not None:
@@ -75,6 +79,6 @@ class LiveStreamClient:
         self._clients[key] = client
         return client
 
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+    async def fetch(self, url: str, quality: str = "best") -> LiveInfo:
         key, normalized_url = self._match_url(url)
         return await self._get_client(key).fetch(normalized_url, quality)

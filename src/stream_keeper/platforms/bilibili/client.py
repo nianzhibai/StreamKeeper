@@ -8,19 +8,13 @@ import httpx
 
 from ...errors import BilibiliFetchError, InvalidBilibiliUrl
 from ...models import LiveInfo
-from ..base import QUALITY_VALUES, iter_url_candidates, normalize_quality
+from ..base import iter_url_candidates
+from ..quality import validate_quality
 
 _API_BASE = "https://api.live.bilibili.com"
 _LIVE_ORIGIN = "https://live.bilibili.com"
 _DIRECT_HOST = "live.bilibili.com"
 _SHORT_HOSTS = frozenset({"b23.tv", "www.b23.tv"})
-_QUALITY_QN = {
-    "OD": 10000,
-    "UHD": 400,
-    "HD": 250,
-    "SD": 150,
-    "LD": 80,
-}
 _CODEC_RANK = {"avc": 3, "h264": 3, "hevc": 2, "h265": 2, "av1": 1}
 _QN_RANK = {qn: rank for rank, qn in enumerate((80, 150, 250, 400, 10000, 15000, 20000, 30000))}
 _CandidateScore = tuple[int, int, int, int]
@@ -28,8 +22,6 @@ _CandidateScore = tuple[int, int, int, int]
 
 class BilibiliClient:
     """Resolve Bilibili live rooms through the public Web live APIs."""
-
-    QUALITY_VALUES = QUALITY_VALUES
 
     def __init__(
         self,
@@ -123,11 +115,11 @@ class BilibiliClient:
     @classmethod
     def _stream_candidates(
         cls, data: dict[str, Any], requested_qn: int
-    ) -> dict[str, list[tuple[_CandidateScore, str]]]:
+    ) -> dict[str, list[tuple[_CandidateScore, str, int, str]]]:
         playurl_info = data.get("playurl_info")
         playurl = playurl_info.get("playurl") if isinstance(playurl_info, dict) else None
         streams = playurl.get("stream") if isinstance(playurl, dict) else None
-        result: dict[str, list[tuple[_CandidateScore, str]]] = {"flv": [], "hls": []}
+        result: dict[str, list[tuple[_CandidateScore, str, int, str]]] = {"flv": [], "hls": []}
         if not isinstance(streams, list):
             return result
 
@@ -175,13 +167,16 @@ class BilibiliClient:
                         host = line.get("host")
                         extra = line.get("extra") or ""
                         if isinstance(host, str) and isinstance(extra, str):
-                            result[protocol].append((score, f"{host}{base_url}{extra}"))
+                            result[protocol].append((score, f"{host}{base_url}{extra}", current_qn, codec_name))
         return result
 
     @staticmethod
-    def _best_url(candidates: Iterable[tuple[_CandidateScore, str]]) -> str | None:
+    def _best_candidate(candidates: Iterable[tuple[_CandidateScore, str, int, str]]) -> tuple[str, int, str] | None:
         ranked = list(candidates)
-        return max(ranked, key=lambda item: item[0])[1] if ranked else None
+        if not ranked:
+            return None
+        _, url, qn, codec = max(ranked, key=lambda item: item[0])
+        return url, qn, codec
 
     @staticmethod
     def _legacy_url(data: dict[str, Any]) -> str | None:
@@ -193,9 +188,9 @@ class BilibiliClient:
                 return item["url"]
         return None
 
-    async def fetch(self, url: str, quality: str = "OD") -> LiveInfo:
+    async def fetch(self, url: str, quality: str = "best") -> LiveInfo:
         normalized_url = self.validate_url(url)
-        normalized_quality = normalize_quality(quality)
+        normalized_quality = validate_quality("bilibili", quality)
         room_id = await self._resolve_room_id(normalized_url)
         live_url = f"{_LIVE_ORIGIN}/{room_id}"
 
@@ -233,9 +228,13 @@ class BilibiliClient:
                         live_url=live_url,
                     )
 
-                qn = _QUALITY_QN[normalized_quality]
+                qn = 30000 if normalized_quality == "best" else int(normalized_quality)
                 flv_url = None
                 hls_url = None
+                actual_qn = None
+                flv_codec = None
+                hls_codec = None
+                modern_available = False
                 try:
                     play_response = await client.get(
                         f"{_API_BASE}/xlive/web-room/v2/index/getRoomPlayInfo",
@@ -256,13 +255,24 @@ class BilibiliClient:
                     play_response.raise_for_status()
                     play_data = self._payload_data(play_response.json(), "getRoomPlayInfo")
                     candidates = self._stream_candidates(play_data, qn)
-                    flv_url = self._best_url(candidates["flv"])
-                    hls_url = self._best_url(candidates["hls"])
+                    flv = self._best_candidate(candidates["flv"])
+                    hls = self._best_candidate(candidates["hls"])
+                    all_candidates = candidates["flv"] + candidates["hls"]
+                    chosen = self._best_candidate(all_candidates)
+                    modern_available = chosen is not None
+                    if chosen:
+                        actual_qn = chosen[1]
+                        if flv and flv[1] == actual_qn:
+                            flv_url, flv_codec = flv[0], flv[2]
+                        if hls and hls[1] == actual_qn:
+                            hls_url, hls_codec = hls[0], hls[2]
                 except (BilibiliFetchError, httpx.HTTPError, ValueError, TypeError, KeyError):
                     # The older endpoint often remains available during partial
                     # rollouts or account-specific failures of getRoomPlayInfo.
                     pass
 
+                if modern_available and normalized_quality != "best" and actual_qn != qn:
+                    raise BilibiliFetchError(f"哔哩哔哩直播间未提供画质 {qn}，平台返回 {actual_qn}")
                 if not flv_url and not hls_url:
                     legacy_response = await client.get(
                         f"{_API_BASE}/room/v1/Room/playUrl",
@@ -271,6 +281,10 @@ class BilibiliClient:
                     )
                     legacy_response.raise_for_status()
                     legacy_data = self._payload_data(legacy_response.json(), "playUrl")
+                    legacy_qn = legacy_data.get("current_qn") or legacy_data.get("quality")
+                    if normalized_quality != "best" and str(legacy_qn) != normalized_quality:
+                        raise BilibiliFetchError(f"无法确认哔哩哔哩返回的画质是否为 {qn}")
+                    actual_qn = legacy_qn
                     legacy_url = self._legacy_url(legacy_data)
                     if legacy_url and ".m3u8" in urlparse(legacy_url).path.lower():
                         hls_url = legacy_url
@@ -288,9 +302,11 @@ class BilibiliClient:
             anchor_name=anchor_name,
             is_live=True,
             title=title,
-            quality=normalized_quality,
+            quality=str(actual_qn) if actual_qn else normalized_quality,
             m3u8_url=hls_url,
             flv_url=flv_url,
             record_url=hls_url or flv_url,
             live_url=live_url,
+            flv_codec=flv_codec,
+            hls_codec=hls_codec,
         )

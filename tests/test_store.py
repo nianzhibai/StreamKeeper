@@ -13,7 +13,7 @@ def task_config(**overrides) -> TaskConfig:
     values = {
         "url": "https://live.douyin.com/123456789",
         "label": "测试任务",
-        "quality": "OD",
+        "quality": "best",
         "output_format": "ts",
         "source": "auto",
         "segment_seconds": 1800,
@@ -87,9 +87,9 @@ class StoreTests(IsolatedAsyncioTestCase):
         self.assertTrue(updated.is_live)
         self.assertEqual(updated.status, TaskStatus.RECORDING)
 
-        renamed = await self.store.update_config(created.id, {"label": "新备注", "quality": "HD"})
+        renamed = await self.store.update_config(created.id, {"label": "新备注", "quality": "sd"})
         self.assertEqual(renamed.label, "新备注")
-        self.assertEqual(renamed.quality, "HD")
+        self.assertEqual(renamed.quality, "sd")
         self.assertEqual([item.id for item in await self.store.list()], [created.id])
         self.assertTrue(await self.store.delete(created.id))
         self.assertIsNone(await self.store.get(created.id))
@@ -165,7 +165,7 @@ class StoreTests(IsolatedAsyncioTestCase):
                 (
                     "legacy-task",
                     "https://live.douyin.com/123456789",
-                    "OD",
+                    "best",
                     "ts",
                     "auto",
                     1800,
@@ -185,6 +185,22 @@ class StoreTests(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(migrated)
         self.assertEqual(migrated.segment_count, 0)
+
+    async def test_initialize_migrates_legacy_platform_qualities(self) -> None:
+        cases = [
+            ("https://live.douyin.com/123456", "UHD", "hd"),
+            ("https://live.bilibili.com/123456", "UHD", "400"),
+            ("https://live.kuaishou.com/u/example", "HD", "STANDARD"),
+            ("https://live.douyin.com/123457", "OD", "best"),
+        ]
+        for url, old, expected in cases:
+            record = await self.store.create(task_config(url=url))
+            with sqlite3.connect(self.store.database_path) as connection:
+                connection.execute("UPDATE recording_tasks SET quality = ? WHERE id = ?", (old, record.id))
+            await self.store.initialize()
+            self.assertEqual((await self.store.get(record.id)).quality, expected)
+        await self.store.initialize()
+        self.assertEqual(len(await self.store.list()), len(cases))
 
     async def test_initialize_normalizes_legacy_limited_monitoring_tasks(self) -> None:
         created = await self.store.create(task_config())

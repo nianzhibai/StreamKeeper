@@ -1,4 +1,4 @@
-import { api, confirmAction, icon, toast } from "/static/ui.js?v=20260882";
+import { api, confirmAction, icon, loadQualityOptions, qualityChoices, qualityLabel, qualityPlatform, toast } from "/static/ui.js?v=20261028";
 
 const FALLBACK_RECORDING_DEFAULTS = {
   output_format: "ts",
@@ -38,12 +38,9 @@ function taskDialogMarkup() {
             <label class="field">
               <span class="field-label">画质</span>
               <select class="input" name="quality">
-                <option value="OD">原画</option>
-                <option value="UHD">超清</option>
-                <option value="HD">高清</option>
-                <option value="SD">标清</option>
-                <option value="LD">流畅</option>
+                <option value="best">最高可用画质</option>
               </select>
+              <small>具体档位取决于直播间与账号权限</small>
             </label>
             <label class="field">
               <span class="field-label">保存格式</span>
@@ -140,8 +137,8 @@ export function createTaskDialog({ onSaved } = {}) {
 
   function prepare() {
     if (!state.defaultsPromise) {
-      state.defaultsPromise = api("/api/settings/recording-defaults")
-        .then((defaults) => {
+      state.defaultsPromise = Promise.all([api("/api/settings/recording-defaults"), loadQualityOptions()])
+        .then(([defaults]) => {
           state.recordingDefaults = defaults;
           return defaults;
         })
@@ -175,6 +172,15 @@ export function createTaskDialog({ onSaved } = {}) {
     syncMonitorAvailability();
   }
 
+  function syncQualityOptions(preferred = null) {
+    const select = elements.form.elements.quality;
+    const platform = qualityPlatform(elements.url.value);
+    const previous = preferred || (select.dataset.platform === platform ? select.value : "best");
+    select.replaceChildren(...qualityChoices(elements.url.value).map(({ value, label }) => new Option(label, value)));
+    select.dataset.platform = platform || "";
+    select.value = [...select.options].some((option) => option.value === previous) ? previous : "best";
+  }
+
   function clearInspection() {
     state.inspection = null;
     elements.inspectResult.className = "inspect hidden";
@@ -183,6 +189,7 @@ export function createTaskDialog({ onSaved } = {}) {
 
   function reset() {
     elements.form.reset();
+    syncQualityOptions("best");
     elements.form.elements.segment_count.setCustomValidity("");
     clearInspection();
     syncMonitorAvailability();
@@ -208,7 +215,7 @@ export function createTaskDialog({ onSaved } = {}) {
     const form = elements.form.elements;
     form.url.value = task.url;
     form.label.value = task.label || "";
-    form.quality.value = task.quality;
+    syncQualityOptions(task.quality);
     form.output_format.value = task.output_format;
     form.source.value = task.source;
     form.segment_minutes.value = String(task.segment_seconds / 60);
@@ -259,7 +266,7 @@ export function createTaskDialog({ onSaved } = {}) {
         tone: "success",
         glyph: result.is_live ? "record" : "checkCircle",
         title: result.anchor_name || "未知主播",
-        detail: [result.platform, result.is_live ? "直播中" : "当前未开播", result.title, sources && `可用源 ${sources}`]
+        detail: [result.platform, result.is_live ? "直播中" : "当前未开播", result.title, result.quality && `画质 ${qualityLabel(url, result.quality)}`, sources && `可用源 ${sources}`]
           .filter(Boolean)
           .join(" · "),
       });
@@ -357,7 +364,10 @@ export function createTaskDialog({ onSaved } = {}) {
   elements.dialog.querySelectorAll("[data-task-dialog-close]").forEach((button) => button.addEventListener("click", close));
   elements.inspectButton.addEventListener("click", inspectRoom);
   elements.form.addEventListener("submit", submit);
-  elements.form.elements.url.addEventListener("input", clearInspection);
+  elements.form.elements.url.addEventListener("input", () => {
+    syncQualityOptions();
+    clearInspection();
+  });
   elements.form.elements.quality.addEventListener("change", clearInspection);
   elements.form.elements.segment_minutes.addEventListener("input", validateSegmentSettings);
   elements.form.elements.segment_count.addEventListener("input", validateSegmentSettings);

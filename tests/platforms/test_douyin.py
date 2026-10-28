@@ -135,11 +135,13 @@ class ClientTests(IsolatedAsyncioTestCase):
         )
 
     async def test_live_url_uses_room_resolver(self) -> None:
-        info = await self.client.fetch(" https://live.douyin.com/123?foo=bar ", "HD")
+        info = await self.client.fetch(" https://live.douyin.com/123?foo=bar ", "sd")
 
         self.assertEqual(self.resolver.targets[0], "https://live.douyin.com/123?foo=bar")
         self.assertEqual(info.anchor_name, "测试主播")
-        self.assertEqual(info.quality, "HD")
+        self.assertEqual(info.quality, "sd")
+        self.assertEqual(info.flv_codec, "h264")
+        self.assertEqual(info.hls_codec, "h264")
         self.assertTrue(info.is_live)
         self.assertEqual(info.flv_url, "https://cdn.example/sd.flv")
         self.assertEqual(info.m3u8_url, "https://cdn.example/sd.m3u8")
@@ -148,17 +150,30 @@ class ClientTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.factory_kwargs["cookie"], "a=b")
         self.assertEqual(self.factory_kwargs["timeout"], 30)
 
-    async def test_quality_mapping_matches_ui_labels(self) -> None:
-        mapping = {
-            "OD": "origin",
-            "UHD": "hd",
-            "HD": "sd",
-            "SD": "ld",
-            "LD": "md",
-        }
-        for quality, gear in mapping.items():
-            info = await self.client.fetch("https://live.douyin.com/123", quality)
-            self.assertEqual(info.flv_url, f"https://cdn.example/{gear}.flv", quality)
+    async def test_native_quality_selects_exact_gear(self) -> None:
+        for gear in ("origin", "hd", "sd", "ld", "md"):
+            info = await self.client.fetch("https://live.douyin.com/123", gear)
+            self.assertEqual(info.flv_url, f"https://cdn.example/{gear}.flv", gear)
+            self.assertEqual(info.quality, gear)
+
+    async def test_origin_is_not_replaced_by_higher_bitrate_blue_ray(self) -> None:
+        data = self.resolver.room["stream_url"]["live_core_sdk_data"]["pull_data"]["stream_data"]["data"]
+        data["uhd"] = {"main": {"flv": "https://cdn.example/uhd.flv", "sdk_params": {"vbitrate": 9_000_000}}}
+        info = await self.client.fetch("https://live.douyin.com/123", "origin")
+        self.assertEqual(info.flv_url, "https://cdn.example/origin.flv")
+        self.assertEqual(info.quality, "origin")
+
+    async def test_best_can_use_highest_gear_on_backup_line(self) -> None:
+        data = self.resolver.room["stream_url"]["live_core_sdk_data"]["pull_data"]["stream_data"]["data"]
+        data["origin"]["backup"] = data["origin"].pop("main")
+        info = await self.client.fetch("https://live.douyin.com/123", "best")
+        self.assertEqual(info.quality, "origin")
+        self.assertEqual(info.flv_url, "https://cdn.example/origin.flv")
+
+    async def test_unavailable_quality_is_an_error(self) -> None:
+        from stream_keeper.errors import DouyinFetchError
+        with self.assertRaises(DouyinFetchError):
+            await self.client.fetch("https://live.douyin.com/123", "uhd")
 
     async def test_offline_room_returns_is_live_false(self) -> None:
         self.resolver.room = _live_room(status=4)

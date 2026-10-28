@@ -32,8 +32,8 @@ GEAR_RANK = {
     "sd2": 30,
     "hd": 40,
     "hd1": 40,
-    "fhd": 50,
-    "uhd": 60,
+    "uhd": 50,
+    "fhd": 60,
     "full_hd1": 70,
     "fullhd1": 70,
     "origin": 70,
@@ -656,30 +656,16 @@ def choose_candidate(
     if not candidates:
         raise RoomOfflineError("直播间未返回可录制的拉流地址，可能已下播或需要登录权限")
 
-    pool = list(candidates)
+    pool = [item for item in candidates if not item.encrypted and not item.is_audio_only]
     if protocol != "auto":
-        filtered = [item for item in pool if item.protocol == protocol]
-        if not filtered:
-            raise ResolverError(f"没有 {protocol} 协议的候选流")
-        pool = filtered
+        pool = [item for item in pool if item.protocol == protocol]
     else:
-        compatible = [item for item in pool if item.protocol in {"flv", "hls"}]
-        if compatible:
-            pool = compatible
-
-    unencrypted = [item for item in pool if not item.encrypted]
-    if unencrypted:
-        pool = unencrypted
-    video = [item for item in pool if not item.is_audio_only]
-    if video:
-        pool = video
-
-    main = [item for item in pool if item.line in {"main", ""}]
-    if main:
-        pool = main
+        pool = [item for item in pool if item.protocol in {"flv", "hls"}]
+    if not pool:
+        raise ResolverError("没有可用的未加密视频流")
 
     quality_key = _normal_gear(quality)
-    if quality_key in {"source", "origin", "original", "origion"}:
+    if quality_key == "source":
         source_pool = [item for item in pool if _normal_gear(item.gear) in SOURCE_GEARS]
         if source_pool:
             pool = source_pool
@@ -688,18 +674,30 @@ def choose_candidate(
         defaults = [item for item in pool if item.default]
         if defaults:
             pool = defaults
-    elif quality_key not in {"max_bitrate", "max_resolution", "max_real_bitrate"}:
+    elif quality_key not in {"best", "max_bitrate", "max_resolution", "max_real_bitrate"}:
         exact = [item for item in pool if _normal_gear(item.gear) == quality_key]
         if not exact:
             available = ", ".join(sorted({item.gear for item in pool}))
             raise ResolverError(f"找不到清晰度 {quality!r}；可用档位：{available}")
         pool = exact
 
+    main = [item for item in pool if item.line in {"main", ""}]
+    if main and quality_key != "best":
+        pool = main
+
     def common_score(item: StreamCandidate) -> tuple[int, int, int, int]:
         protocol_score = 2 if item.protocol == "flv" else 1 if item.protocol == "hls" else 0
         source_score = 1 if item.source == "stream_url" else 0
         return item.rank_hint, protocol_score, source_score, 1 if item.default else 0
 
+    if quality_key == "best":
+        return max(
+            pool,
+            key=lambda item: (
+                item.rank_hint, item.effective_bitrate, item.pixels, item.fps,
+                item.line in {"main", ""}, *common_score(item),
+            ),
+        )
     if quality_key == "max_resolution":
         return max(
             pool,

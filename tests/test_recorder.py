@@ -128,6 +128,25 @@ class RecorderProcessTests(IsolatedAsyncioTestCase):
             self.assertEqual(recorder.current_output_path.parent.parent.name, "主播")
             self.assertRegex(recorder.current_output_path.parent.name, r"^\d{4}-\d{2}-\d{2}$")
 
+    async def test_av1_is_not_silently_recorded_as_unplayable_ts(self) -> None:
+        process_factory = AsyncMock()
+        info = LiveInfo(
+            platform="哔哩哔哩", anchor_name="主播", is_live=True, title=None, quality="400",
+            m3u8_url="https://example.com/live.m3u8", flv_url=None,
+            record_url="https://example.com/live.m3u8", live_url="https://live.bilibili.com/650",
+            hls_codec="av1",
+        )
+        with TemporaryDirectory() as tmp:
+            recorder = Recorder(
+                RecorderOptions(output_dir=tmp, output_format="ts"),
+                process_factory=process_factory,
+                executable_resolver=lambda _: "/fake/ffmpeg",
+            )
+            with self.assertRaisesRegex(FFmpegRecordingError, "AV1.*MKV 或 MP4"):
+                await recorder.record(info)
+            self.assertIsNone(recorder.current_output_path)
+        process_factory.assert_not_awaited()
+
     async def test_low_disk_space_prevents_ffmpeg_from_starting(self) -> None:
         process_factory = AsyncMock()
         info = LiveInfo(

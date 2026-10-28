@@ -950,7 +950,7 @@ class WebTests(TestCase):
             json={
                 "url": "https://live.douyin.com/123456789",
                 "label": "API 测试",
-                "quality": "HD",
+                "quality": "sd",
                 "output_format": "ts",
                 "source": "auto",
                 "segment_seconds": 600,
@@ -1155,7 +1155,7 @@ class WebTests(TestCase):
         unchanged = self.client.patch(
             f"/api/tasks/{task_id}",
             headers=self.csrf_headers,
-            json={"quality": "OD"},
+            json={"quality": "best"},
         )
         self.assertEqual(unchanged.status_code, 200)
         self.assertEqual(self.scheduler.restarted, [])
@@ -1163,10 +1163,10 @@ class WebTests(TestCase):
         changed = self.client.patch(
             f"/api/tasks/{task_id}",
             headers=self.csrf_headers,
-            json={"quality": "HD"},
+            json={"quality": "sd"},
         )
         self.assertEqual(changed.status_code, 200)
-        self.assertEqual(changed.json()["quality"], "HD")
+        self.assertEqual(changed.json()["quality"], "sd")
         self.assertEqual(self.scheduler.restarted, [task_id])
 
         limited = self.client.patch(
@@ -1202,12 +1202,34 @@ class WebTests(TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("分段时长", response.text)
 
+    def test_quality_options_and_platform_validation(self) -> None:
+        self.login()
+        options = self.client.get("/api/quality-options").json()
+        self.assertIn("uhd", [item["value"] for item in options["douyin"]])
+        bilibili_options = {item["value"]: item["label"] for item in options["bilibili"]}
+        self.assertEqual(bilibili_options["400"], "蓝光")
+        self.assertEqual(bilibili_options["250"], "超清")
+        self.assertEqual(bilibili_options["150"], "高清")
+        self.assertEqual(bilibili_options["80"], "流畅")
+        self.assertIn("BLUE_RAY", [item["value"] for item in options["kuaishou"]])
+        invalid = self.client.post(
+            "/api/tasks", headers=self.csrf_headers,
+            json={"url": "https://live.douyin.com/123456789", "quality": "400"},
+        )
+        self.assertEqual(invalid.status_code, 422)
+        valid = self.client.post(
+            "/api/tasks", headers=self.csrf_headers,
+            json={"url": "https://live.douyin.com/123456789", "quality": "uhd", "auto_start": False},
+        )
+        self.assertEqual(valid.status_code, 201)
+        self.assertEqual(valid.json()["quality"], "uhd")
+
     def test_inspect_does_not_expose_signed_stream_urls(self) -> None:
         self.login()
         response = self.client.post(
             "/api/inspect",
             headers=self.csrf_headers,
-            json={"url": "https://live.douyin.com/123456789", "quality": "OD"},
+            json={"url": "https://live.douyin.com/123456789", "quality": "best"},
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -1225,14 +1247,14 @@ class WebTests(TestCase):
         inspection = self.client.post(
             "/api/inspect",
             headers=self.csrf_headers,
-            json={"url": url, "quality": "OD"},
+            json={"url": url, "quality": "best"},
         )
         token = inspection.json()["inspection_token"]
 
         created = self.client.post(
             "/api/tasks",
             headers=self.csrf_headers,
-            json={"url": url, "quality": "OD", "auto_start": True, "inspection_token": token},
+            json={"url": url, "quality": "best", "auto_start": True, "inspection_token": token},
         )
 
         self.assertEqual(created.status_code, 201)
@@ -1246,14 +1268,14 @@ class WebTests(TestCase):
         reused = self.client.post(
             "/api/tasks",
             headers=self.csrf_headers,
-            json={"url": url, "quality": "OD", "auto_start": True, "inspection_token": token},
+            json={"url": url, "quality": "best", "auto_start": True, "inspection_token": token},
         )
         self.assertEqual(reused.status_code, 201)
         self.assertIsNone(self.scheduler.initial_infos[-1])
 
         task_dialog_script = self.client.get("/static/task-dialog.js").text
         self.assertIn("payload.inspection_token = inspection.token", task_dialog_script)
-        self.assertIn('elements.form.elements.url.addEventListener("input", clearInspection)', task_dialog_script)
+        self.assertIn('elements.form.elements.url.addEventListener("input", () => {', task_dialog_script)
         self.assertIn('elements.form.elements.quality.addEventListener("change", clearInspection)', task_dialog_script)
         self.assertRegex(self.client.get("/tasks").text, r"/static/tasks\.js\?v=\d+")
 
