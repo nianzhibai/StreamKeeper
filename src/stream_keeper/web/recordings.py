@@ -5,6 +5,7 @@ import hashlib
 import os
 import secrets
 import shutil
+import stat
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -432,6 +433,58 @@ class RecordingPreviewCache:
 
             await asyncio.to_thread(self._cleanup, target)
             return target
+
+
+class ArchiveRemuxCache(RecordingPreviewCache):
+    """Keep upload artifacts until every target has confirmed the same bytes."""
+
+    def _cleanup(self, current: Path) -> None:
+        # Unlike playback previews, completed upload artifacts must not be
+        # evicted: a later retry may need the exact bytes already uploaded to
+        # one of several destinations.
+        try:
+            children = tuple(self.directory.iterdir())
+        except OSError:
+            return
+        for path in children:
+            try:
+                if path.name.startswith(".") and time() - path.stat().st_mtime > 3600:
+                    self._unlink(path)
+            except OSError:
+                continue
+
+    def _prune_orphans(self, recordings_dir: Path) -> None:
+        root = recordings_dir.resolve()
+        if not root.is_dir():
+            return
+        prefixes = set()
+        cache_dir = self.directory.resolve()
+        try:
+            def raise_walk_error(error: OSError) -> None:
+                raise error
+
+            for current, directories, filenames in os.walk(root, onerror=raise_walk_error):
+                current_path = Path(current)
+                directories[:] = [name for name in directories if (current_path / name).resolve() != cache_dir]
+                for name in filenames:
+                    source = current_path / name
+                    if source.suffix.lower() not in RECORDING_MEDIA_TYPES:
+                        continue
+                    if stat.S_ISREG(source.lstat().st_mode):
+                        prefixes.add(self._path_prefix(source.relative_to(root).as_posix()))
+        except OSError:
+            # A partial scan cannot prove that a source was deleted.
+            return
+        try:
+            children = tuple(self.directory.iterdir())
+        except OSError:
+            return
+        for path in children:
+            if not path.name.startswith(".") and path.suffix == ".mp4" and path.stem.split("-", 1)[0] not in prefixes:
+                self._unlink(path)
+
+    async def prune_orphans(self, recordings_dir: Path) -> None:
+        await asyncio.to_thread(self._prune_orphans, recordings_dir)
 
 
 async def delete_recording_file(

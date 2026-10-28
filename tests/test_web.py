@@ -1529,6 +1529,24 @@ class WebTests(TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_mp4_upload_setting_is_persisted_and_preserved_by_older_schedule_updates(self) -> None:
+        self.login()
+        response = self.client.put(
+            "/api/cloud/archive/schedule", headers=self.csrf_headers,
+            json={"mode": "scheduled", "hour": 1, "min_age_minutes": 5, "timeout_seconds": 300,
+                  "convert_to_mp4": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["schedule"]["convert_to_mp4"])
+        stored = asyncio.run(self.store.get_cloud_upload_config())
+        self.assertTrue(stored["convert_to_mp4"])
+        response = self.client.put(
+            "/api/cloud/archive/schedule", headers=self.csrf_headers,
+            json={"mode": "scheduled", "hour": 2, "min_age_minutes": 5, "timeout_seconds": 300},
+        )
+        self.assertTrue(response.json()["schedule"]["convert_to_mp4"])
+        self.assertTrue(self.client.get("/api/cloud/archive").json()["schedule"]["convert_to_mp4"])
+
     def test_cloud_archive_can_be_configured_and_run_from_web_without_exposing_secrets(self) -> None:
         self.login()
         overview_page = self.client.get("/")
@@ -1560,6 +1578,7 @@ class WebTests(TestCase):
             self.assertIn(icon_path, archive_page.text)
             self.assertEqual(self.client.get(icon_path).status_code, 200)
         self.assertIn('id="archive-schedule-form"', settings_page.text)
+        self.assertIn('name="convert_to_mp4"', settings_page.text)
         self.assertIn('name="recording_output_format"', settings_page.text)
         self.assertIn('name="recording_segment_minutes"', settings_page.text)
         self.assertIn('name="recording_segment_count"', settings_page.text)
@@ -1572,6 +1591,7 @@ class WebTests(TestCase):
         self.assertEqual(initial.status_code, 200)
         self.assertFalse(initial.json()["enabled"])
         self.assertEqual(initial.json()["schedule"]["mode"], "scheduled")
+        self.assertFalse(initial.json()["schedule"]["convert_to_mp4"])
         self.assertEqual(
             [provider["name"] for provider in initial.json()["providers"]],
             ["quark", "baidu", "pan115", "guangya", "wopan", "yun139"],

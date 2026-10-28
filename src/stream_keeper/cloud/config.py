@@ -164,6 +164,7 @@ class CloudArchiveConfig:
     upload_hour: int = 1
     upload_min_age_minutes: int = 5
     upload_timeout_seconds: int = 300
+    convert_to_mp4: bool = False
 
     def __post_init__(self) -> None:
         by_name: dict[str, CloudProviderConfig] = {}
@@ -315,6 +316,7 @@ class CloudArchiveConfig:
             upload_hour=int(value.get("upload_hour", 1)),
             upload_min_age_minutes=int(value.get("upload_min_age_minutes", 5)),
             upload_timeout_seconds=int(value.get("upload_timeout_seconds", 300)),
+            convert_to_mp4=bool(value.get("convert_to_mp4", False)),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -331,6 +333,7 @@ class CloudArchiveConfig:
             "upload_hour": self.upload_hour,
             "upload_min_age_minutes": self.upload_min_age_minutes,
             "upload_timeout_seconds": self.upload_timeout_seconds,
+            "convert_to_mp4": self.convert_to_mp4,
         }
 
     def provider(self, name: str) -> CloudProviderConfig:

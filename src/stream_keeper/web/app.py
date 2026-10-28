@@ -226,6 +226,7 @@ async def _cloud_archive_response(
             hour=config.upload_hour,
             min_age_minutes=config.upload_min_age_minutes,
             timeout_seconds=config.upload_timeout_seconds,
+            convert_to_mp4=config.convert_to_mp4,
             next_run_at=await upload_service.next_run_at(),
         ),
         last_run=execution_view,
@@ -858,6 +859,10 @@ def create_app(
                 upload_hour=payload.schedule.hour,
                 upload_min_age_minutes=payload.schedule.min_age_minutes,
                 upload_timeout_seconds=payload.schedule.timeout_seconds,
+                convert_to_mp4=(
+                    current.convert_to_mp4 if payload.schedule.convert_to_mp4 is None
+                    else payload.schedule.convert_to_mp4
+                ),
             )
 
         async with cloud_config_lock:
@@ -977,6 +982,7 @@ def create_app(
                 upload_hour=payload.hour,
                 upload_min_age_minutes=payload.min_age_minutes,
                 upload_timeout_seconds=payload.timeout_seconds,
+                convert_to_mp4=current.convert_to_mp4 if payload.convert_to_mp4 is None else payload.convert_to_mp4,
             )
 
         async with cloud_config_lock:
@@ -1208,8 +1214,14 @@ def create_app(
     @app.get("/api/system", response_model=SystemInfo)
     async def system_info() -> SystemInfo:
         usage = shutil.disk_usage(settings.recordings_dir)
-        pending_bytes = await asyncio.to_thread(pending_upload_bytes, settings.recordings_dir)
+        archive_cache = getattr(upload_service, "archive_cache", None)
+        excluded = (recording_preview_cache.directory,)
+        if archive_cache is not None:
+            excluded += (archive_cache.directory,)
+        pending_bytes = await asyncio.to_thread(pending_upload_bytes, settings.recordings_dir, excluded)
         remux_bytes = await recording_preview_cache.total_bytes()
+        if archive_cache is not None:
+            remux_bytes += await archive_cache.total_bytes()
         return SystemInfo(
             ffmpeg_available=bool(shutil.which(settings.ffmpeg)),
             recordings_dir=str(settings.recordings_dir),

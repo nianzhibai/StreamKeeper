@@ -83,6 +83,7 @@ function populate(cloudValue, recordingValue, runtimeValue) {
   form.elements.upload_hour.value = String(cloud.schedule.hour);
   form.elements.upload_min_age_minutes.value = String(cloud.schedule.min_age_minutes);
   form.elements.upload_timeout_seconds.value = String(cloud.schedule.timeout_seconds);
+  form.elements.convert_to_mp4.checked = cloud.schedule.convert_to_mp4;
   syncModeFields();
   validateRecordingSettings();
   pristine = formSignature();
@@ -159,6 +160,7 @@ async function submit(event) {
     hour: Number(fields.upload_hour.value),
     min_age_minutes: Number(fields.upload_min_age_minutes.value),
     timeout_seconds: Number(fields.upload_timeout_seconds.value),
+    convert_to_mp4: fields.convert_to_mp4.checked,
   };
   saveButton.disabled = true;
   const recordingPayload = {
@@ -174,6 +176,7 @@ async function submit(event) {
     || schedulePayload.hour !== cloud.schedule.hour
     || schedulePayload.min_age_minutes !== cloud.schedule.min_age_minutes
     || schedulePayload.timeout_seconds !== cloud.schedule.timeout_seconds
+    || schedulePayload.convert_to_mp4 !== cloud.schedule.convert_to_mp4
   );
   const recordingChanged = (
     recordingPayload.output_format !== recordingDefaults.output_format

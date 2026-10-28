@@ -318,6 +318,7 @@ class CloudScheduleUpdate(StrictModel):
     hour: int = Field(default=1, ge=0, le=23)
     min_age_minutes: int = Field(default=5, ge=0, le=1440)
     timeout_seconds: int = Field(default=300, ge=30, le=86400)
+    convert_to_mp4: bool | None = None
 
 
 class CloudArchiveUpdate(StrictModel):
@@ -381,6 +382,7 @@ class CloudScheduleView(StrictModel):
     hour: int
     min_age_minutes: int
     timeout_seconds: int
+    convert_to_mp4: bool
     next_run_at: datetime | None
 
 

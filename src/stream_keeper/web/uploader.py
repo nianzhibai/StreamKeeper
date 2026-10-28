@@ -26,7 +26,7 @@ from ..cloud import (
 from ..models import RecordingResult
 from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, UPLOAD_MODE_SCHEDULED, Settings
 from .events import EventLog
-from .recordings import RecordingPreviewCache
+from .recordings import ArchiveRemuxCache, RecordingPreviewCache
 from .schemas import TaskStatus
 from .store import CloudCredentialSnapshot, TaskStore
 
@@ -43,7 +43,7 @@ TRIGGER_LABELS = {
 _SEGMENT_PLACEHOLDER = re.compile(r"%(?:0(?P<width>[1-9]\d*))?d")
 
 
-def pending_upload_bytes(recordings_dir: Path) -> int:
+def pending_upload_bytes(recordings_dir: Path, excluded_directories: tuple[Path, ...] = ()) -> int:
     """Total size of the recordings that still have to be archived.
 
     A recording is deleted locally as soon as every enabled target confirms it
@@ -52,10 +52,13 @@ def pending_upload_bytes(recordings_dir: Path) -> int:
     """
     if not recordings_dir.is_dir():
         return 0
+    excluded = tuple(path.resolve() for path in excluded_directories)
     total = 0
     for path in recordings_dir.rglob("*"):
         try:
             if path.is_symlink() or not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            if any(directory in path.resolve().parents for directory in excluded):
                 continue
             total += path.stat().st_size
         except OSError:
@@ -268,6 +271,7 @@ class RecordingUploadService:
         self.store = store
         self.events = events or EventLog(store)
         self.preview_cache = preview_cache
+        self.archive_cache = ArchiveRemuxCache(settings.data_dir / "archive-remux-cache", settings.ffmpeg)
         self._seed_config = CloudArchiveConfig.from_settings(settings)
         self._seed_config.validate()
         self._clock = clock or (lambda: datetime.now().astimezone())
@@ -719,12 +723,15 @@ class RecordingUploadService:
         scanned_files = 0
         skipped_files = 0
         cutoff_timestamp = self._clock().timestamp() - min_age_minutes * 60
+        cache_dir = self.archive_cache.directory.resolve()
         for path in sorted(root.rglob("*")):
             try:
                 if path.is_symlink() or not path.is_file() or path.suffix.lower() not in VIDEO_EXTENSIONS:
                     continue
-                scanned_files += 1
                 resolved = path.resolve()
+                if resolved == cache_dir or cache_dir in resolved.parents:
+                    continue
+                scanned_files += 1
                 stat = resolved.stat()
                 is_active = any(
                     directory == resolved.parent or directory in resolved.parents for directory in active_directories
@@ -809,6 +816,8 @@ class RecordingUploadService:
         config: CloudArchiveConfig,
         clients: dict[str, CloudUploadClient],
         target_states: dict[str, UploadTargetExecution],
+        destination: Path,
+        destination_conflict: bool,
     ) -> ArchiveCandidateResult:
         """Reconcile one recording on every target, then clean it up atomically.
 
@@ -821,6 +830,32 @@ class RecordingUploadService:
         if not self._is_unchanged(candidate):
             return ArchiveCandidateResult(file_error=CloudUploadError("文件在扫描后发生变化"))
 
+        if destination_conflict:
+            error = CloudUploadError(f"转换后的上传文件名冲突：{destination}")
+            for state in target_states.values():
+                state.fail(error)
+            return ArchiveCandidateResult(file_error=error)
+
+        upload_candidate = candidate
+        if config.convert_to_mp4 and candidate.path.suffix.lower() != ".mp4":
+            preparing = UploadCandidate(candidate.path, destination, 0, candidate.mtime_ns)
+            for state in target_states.values():
+                state.begin(preparing)
+            try:
+                converted = await self.archive_cache.get(candidate.path, candidate.relative_path.as_posix())
+                if not self._is_unchanged(candidate):
+                    raise CloudUploadError("文件在转换期间发生变化")
+                stat = await asyncio.to_thread(converted.stat)
+                upload_candidate = UploadCandidate(converted, destination, stat.st_size, stat.st_mtime_ns)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                detail = getattr(exc, "detail", None) or str(exc) or type(exc).__name__
+                error = CloudUploadError(f"转换 MP4 失败：{detail}")
+                for state in target_states.values():
+                    state.fail(error)
+                return ArchiveCandidateResult(file_error=error)
+
         for target in targets:
             if not self._is_unchanged(candidate):
                 return ArchiveCandidateResult(
@@ -830,12 +865,12 @@ class RecordingUploadService:
                 )
 
             state = target_states[target.name]
-            state.begin(candidate)
-            remote_path = posixpath.join(target.remote_root, candidate.relative_path.as_posix())
+            state.begin(upload_candidate)
+            remote_path = posixpath.join(target.remote_root, destination.as_posix())
             try:
                 client = await self._get_client(target, config, clients)
                 created = await client.upload_verified(
-                    candidate.path,
+                    upload_candidate.path,
                     remote_path,
                     progress=state.progress,
                 )
@@ -890,6 +925,11 @@ class RecordingUploadService:
             else:
                 if discarded:
                     logger.info("已清理 %d 个播放缓存文件：%s", discarded, candidate.relative_path.as_posix())
+        if upload_candidate is not candidate:
+            try:
+                await self.archive_cache.discard(candidate.relative_path.as_posix())
+            except Exception:
+                logger.exception("本地录像已归档，但清理归档转换文件失败：%s", candidate.relative_path)
         return ArchiveCandidateResult(uploaded_copies=uploaded_copies)
 
     async def run_once(
@@ -906,6 +946,7 @@ class RecordingUploadService:
         target_states = target_states or {target.name: UploadTargetExecution(name=target.name) for target in targets}
 
         async with self._upload_lock:
+            await self.archive_cache.prune_orphans(self.settings.recordings_dir)
             if recording_outputs is None:
                 active_directories = await self._active_recording_directories()
                 candidates, scanned_files, skipped_files = await asyncio.to_thread(
@@ -922,14 +963,32 @@ class RecordingUploadService:
             deleted_files = 0
             failed_files = 0
             clients: dict[str, CloudUploadClient] = {}
+            destinations = {
+                candidate.path: (
+                    candidate.relative_path.with_name(candidate.relative_path.name + ".mp4")
+                    if config.convert_to_mp4 and candidate.path.suffix.lower() != ".mp4"
+                    else candidate.relative_path
+                )
+                for candidate in candidates
+            }
+            destination_counts: dict[Path, int] = {}
+            for destination in destinations.values():
+                destination_counts[destination] = destination_counts.get(destination, 0) + 1
             try:
                 for candidate in candidates:
+                    destination = destinations[candidate.path]
+                    existing_path = self.settings.recordings_dir / destination
+                    conflict = destination_counts[destination] > 1 or (
+                        destination != candidate.relative_path and existing_path.exists()
+                    )
                     result = await self._archive_candidate(
                         candidate,
                         targets,
                         config,
                         clients,
                         target_states,
+                        destination,
+                        conflict,
                     )
                     uploaded_copies += result.uploaded_copies
                     error = result.error

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -83,6 +84,88 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    async def test_mp4_conversion_is_reused_after_partial_upload_failure(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "主播" / "retry.ts", b"source", self.now)
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient(fail_fragment=CLOUD_ARCHIVE_ROOT)}
+        service = RecordingUploadService(self.settings, self.store, client_factory=lambda target: clients[target.name])
+        config = replace(await service.get_config(), convert_to_mp4=True)
+        signature = service.archive_cache._source_signature(recording)
+        relative = "主播/retry.ts"
+        converted = service.archive_cache.directory / f"{service.archive_cache._cache_key(relative, signature)}.mp4"
+        converted.parent.mkdir(parents=True)
+        converted.write_bytes(b"converted mp4")
+
+        with patch.object(service.archive_cache, "get", return_value=converted) as remux:
+            first = await service.run_once(config)
+            self.assertEqual(first.failed_files, 1)
+            self.assertTrue(recording.exists())
+            self.assertTrue(converted.exists())
+            self.assertEqual(clients["quark"].calls[0], (converted, f"{CLOUD_ARCHIVE_ROOT}/主播/retry.ts.mp4"))
+            clients["wopan"].fail_fragment = None
+            second = await service.run_once(config)
+
+        self.assertEqual(remux.await_count, 2)
+        self.assertEqual(second.uploaded_copies, 1)
+        self.assertEqual(second.deleted_files, 1)
+        self.assertFalse(recording.exists())
+        self.assertFalse(converted.exists())
+
+    async def test_conversion_failure_preserves_original_and_does_not_upload(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "failed.ts", b"source", self.now)
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(self.settings, self.store, client_factory=lambda target: clients[target.name])
+        config = replace(await service.get_config(), convert_to_mp4=True)
+        with patch.object(service.archive_cache, "get", side_effect=RuntimeError("模拟转换失败")):
+            summary = await service.run_once(config)
+        self.assertEqual(summary.failed_files, 1)
+        self.assertTrue(recording.exists())
+        self.assertFalse(clients["quark"].calls)
+        self.assertFalse(clients["wopan"].calls)
+
+    async def test_file_changed_during_conversion_is_not_uploaded(self) -> None:
+        recording = make_old_file(self.settings.recordings_dir / "changed.ts", b"source", self.now)
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(self.settings, self.store, client_factory=lambda target: clients[target.name])
+        config = replace(await service.get_config(), convert_to_mp4=True)
+        converted = self.root / "temporary.mp4"
+        converted.write_bytes(b"converted")
+
+        async def change_source(*_args):
+            recording.write_bytes(b"source changed")
+            return converted
+
+        with patch.object(service.archive_cache, "get", side_effect=change_source):
+            summary = await service.run_once(config)
+        self.assertEqual(summary.failed_files, 1)
+        self.assertTrue(recording.exists())
+        self.assertFalse(clients["quark"].calls)
+
+    async def test_archive_cache_inside_recording_root_is_not_scanned(self) -> None:
+        settings = make_settings(self.root, recordings_dir=self.root)
+        service = RecordingUploadService(settings, self.store)
+        source = make_old_file(self.root / "source.ts", b"source", self.now)
+        cached = make_old_file(service.archive_cache.directory / "some-key.mp4", b"converted", self.now)
+        candidates, scanned, _ = service._collect_candidates(set(), 0)
+        self.assertEqual(scanned, 1)
+        self.assertEqual([candidate.path for candidate in candidates], [source.resolve()])
+        self.assertTrue(cached.exists())
+
+    async def test_existing_mp4_uploads_directly_and_name_collision_is_blocked(self) -> None:
+        source = make_old_file(self.settings.recordings_dir / "same.ts", b"source", self.now)
+        existing = make_old_file(self.settings.recordings_dir / "same.ts.mp4", b"other", self.now)
+        direct = make_old_file(self.settings.recordings_dir / "direct.mp4", b"mp4", self.now)
+        clients = {"quark": FakeUploadClient(), "wopan": FakeUploadClient()}
+        service = RecordingUploadService(self.settings, self.store, client_factory=lambda target: clients[target.name])
+        config = replace(await service.get_config(), convert_to_mp4=True)
+        with patch.object(service.archive_cache, "get") as remux:
+            summary = await service.run_once(config)
+        self.assertEqual(summary.failed_files, 2)
+        self.assertTrue(source.exists())
+        self.assertTrue(existing.exists())
+        self.assertFalse(direct.exists())
+        self.assertEqual(clients["quark"].calls[0][1], f"{CLOUD_ARCHIVE_ROOT}/direct.mp4")
+        remux.assert_not_awaited()
 
     async def test_uploads_stable_files_to_all_targets_then_deletes_local(self) -> None:
         stable = make_old_file(
