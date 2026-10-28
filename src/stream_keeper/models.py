@@ -5,6 +5,16 @@ from dataclasses import dataclass
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
+class AnchorIdentity:
+    platform: str
+    anchor_id: str
+
+    def __post_init__(self) -> None:
+        if not self.platform.strip() or not self.anchor_id.strip():
+            raise ValueError("主播身份不能为空")
+
+
 def _read_field(value: object, name: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         return value.get(name, default)

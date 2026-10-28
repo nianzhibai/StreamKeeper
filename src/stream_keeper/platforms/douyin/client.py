@@ -85,6 +85,33 @@ class DouyinClient:
             )
         return self._resolver
 
+    async def resolve_anchor_id(self, url: str) -> str:
+        normalized_url = self.validate_url(url)
+        try:
+            room = await asyncio.to_thread(self._get_resolver().resolve, normalized_url)
+        except ResolverError as exc:
+            raise DouyinFetchError(f"获取抖音主播身份失败: {exc}") from exc
+        owner = room.room.get("owner")
+        owner = owner if isinstance(owner, dict) else {}
+        data = room.response.get("data")
+        user = data.get("user") if isinstance(data, dict) else None
+        user = user if isinstance(user, dict) else {}
+        anchor_id = (
+            owner.get("id_str") or owner.get("idStr") or owner.get("id")
+            or user.get("id_str") or user.get("idStr") or user.get("id")
+        )
+        # Numeric IDs in share pages may have passed through JavaScript and
+        # lost precision; accept large IDs only from their string form.
+        if (
+            not anchor_id
+            or isinstance(anchor_id, bool)
+            or (isinstance(anchor_id, int) and anchor_id > 2**53 - 1)
+            or not str(anchor_id).isdigit()
+            or int(anchor_id) <= 0
+        ):
+            raise DouyinFetchError("无法确定抖音主播 ID，请检查链接或稍后重试")
+        return str(anchor_id)
+
     @staticmethod
     def _room_is_live(room: dict[str, Any]) -> bool:
         return int(room.get("status") or 0) == 2

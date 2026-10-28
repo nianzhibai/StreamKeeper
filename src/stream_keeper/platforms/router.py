@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..errors import InvalidLiveUrl
-from ..models import LiveInfo
+from ..models import AnchorIdentity, LiveInfo
 from .bilibili import BilibiliClient
 from .douyin import DouyinClient
 from .kuaishou import KuaishouClient
@@ -82,3 +82,8 @@ class LiveStreamClient:
     async def fetch(self, url: str, quality: str = "best") -> LiveInfo:
         key, normalized_url = self._match_url(url)
         return await self._get_client(key).fetch(normalized_url, quality)
+
+    async def resolve_anchor(self, url: str) -> AnchorIdentity:
+        key, normalized_url = self._match_url(url)
+        anchor_id = await self._get_client(key).resolve_anchor_id(normalized_url)
+        return AnchorIdentity(platform=key, anchor_id=anchor_id)

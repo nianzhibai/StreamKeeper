@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cloud.config import CLOUD_PROVIDER_ORDER, CLOUD_PROVIDER_SPECS
+from ..models import AnchorIdentity
 from ..platforms import LiveStreamClient
 from ..settings import MAX_RECORDING_CONCURRENCY
 from .schemas import (
@@ -83,6 +84,12 @@ class CredentialUpdateStatus(str, Enum):
     UNCHANGED = "unchanged"
 
 
+class DuplicateAnchorError(Exception):
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(f"该主播已存在录制任务: {task_id}")
+
+
 class TaskStore:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
@@ -91,6 +98,7 @@ class TaskStore:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         try:
             with connection:
                 yield connection
@@ -149,6 +157,16 @@ class TaskStore:
                     updated_at TEXT NOT NULL,
                     last_checked_at TEXT,
                     started_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_anchors (
+                    task_id TEXT PRIMARY KEY REFERENCES recording_tasks(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL CHECK (length(platform) > 0),
+                    anchor_id TEXT NOT NULL CHECK (length(anchor_id) > 0),
+                    UNIQUE (platform, anchor_id)
                 )
                 """
             )
@@ -1051,10 +1069,10 @@ class TaskStore:
             return None
         return TaskRecord.model_validate(dict(row))
 
-    async def create(self, config: TaskConfig) -> TaskRecord:
-        return await self._run_sync(self._create_sync, config)
+    async def create(self, config: TaskConfig, identity: AnchorIdentity) -> TaskRecord:
+        return await self._run_sync(self._create_sync, config, identity)
 
-    def _create_sync(self, config: TaskConfig) -> TaskRecord:
+    def _create_sync(self, config: TaskConfig, identity: AnchorIdentity) -> TaskRecord:
         task_id = uuid.uuid4().hex
         now = utc_now().isoformat()
         data = config.model_dump()
@@ -1082,6 +1100,7 @@ class TaskStore:
                     now,
                 ),
             )
+            self._save_anchor(connection, task_id, identity)
         record = self._get_sync(task_id)
         assert record is not None
         return record
@@ -1106,11 +1125,15 @@ class TaskStore:
         records = await self.list()
         return [record for record in records if record.enabled]
 
-    async def update_config(self, task_id: str, changes: dict[str, Any]) -> TaskRecord | None:
+    async def update_config(
+        self, task_id: str, changes: dict[str, Any], identity: AnchorIdentity | None = None
+    ) -> TaskRecord | None:
         invalid = set(changes) - CONFIG_COLUMNS
         if invalid:
             raise ValueError(f"Invalid config fields: {', '.join(sorted(invalid))}")
-        return await self._run_sync(self._update_sync, task_id, changes)
+        if "url" in changes and identity is None:
+            raise ValueError("修改直播链接时必须提供主播身份")
+        return await self._run_sync(self._update_sync, task_id, changes, identity)
 
     async def update_runtime(self, task_id: str, **changes: Any) -> TaskRecord | None:
         invalid = set(changes) - RUNTIME_COLUMNS
@@ -1118,17 +1141,38 @@ class TaskStore:
             raise ValueError(f"Invalid runtime fields: {', '.join(sorted(invalid))}")
         return await self._run_sync(self._update_sync, task_id, changes)
 
-    def _update_sync(self, task_id: str, changes: dict[str, Any]) -> TaskRecord | None:
+    @staticmethod
+    def _save_anchor(connection: sqlite3.Connection, task_id: str, identity: AnchorIdentity) -> None:
+        try:
+            connection.execute(
+                """INSERT INTO task_anchors (task_id, platform, anchor_id) VALUES (?, ?, ?)
+                   ON CONFLICT(task_id) DO UPDATE SET platform=excluded.platform, anchor_id=excluded.anchor_id""",
+                (task_id, identity.platform, identity.anchor_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            row = connection.execute(
+                "SELECT task_id FROM task_anchors WHERE platform = ? AND anchor_id = ?",
+                (identity.platform, identity.anchor_id),
+            ).fetchone()
+            if row is not None:
+                raise DuplicateAnchorError(row["task_id"]) from exc
+            raise
+
+    def _update_sync(
+        self, task_id: str, changes: dict[str, Any], identity: AnchorIdentity | None = None
+    ) -> TaskRecord | None:
         if not changes:
             return self._get_sync(task_id)
         values = {key: self._serialize(value) for key, value in changes.items()}
         values["updated_at"] = utc_now().isoformat()
         assignments = ", ".join(f"{key} = ?" for key in values)
         with self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 f"UPDATE recording_tasks SET {assignments} WHERE id = ?",  # Columns are allow-listed above.
                 (*values.values(), task_id),
             )
+            if cursor.rowcount and identity is not None:
+                self._save_anchor(connection, task_id, identity)
         return self._get_sync(task_id)
 
     async def delete(self, task_id: str) -> bool:

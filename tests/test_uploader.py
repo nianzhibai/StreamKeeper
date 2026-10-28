@@ -7,7 +7,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 
 from stream_keeper.cloud import CloudProviderConfig, CloudUploadError, UploadProgress
-from stream_keeper.models import RecordingResult, SelectedSource
+from stream_keeper.models import AnchorIdentity, RecordingResult, SelectedSource
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 from stream_keeper.web.recordings import RecordingPreviewCache
 from stream_keeper.web.schemas import TaskConfig, TaskStatus
@@ -101,7 +101,9 @@ class RecordingUploadServiceTests(IsolatedAsyncioTestCase):
             b"active-segment",
             self.now,
         )
-        task = await self.store.create(TaskConfig(url="https://live.douyin.com/123456789"))
+        task = await self.store.create(
+            TaskConfig(url="https://live.douyin.com/123456789"), AnchorIdentity("douyin", "test-anchor")
+        )
         await self.store.update_runtime(
             task.id,
             status=TaskStatus.RECORDING,

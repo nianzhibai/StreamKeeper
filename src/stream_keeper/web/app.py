@@ -24,6 +24,7 @@ from ..cloud import (
     CloudUploadError,
 )
 from ..errors import StreamKeeperError
+from ..models import AnchorIdentity
 from ..platforms.quality import QUALITY_OPTIONS
 from ..settings import UPLOAD_MODE_RECORDING_COMPLETED, Settings
 from .auth import (
@@ -89,7 +90,7 @@ from .schemas import (
     WebAccountUpdate,
     WebAccountUpdateResult,
 )
-from .store import CloudCredentialSnapshot, CredentialUpdateStatus, TaskStore, WebSession, utc_now
+from .store import CloudCredentialSnapshot, CredentialUpdateStatus, DuplicateAnchorError, TaskStore, WebSession, utc_now
 from .updates import UpdateChecker, UpdateCheckError
 from .uploader import RecordingUploadService, pending_upload_bytes
 
@@ -1067,6 +1068,20 @@ def create_app(
     async def list_tasks() -> list[TaskRecord]:
         return scheduler.enrich_records(await store.list())
 
+    async def resolve_task_anchor(url: str) -> AnchorIdentity:
+        try:
+            return await asyncio.wait_for(
+                inspect_client_factory().resolve_anchor(url), timeout=settings.fetch_timeout_seconds
+            )
+        except (StreamKeeperError, TimeoutError, ValueError) as exc:
+            detail = str(exc) or "请求超时"
+            raise HTTPException(status_code=502, detail=f"无法确认主播身份：{detail}") from exc
+
+    async def duplicate_task_error(exc: DuplicateAnchorError) -> HTTPException:
+        existing = await store.get(exc.task_id)
+        name = (existing.label or existing.anchor_name or existing.url) if existing else exc.task_id
+        return HTTPException(status_code=409, detail=f"该主播已有任务「{name}」（任务 ID：{exc.task_id}）")
+
     @app.post("/api/tasks", response_model=TaskRecord, status_code=status.HTTP_201_CREATED)
     async def create_task(payload: TaskCreate) -> TaskRecord:
         config_values = payload.model_dump(exclude={"auto_start", "inspection_token"})
@@ -1079,7 +1094,11 @@ def create_app(
         except ValidationError as exc:
             detail = "；".join(error["msg"] for error in exc.errors())
             raise HTTPException(status_code=422, detail=detail) from exc
-        record = await store.create(config)
+        identity = await resolve_task_anchor(config.url)
+        try:
+            record = await store.create(config, identity)
+        except DuplicateAnchorError as exc:
+            raise await duplicate_task_error(exc) from exc
         if payload.auto_start:
             initial_info = inspection_handoffs.consume(
                 payload.inspection_token,
@@ -1126,7 +1145,11 @@ def create_app(
         }
         if not effective_changes:
             return current
-        updated = await store.update_config(task_id, effective_changes)
+        identity = await resolve_task_anchor(validated_config.url) if "url" in effective_changes else None
+        try:
+            updated = await store.update_config(task_id, effective_changes, identity)
+        except DuplicateAnchorError as exc:
+            raise await duplicate_task_error(exc) from exc
         if current.enabled and _TASK_RESTART_FIELDS.intersection(effective_changes):
             await scheduler.restart(task_id)
         if updated is None:

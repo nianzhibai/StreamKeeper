@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest import IsolatedAsyncioTestCase, TestCase
 
-from stream_keeper.errors import InvalidDouyinUrl
+from stream_keeper.errors import DouyinFetchError, InvalidDouyinUrl
 from stream_keeper.platforms.douyin import DouyinClient
 from stream_keeper.platforms.douyin.parser import RoomResult
 
@@ -133,6 +133,24 @@ class ClientTests(IsolatedAsyncioTestCase):
             timeout=30,
             resolver_factory=factory,
         )
+
+    async def test_anchor_identity_from_share_room_and_offline_web_response(self) -> None:
+        self.resolver.room["owner"]["idStr"] = "3235233126423099"
+        self.assertEqual(await self.client.resolve_anchor_id("https://v.douyin.com/example/"), "3235233126423099")
+
+        async_room = RoomResult(
+            room={"status": 4},
+            response={"data": {"user": {"id_str": "3235233126423099"}}},
+        )
+        self.resolver.resolve = lambda _url: async_room
+        self.assertEqual(await self.client.resolve_anchor_id("https://live.douyin.com/123"), "3235233126423099")
+
+    async def test_anchor_identity_rejects_missing_and_imprecise_numeric_id(self) -> None:
+        with self.assertRaisesRegex(DouyinFetchError, "主播 ID"):
+            await self.client.resolve_anchor_id("https://live.douyin.com/123")
+        self.resolver.room["owner"]["id"] = 2**53 + 2
+        with self.assertRaisesRegex(DouyinFetchError, "主播 ID"):
+            await self.client.resolve_anchor_id("https://live.douyin.com/123")
 
     async def test_live_url_uses_room_resolver(self) -> None:
         info = await self.client.fetch(" https://live.douyin.com/123?foo=bar ", "sd")

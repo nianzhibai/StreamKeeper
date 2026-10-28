@@ -4,9 +4,11 @@ from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
+from uuid import uuid4
 
+from stream_keeper.models import AnchorIdentity
 from stream_keeper.web.schemas import RecordingDefaults, RecordingRuntimeSettings, TaskConfig, TaskStatus
-from stream_keeper.web.store import CredentialUpdateStatus, TaskStore
+from stream_keeper.web.store import CredentialUpdateStatus, DuplicateAnchorError, TaskStore
 
 
 def task_config(**overrides) -> TaskConfig:
@@ -26,6 +28,9 @@ def task_config(**overrides) -> TaskConfig:
 
 
 class StoreTests(IsolatedAsyncioTestCase):
+    async def create_task(self, config):
+        return await self.store.create(config, AnchorIdentity("test", uuid4().hex))
+
     async def asyncSetUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
         self.store = TaskStore(Path(self.temp_dir.name) / "tasks.db")
@@ -33,6 +38,35 @@ class StoreTests(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    async def test_anchor_uniqueness_is_atomic_and_deleted_with_task(self) -> None:
+        identity = AnchorIdentity("douyin", "123")
+        outcomes = await asyncio.gather(
+            self.store.create(task_config(), identity),
+            self.store.create(task_config(), identity),
+            return_exceptions=True,
+        )
+        created = [item for item in outcomes if not isinstance(item, BaseException)]
+        conflicts = [item for item in outcomes if isinstance(item, DuplicateAnchorError)]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0].task_id, created[0].id)
+        self.assertEqual(len(await self.store.list()), 1)
+        await self.store.delete(created[0].id)
+        self.assertIsNotNone(await self.store.create(task_config(), identity))
+
+    async def test_conflicting_anchor_update_rolls_back_config(self) -> None:
+        first = await self.store.create(task_config(), AnchorIdentity("douyin", "first"))
+        second = await self.store.create(task_config(), AnchorIdentity("douyin", "second"))
+        with self.assertRaises(DuplicateAnchorError):
+            await self.store.update_config(
+                second.id, {"url": "https://live.douyin.com/another", "label": "changed"},
+                AnchorIdentity("douyin", "first"),
+            )
+        self.assertEqual((await self.store.get(second.id)).url, second.url)
+        self.assertEqual((await self.store.get(second.id)).label, second.label)
+        self.assertEqual(len(await self.store.list()), 2)
+        self.assertNotEqual(first.id, second.id)
 
     async def test_recording_defaults_are_initialized_and_persisted(self) -> None:
         initial = await self.store.get_recording_defaults()
@@ -70,7 +104,7 @@ class StoreTests(IsolatedAsyncioTestCase):
         )
 
     async def test_create_update_list_and_delete(self) -> None:
-        created = await self.store.create(task_config())
+        created = await self.create_task(task_config())
         self.assertFalse(created.enabled)
         self.assertEqual(created.status, TaskStatus.STOPPED)
         self.assertEqual(created.segment_count, 0)
@@ -100,17 +134,17 @@ class StoreTests(IsolatedAsyncioTestCase):
             "https://live.kuaishou.com/u/example",
         ):
             with self.subTest(url=url):
-                created = await self.store.create(task_config(url=url))
+                created = await self.create_task(task_config(url=url))
                 self.assertEqual(created.url, url)
 
     async def test_finite_segment_limit_disables_monitoring(self) -> None:
-        created = await self.store.create(task_config(segment_count=4, monitor=True))
+        created = await self.create_task(task_config(segment_count=4, monitor=True))
 
         self.assertEqual(created.segment_count, 4)
         self.assertFalse(created.monitor)
 
     async def test_recover_interrupted_enabled_task(self) -> None:
-        created = await self.store.create(task_config())
+        created = await self.create_task(task_config())
         await self.store.update_runtime(
             created.id,
             enabled=True,
@@ -194,16 +228,17 @@ class StoreTests(IsolatedAsyncioTestCase):
             ("https://live.douyin.com/123457", "OD", "best"),
         ]
         for url, old, expected in cases:
-            record = await self.store.create(task_config(url=url))
-            with sqlite3.connect(self.store.database_path) as connection:
+            record = await self.create_task(task_config(url=url))
+            with closing(sqlite3.connect(self.store.database_path)) as connection:
                 connection.execute("UPDATE recording_tasks SET quality = ? WHERE id = ?", (old, record.id))
+                connection.commit()
             await self.store.initialize()
             self.assertEqual((await self.store.get(record.id)).quality, expected)
         await self.store.initialize()
         self.assertEqual(len(await self.store.list()), len(cases))
 
     async def test_initialize_normalizes_legacy_limited_monitoring_tasks(self) -> None:
-        created = await self.store.create(task_config())
+        created = await self.create_task(task_config())
         with closing(sqlite3.connect(self.store.database_path)) as connection:
             connection.execute(
                 "UPDATE recording_tasks SET segment_count = 4, monitor = 1 WHERE id = ?",
@@ -225,7 +260,7 @@ class StoreTests(IsolatedAsyncioTestCase):
         self.assertEqual(stored_monitor, 0)
 
     async def test_rejects_non_allowlisted_update_column(self) -> None:
-        created = await self.store.create(task_config())
+        created = await self.create_task(task_config())
         with self.assertRaises(ValueError):
             await self.store.update_runtime(created.id, url="https://example.com")
 

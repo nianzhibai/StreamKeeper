@@ -101,6 +101,25 @@ class BilibiliClient:
             raise InvalidBilibiliUrl("哔哩哔哩分享链接没有跳转到直播间")
         return room_id
 
+    async def resolve_anchor_id(self, url: str) -> str:
+        room_id = await self._resolve_room_id(self.validate_url(url))
+        try:
+            async with self._client() as client:
+                response = await client.get(
+                    f"{_API_BASE}/xlive/web-room/v1/index/getH5InfoByRoom",
+                    params={"room_id": room_id},
+                    headers={"Referer": f"{_LIVE_ORIGIN}/{room_id}"},
+                )
+                response.raise_for_status()
+                data = self._payload_data(response.json(), "getH5InfoByRoom")
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise BilibiliFetchError(f"获取哔哩哔哩主播身份失败: {exc}") from exc
+        room_info = data.get("room_info")
+        anchor_id = room_info.get("uid") if isinstance(room_info, dict) else None
+        if not anchor_id or not str(anchor_id).isdigit() or int(anchor_id) <= 0:
+            raise BilibiliFetchError("无法确定哔哩哔哩主播 ID，请检查链接或稍后重试")
+        return str(anchor_id)
+
     @staticmethod
     def _payload_data(payload: object, endpoint: str) -> dict[str, Any]:
         if not isinstance(payload, dict):

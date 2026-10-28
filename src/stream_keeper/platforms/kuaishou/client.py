@@ -146,6 +146,11 @@ class KuaishouClient:
             raise InvalidKuaishouUrl("快手分享链接没有跳转到直播间")
         return direct
 
+    async def resolve_anchor_id(self, url: str) -> str:
+        live_url = await self._resolve_url(self.validate_url(url))
+        # Both supported paths address the principal ID used by the account API.
+        return urlparse(live_url).path.rstrip("/").rsplit("/", 1)[-1]
+
     @staticmethod
     async def _user_status(client: httpx.AsyncClient, live_url: str) -> tuple[str | None, bool] | None:
         """Use the account endpoint when an authenticated cookie is available.

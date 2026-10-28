@@ -15,6 +15,7 @@ def _room_info(*, live_status: int = 1) -> dict:
         "data": {
             "room_info": {
                 "room_id": 123456,
+                "uid": 789012,
                 "title": "测试哔哩哔哩直播",
                 "live_status": live_status,
             },
@@ -71,6 +72,20 @@ def _play_info(*, requested_qn: int = 250) -> dict:
 
 
 class BilibiliClientTests(IsolatedAsyncioTestCase):
+    async def test_anchor_identity_uses_uid_for_short_and_long_room_numbers(self) -> None:
+        async_client = BilibiliClient(transport=httpx.MockTransport(lambda _request: httpx.Response(
+            200, json=_room_info(live_status=0)
+        )))
+        self.assertEqual(await async_client.resolve_anchor_id("https://live.bilibili.com/123"), "789012")
+        self.assertEqual(await async_client.resolve_anchor_id("https://live.bilibili.com/123456"), "789012")
+
+    async def test_anchor_identity_rejects_missing_uid(self) -> None:
+        payload = _room_info(live_status=0)
+        del payload["data"]["room_info"]["uid"]
+        client = BilibiliClient(transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=payload)))
+        with self.assertRaisesRegex(BilibiliFetchError, "主播 ID"):
+            await client.resolve_anchor_id("https://live.bilibili.com/123")
+
     async def test_live_room_returns_matching_flv_and_hls_quality(self) -> None:
         requests: list[httpx.Request] = []
 

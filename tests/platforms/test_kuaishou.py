@@ -51,6 +51,17 @@ def _live_state() -> dict:
 
 
 class KuaishouClientTests(IsolatedAsyncioTestCase):
+    async def test_anchor_identity_normalizes_supported_paths_and_short_link(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == "v.kuaishou.com":
+                return httpx.Response(302, headers={"Location": "https://live.kuaishou.com/u/example"})
+            return httpx.Response(200, text="")
+
+        client = KuaishouClient(transport=httpx.MockTransport(handler))
+        self.assertEqual(await client.resolve_anchor_id("https://live.kuaishou.com/u/example"), "example")
+        self.assertEqual(await client.resolve_anchor_id("https://live.kuaishou.com/profile/example"), "example")
+        self.assertEqual(await client.resolve_anchor_id("https://v.kuaishou.com/abc"), "example")
+
     async def test_live_room_selects_platform_quality(self) -> None:
         requests: list[httpx.Request] = []
 

@@ -14,8 +14,9 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from stream_keeper.errors import InsufficientDiskSpaceError
-from stream_keeper.models import LiveInfo
+from stream_keeper.errors import DouyinFetchError, InsufficientDiskSpaceError
+from stream_keeper.models import AnchorIdentity, LiveInfo
+from stream_keeper.platforms import LiveStreamClient
 from stream_keeper.settings import CLOUD_ARCHIVE_ROOT, Settings
 from stream_keeper.web import app as web_app
 from stream_keeper.web.app import create_app
@@ -83,6 +84,10 @@ class FakeScheduler:
 
 
 class FakeInspectClient:
+    async def resolve_anchor(self, url: str) -> AnchorIdentity:
+        platform, normalized = LiveStreamClient._match_url(url)
+        return AnchorIdentity(platform, normalized.split("?")[0])
+
     async def fetch(self, url: str, quality: str) -> LiveInfo:
         return LiveInfo(
             platform="抖音",
@@ -979,6 +984,47 @@ class WebTests(TestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.client.get("/api/tasks").json(), [])
 
+    def test_duplicate_anchor_is_rejected_on_create_and_edit(self) -> None:
+        self.login()
+        async def resolve(_client, url):
+            anchor = "other" if "other" in url else "shared"
+            return AnchorIdentity("douyin", anchor)
+
+        with patch.object(FakeInspectClient, "resolve_anchor", resolve):
+            first = self.client.post(
+                "/api/tasks", headers=self.csrf_headers,
+                json={"url": "https://v.douyin.com/first/", "label": "主播", "auto_start": False},
+            )
+            duplicate = self.client.post(
+                "/api/tasks", headers=self.csrf_headers,
+                json={"url": "https://v.douyin.com/second/", "auto_start": False},
+            )
+            other = self.client.post(
+                "/api/tasks", headers=self.csrf_headers,
+                json={"url": "https://v.douyin.com/other/", "auto_start": False},
+            )
+            edit = self.client.patch(
+                f"/api/tasks/{other.json()['id']}", headers=self.csrf_headers,
+                json={"url": "https://v.douyin.com/second/", "label": "不应保存"},
+            )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn(first.json()["id"], duplicate.json()["detail"])
+        self.assertEqual(edit.status_code, 409)
+        self.assertEqual(self.client.get(f"/api/tasks/{other.json()['id']}").json()["url"], other.json()["url"])
+        self.assertEqual(len(self.client.get("/api/tasks").json()), 2)
+
+    def test_task_creation_fails_when_anchor_cannot_be_resolved(self) -> None:
+        self.login()
+        with patch.object(FakeInspectClient, "resolve_anchor", side_effect=DouyinFetchError("主播 ID 不可用")):
+            response = self.client.post(
+                "/api/tasks", headers=self.csrf_headers,
+                json={"url": "https://live.douyin.com/123456789", "auto_start": False},
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("主播 ID", response.json()["detail"])
+        self.assertEqual(self.client.get("/api/tasks").json(), [])
+
     def test_recording_defaults_apply_to_new_tasks_and_explicit_task_values_win(self) -> None:
         self.login()
         initial = self.client.get("/api/settings/recording-defaults")
@@ -1270,8 +1316,8 @@ class WebTests(TestCase):
             headers=self.csrf_headers,
             json={"url": url, "quality": "best", "auto_start": True, "inspection_token": token},
         )
-        self.assertEqual(reused.status_code, 201)
-        self.assertIsNone(self.scheduler.initial_infos[-1])
+        self.assertEqual(reused.status_code, 409)
+        self.assertEqual(len(self.scheduler.started), 1)
 
         task_dialog_script = self.client.get("/static/task-dialog.js").text
         self.assertIn("payload.inspection_token = inspection.token", task_dialog_script)

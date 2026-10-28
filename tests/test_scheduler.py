@@ -3,8 +3,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
-from stream_keeper.models import LiveInfo, RecordingResult, SelectedSource
+from stream_keeper.models import AnchorIdentity, LiveInfo, RecordingResult, SelectedSource
 from stream_keeper.settings import Settings
 from stream_keeper.web import scheduler as scheduler_module
 from stream_keeper.web.scheduler import ResizableRecordingLimiter, TaskScheduler
@@ -92,6 +93,9 @@ async def wait_for_status(store: TaskStore, task_id: str, expected: TaskStatus, 
 
 
 class SchedulerTests(IsolatedAsyncioTestCase):
+    async def create_task(self, config):
+        return await self.store.create(config, AnchorIdentity("test", uuid4().hex))
+
     async def asyncSetUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
@@ -173,7 +177,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertEqual(limiter.active, 0)
 
     async def test_one_shot_offline_task_stops(self) -> None:
-        task = await self.store.create(make_config(monitor=False))
+        task = await self.create_task(make_config(monitor=False))
         client = FakeClient(make_info(False))
         scheduler = TaskScheduler(self.store, self.settings, client_factory=lambda: client)
 
@@ -186,7 +190,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_one_shot_live_task_records_and_stores_path(self) -> None:
-        task = await self.store.create(make_config(monitor=False))
+        task = await self.create_task(make_config(monitor=False))
         scheduler = TaskScheduler(
             self.store,
             self.settings,
@@ -202,7 +206,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_start_reuses_fresh_inspection_for_first_worker_iteration(self) -> None:
-        task = await self.store.create(make_config(monitor=False))
+        task = await self.create_task(make_config(monitor=False))
         client = FakeClient(make_info(False))
         scheduler = TaskScheduler(
             self.store,
@@ -220,7 +224,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_successful_recording_notifies_completion_handler_after_status_update(self) -> None:
-        task = await self.store.create(make_config(monitor=False))
+        task = await self.create_task(make_config(monitor=False))
         notifications: list[tuple[str, TaskStatus, bool]] = []
 
         async def recording_completed(result: RecordingResult) -> None:
@@ -247,7 +251,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_segment_limit_creates_one_shot_task(self) -> None:
-        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        task = await self.create_task(make_config(monitor=True, segment_seconds=1800, segment_count=4))
         options_seen = []
 
         def recorder_factory(options):
@@ -272,7 +276,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_natural_stream_end_before_limit_stops_task(self) -> None:
-        task = await self.store.create(make_config(monitor=True, segment_seconds=1800, segment_count=4))
+        task = await self.create_task(make_config(monitor=True, segment_seconds=1800, segment_count=4))
         scheduler = TaskScheduler(
             self.store,
             self.settings,
@@ -288,7 +292,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_shutdown_keeps_monitor_enabled_for_restart(self) -> None:
-        task = await self.store.create(make_config(monitor=True))
+        task = await self.create_task(make_config(monitor=True))
         scheduler = TaskScheduler(
             self.store,
             self.settings,
@@ -306,7 +310,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         self.assertIn("恢复", result.status_message)
 
     async def test_enrich_record_exposes_current_segment_progress(self) -> None:
-        task = await self.store.create(make_config(monitor=False, segment_seconds=1800, segment_count=4))
+        task = await self.create_task(make_config(monitor=False, segment_seconds=1800, segment_count=4))
         scheduler = TaskScheduler(self.store, self.settings)
         record = await self.store.update_runtime(
             task.id,
@@ -328,7 +332,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         await scheduler.shutdown()
 
     async def test_recording_lifecycle_is_written_to_the_activity_log(self) -> None:
-        task = await self.store.create(make_config(monitor=False))
+        task = await self.create_task(make_config(monitor=False))
         scheduler = TaskScheduler(
             self.store,
             self.settings,
@@ -349,7 +353,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
 
     async def test_repeated_check_failures_report_once_and_then_recovery(self) -> None:
         """A room that keeps failing must not fill the page with one entry per retry."""
-        task = await self.store.create(make_config(monitor=True))
+        task = await self.create_task(make_config(monitor=True))
         scheduler = TaskScheduler(self.store, self.settings)
         record = await self.store.get(task.id)
         assert record is not None
@@ -370,7 +374,7 @@ class SchedulerTests(IsolatedAsyncioTestCase):
         )
 
     async def test_restart_reports_the_config_change_once(self) -> None:
-        task = await self.store.create(make_config(monitor=True))
+        task = await self.create_task(make_config(monitor=True))
         await self.store.update_runtime(task.id, enabled=True, anchor_name="测试主播")
         scheduler = TaskScheduler(
             self.store,
