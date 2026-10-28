@@ -1555,7 +1555,7 @@ class WebTests(TestCase):
             "/static/provider-baidu.png",
             "/static/provider-pan115.png",
             "/static/provider-guangya.png",
-            "/static/provider-yun139.svg",
+            "/static/provider-yun139.png",
         ):
             self.assertIn(icon_path, archive_page.text)
             self.assertEqual(self.client.get(icon_path).status_code, 200)
